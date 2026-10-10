@@ -1,0 +1,628 @@
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#  CloudFormation deployment pipeline — drift-gated change sets with email approval
+#
+#  Each box below is a job in the GitHub Actions graph and turns green as it passes:
+#
+#    🧭 Preflight ──┬── 🧹 Lint template ──────┐
+#                   ├── 🛡️ Security scan ──────┤
+#                   └── 🔍 Drift detection ────┴── 📝 Create change set ── 📧 Approval request ── 🚀 Execute (optional gate)
+#                              │
+#                              └─ drift found ── 🤖 Amazon Q drift fix ── 🚨 Drift alert (emails + halts the run)
+#
+#  • Manual trigger only (Actions → this workflow → Run workflow).
+#  • Nothing is deployed unless a person executes the change set: in the AWS console (default),
+#    or by approving the GitHub environment gate when executionMode = pipeline-after-approval.
+#  • One-time setup (secrets, variables, email, Amazon Q): see .github/cfn-pipeline/README.md
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+name: CloudFormation Deploy Pipeline
+
+run-name: "CFN ${{ inputs.stackName }} → ${{ inputs.roleAlias }}/${{ inputs.AWS_REGION }} · drift=${{ inputs.driftPolicy }} · ${{ inputs.executionMode }} · @${{ github.actor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      folderPath:
+        description: "Folder under cloudformation/ holding *-template.yaml + params.json (e.g. vpc or network/peering)"
+        required: true
+        type: string
+      stackName:
+        description: "CloudFormation stack name"
+        required: true
+        type: string
+      roleAlias:
+        description: "Target account (deploy role)"
+        required: true
+        default: SANDBOX          # safest preselection; pick the real target account
+        type: choice
+        options:
+          - NETWORK
+          - DIRECTORY
+          - SECURITY
+          - SHAREDSERVICES
+          - MANAGEMENT
+          - LOGARCHIVE
+          - COREAUDIT
+          - MONITORING
+          - DIRECTORY-DEV
+          - DIRECTORY-PPE
+          - MONITORING-PPE
+          - SHAREDSERVICES-DEV
+          - SHAREDSERVICES-PPE
+          - SANDBOX
+          - TST-NETWORK
+          - PPE-NETWORK
+          - BACKUP
+          - CRV
+      AWS_REGION:
+        description: "AWS region"
+        required: false
+        default: eu-west-1
+        type: string
+      driftPolicy:
+        description: "If drift is found → block: stop + email drift report with Amazon Q fixes · revert-drift: continue with a drift-aware change set that restores template values"
+        required: true
+        default: block
+        type: choice
+        options:
+          - block
+          - revert-drift
+      executionMode:
+        description: "After the approval email → manual-console: execute in the AWS console · pipeline-after-approval: wait for a GitHub reviewer, then execute"
+        required: true
+        default: manual-console
+        type: choice
+        options:
+          - manual-console
+          - pipeline-after-approval
+
+permissions:
+  contents: read
+  id-token: write
+
+# One run per stack at a time. A second run for the same stack waits instead of racing.
+concurrency:
+  group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION }}-${{ inputs.stackName }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PIPELINE_DIR: .github/cfn-pipeline
+  PYTHONUNBUFFERED: "1"
+  # Run inputs, read by the scripts as environment variables (never pasted into shell code).
+  FOLDER_PATH: ${{ inputs.folderPath }}
+  STACK_NAME: ${{ inputs.stackName }}
+  ROLE_ALIAS: ${{ inputs.roleAlias }}
+  TARGET_REGION: ${{ inputs.AWS_REGION || 'eu-west-1' }}
+  DRIFT_POLICY: ${{ inputs.driftPolicy }}
+  EXECUTION_MODE: ${{ inputs.executionMode }}
+  # Templates over 51,200 bytes are staged in S3 exactly as in the original pipeline.
+  BUCKET_NAME: ss-cfts3
+  PRESIGN_SCRIPT: cloudformation/production/shared_services/Github_s3/presign.py
+  # Email + Amazon Q settings — repository variables (Settings → Secrets and variables → Actions → Variables).
+  SERVICES_REGION: ${{ vars.CFN_SERVICES_REGION || 'eu-west-1' }}
+  NOTIFY_CHANNEL: ${{ vars.CFN_NOTIFY_CHANNEL || 'ses' }}
+  MAIL_FROM: ${{ vars.CFN_MAIL_FROM }}
+  MAIL_TO: ${{ vars.CFN_MAIL_TO }}
+  MAIL_CC: ${{ vars.CFN_MAIL_CC }}
+  MAIL_SUBJECT_PREFIX: ${{ vars.CFN_MAIL_SUBJECT_PREFIX }}
+  SNS_TOPIC_ARN: ${{ vars.CFN_SNS_TOPIC_ARN }}
+  AI_PROVIDER: ${{ vars.CFN_AI_PROVIDER || 'auto' }}
+  BEDROCK_MODEL_ID: ${{ vars.CFN_BEDROCK_MODEL_ID || 'eu.anthropic.claude-sonnet-5-5' }}
+  KIRO_MODEL: ${{ vars.CFN_KIRO_MODEL }}
+  APPROVAL_ENVIRONMENT: ${{ vars.CFN_APPROVAL_ENVIRONMENT || 'cfn-change-approval' }}
+
+jobs:
+  # ───────────────────────────────────────────── 1 ─────────────────────────────────────────────
+  preflight:
+    name: 🧭 Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      role_secret: ${{ steps.inputs.outputs.role_secret }}
+      tier: ${{ steps.inputs.outputs.tier }}
+      template_file: ${{ steps.inputs.outputs.template_file }}
+      params_file: ${{ steps.inputs.outputs.params_file }}
+      large_template: ${{ steps.inputs.outputs.large_template }}
+      ai_ready: ${{ steps.secrets.outputs.ai_ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Validate inputs, template and params.json
+        id: inputs
+        run: python "$PIPELINE_DIR/scripts/preflight.py"
+
+      - name: Check deploy-role, email and Amazon Q secrets
+        id: secrets
+        env:
+          ROLE_SECRET_NAME: ${{ steps.inputs.outputs.role_secret }}
+          ROLE_ARN: ${{ secrets[steps.inputs.outputs.role_secret] }}
+          SERVICES_ROLE_ARN: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE }}
+          HAS_KIRO_KEY: ${{ secrets.KIRO_API_KEY != '' }}
+        run: python "$PIPELINE_DIR/scripts/preflight.py" --check-secrets
+
+  # ───────────────────────────────────────────── 2a ────────────────────────────────────────────
+  lint:
+    name: 🧹 Lint template
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEMPLATE_FILE: ${{ needs.preflight.outputs.template_file }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+        with:
+          extra-packages: cfn-lint
+
+      - name: Run cfn-lint (errors block, warnings are reported)
+        run: |
+          set +e
+          cfn-lint "$TEMPLATE_FILE" --format json --regions "$TARGET_REGION" > "$RUNNER_TEMP/cfn-lint.json"
+          echo "cfn-lint exit code: $?"
+          set -e
+          python "$PIPELINE_DIR/scripts/report_lint.py" --input "$RUNNER_TEMP/cfn-lint.json" \
+            --template "$TEMPLATE_FILE" --out reports/lint-report.json
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-report
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  # ───────────────────────────────────────────── 2b ────────────────────────────────────────────
+  security-scan:
+    name: 🛡️ Security scan
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEMPLATE_FILE: ${{ needs.preflight.outputs.template_file }}
+      SECURITY_BLOCKING: ${{ vars.CFN_SECURITY_SCAN_BLOCKING || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Run Checkov (report-only unless CFN_SECURITY_SCAN_BLOCKING=true)
+        continue-on-error: ${{ env.SECURITY_BLOCKING != 'true' }}
+        run: |
+          python -m pip install --disable-pip-version-check --quiet checkov
+          set +e
+          checkov --file "$TEMPLATE_FILE" --framework cloudformation --output json --compact \
+            > "$RUNNER_TEMP/checkov.json"
+          echo "checkov exit code: $?"
+          set -e
+          python "$PIPELINE_DIR/scripts/report_security.py" --input "$RUNNER_TEMP/checkov.json" \
+            --template "$TEMPLATE_FILE" --out reports/security-report.json
+
+      - name: Upload security report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-report
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  # ───────────────────────────────────────────── 2c ────────────────────────────────────────────
+  drift-detection:
+    name: 🔍 Drift detection
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TEMPLATE_FILE: ${{ needs.preflight.outputs.template_file }}
+    outputs:
+      gate: ${{ steps.drift.outputs.gate }}
+      block_reason: ${{ steps.drift.outputs.block_reason }}
+      drift_status: ${{ steps.drift.outputs.drift_status }}
+      drifted_count: ${{ steps.drift.outputs.drifted_count }}
+      revert_drift: ${{ steps.drift.outputs.revert_drift }}
+      # pass-through so later boxes only depend on the box right before them
+      role_secret: ${{ needs.preflight.outputs.role_secret }}
+      tier: ${{ needs.preflight.outputs.tier }}
+      template_file: ${{ needs.preflight.outputs.template_file }}
+      params_file: ${{ needs.preflight.outputs.params_file }}
+      large_template: ${{ needs.preflight.outputs.large_template }}
+      ai_ready: ${{ needs.preflight.outputs.ai_ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Configure AWS credentials (target account)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets[needs.preflight.outputs.role_secret] }}
+          role-session-name: cfn-drift-${{ github.run_id }}
+          aws-region: ${{ env.TARGET_REGION }}
+
+      - name: Detect drift on the stack and its nested stacks
+        id: drift
+        run: python "$PIPELINE_DIR/scripts/drift_detect.py" --out reports/drift-report.json
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: drift-report
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  # ───────────────────────────────────────────── 3 (drift path) ────────────────────────────────
+  drift-analysis:
+    name: 🤖 Amazon Q drift fix
+    needs: drift-detection
+    if: ${{ !cancelled() && needs.drift-detection.outputs.block_reason == 'DRIFT' && needs.drift-detection.outputs.ai_ready != 'none' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TEMPLATE_FILE: ${{ needs.drift-detection.outputs.template_file }}
+      PARAMS_FILE: ${{ needs.drift-detection.outputs.params_file }}
+      TIER: ${{ needs.drift-detection.outputs.tier }}
+      HAS_KIRO_KEY: ${{ secrets.KIRO_API_KEY != '' }}
+      HAS_SERVICES_ROLE: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Download drift report
+        uses: actions/download-artifact@v8
+        with:
+          name: drift-report
+          path: reports
+
+      - name: Install Amazon Q Developer CLI (Kiro CLI) for headless use
+        if: env.HAS_KIRO_KEY == 'true' && env.AI_PROVIDER != 'bedrock'
+        continue-on-error: true
+        run: |
+          curl -fsSL https://cli.kiro.dev/install | bash
+          for dir in "$HOME/.local/bin" "$HOME/.kiro/bin" "$HOME/bin"; do
+            if [[ -x "$dir/kiro-cli" ]]; then echo "$dir" >> "$GITHUB_PATH"; fi
+          done
+
+      - name: Configure AWS credentials (Amazon Bedrock via pipeline services role)
+        if: env.HAS_SERVICES_ROLE == 'true' && env.AI_PROVIDER != 'kiro'
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE }}
+          role-session-name: cfn-ai-${{ github.run_id }}
+          aws-region: ${{ env.SERVICES_REGION }}
+
+      - name: Generate suggested template code for drifted resources
+        env:
+          KIRO_API_KEY: ${{ secrets.KIRO_API_KEY }}
+        run: python "$PIPELINE_DIR/scripts/drift_ai.py" --report reports/drift-report.json --out reports/ai-suggestions.json
+
+      - name: Upload suggested fixes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: drift-ai-report
+          path: |
+            reports/ai-suggestions.json
+            reports/suggested-fixes.md
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  # ───────────────────────────────────────────── 4 (drift path) ────────────────────────────────
+  drift-alert:
+    name: 🚨 Drift alert · halt
+    needs: [drift-detection, drift-analysis]
+    if: ${{ !cancelled() && (needs.drift-detection.outputs.gate == 'block' || needs.drift-detection.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEMPLATE_FILE: ${{ needs.drift-detection.outputs.template_file }}
+      PARAMS_FILE: ${{ needs.drift-detection.outputs.params_file }}
+      TIER: ${{ needs.drift-detection.outputs.tier }}
+      HAS_SERVICES_ROLE: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Download drift report and Amazon Q suggestions
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: drift-*report
+          merge-multiple: true
+          path: reports
+
+      - name: Configure AWS credentials (email)
+        if: env.HAS_SERVICES_ROLE == 'true' && env.NOTIFY_CHANNEL != 'none'
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE }}
+          role-session-name: cfn-notify-${{ github.run_id }}
+          aws-region: ${{ env.SERVICES_REGION }}
+
+      - name: Email the drift report
+        run: python "$PIPELINE_DIR/scripts/notify.py" drift
+
+      - name: Upload email preview
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: email-drift
+          path: reports/email/
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+      - name: Halt the pipeline
+        env:
+          BLOCK_REASON: ${{ needs.drift-detection.outputs.block_reason }}
+          DRIFTED: ${{ needs.drift-detection.outputs.drifted_count }}
+        run: |
+          echo "::error title=Deployment halted::Drift gate blocked the deployment (${BLOCK_REASON:-ERROR}, ${DRIFTED:-0} drifted resource(s)). No change set was created."
+          exit 1
+
+  # ───────────────────────────────────────────── 3 (main path) ─────────────────────────────────
+  change-set:
+    name: 📝 Create change set
+    needs: [lint, security-scan, drift-detection]
+    if: ${{ !cancelled() && needs.lint.result == 'success' && needs.security-scan.result != 'failure' && needs.drift-detection.result == 'success' && needs.drift-detection.outputs.gate == 'pass' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TEMPLATE_FILE: ${{ needs.drift-detection.outputs.template_file }}
+      PARAMS_FILE: ${{ needs.drift-detection.outputs.params_file }}
+      REVERT_DRIFT: ${{ needs.drift-detection.outputs.revert_drift }}
+    outputs:
+      status: ${{ steps.changeset.outputs.status }}
+      change_set_arn: ${{ steps.changeset.outputs.change_set_arn }}
+      change_set_name: ${{ steps.changeset.outputs.change_set_name }}
+      risk: ${{ steps.changeset.outputs.risk }}
+      console_url: ${{ steps.changeset.outputs.console_url }}
+      role_secret: ${{ needs.drift-detection.outputs.role_secret }}
+      tier: ${{ needs.drift-detection.outputs.tier }}
+      template_file: ${{ needs.drift-detection.outputs.template_file }}
+      params_file: ${{ needs.drift-detection.outputs.params_file }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Configure AWS credentials (S3 staging for large templates)
+        if: needs.drift-detection.outputs.large_template == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}
+          role-session-name: s3_upload
+          aws-region: ${{ env.TARGET_REGION }}
+
+      - name: Stage template in S3 (pre-signed URL)
+        if: needs.drift-detection.outputs.large_template == 'true'
+        run: |
+          key="${STACK_NAME}-$(date +%s).yaml"
+          urls="$(python "$PRESIGN_SCRIPT" "$key")"
+          put_url="$(grep '^put_url=' <<< "$urls" | cut -d'=' -f2-)"
+          get_url="$(grep '^get_url=' <<< "$urls" | cut -d'=' -f2-)"
+          if [[ -z "$put_url" || -z "$get_url" ]]; then
+            echo "::error title=S3 staging::presign.py did not print put_url=/get_url= lines"
+            exit 1
+          fi
+          echo "::add-mask::$put_url"
+          echo "::add-mask::$get_url"
+          curl --silent --show-error --fail -X PUT -T "$TEMPLATE_FILE" "$put_url"
+          printf '%s' "$get_url" > "$RUNNER_TEMP/template_url"
+          echo "Template staged as s3://$BUCKET_NAME/$key"
+
+      - name: Configure AWS credentials (target account)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets[needs.drift-detection.outputs.role_secret] }}
+          role-session-name: cfn-changeset-${{ github.run_id }}
+          aws-region: ${{ env.TARGET_REGION }}
+
+      - name: Create change set and assess risk
+        id: changeset
+        run: |
+          args=(--out reports/changeset.json)
+          if [[ -s "$RUNNER_TEMP/template_url" ]]; then
+            args+=(--template-url-file "$RUNNER_TEMP/template_url")
+          fi
+          python "$PIPELINE_DIR/scripts/changeset.py" "${args[@]}"
+
+      - name: Upload change set report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: changeset-report
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
+
+  # ───────────────────────────────────────────── 4 (main path) ─────────────────────────────────
+  approval-request:
+    name: 📧 Approval request
+    needs: change-set
+    if: ${{ !cancelled() && needs.change-set.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEMPLATE_FILE: ${{ needs.change-set.outputs.template_file }}
+      PARAMS_FILE: ${{ needs.change-set.outputs.params_file }}
+      TIER: ${{ needs.change-set.outputs.tier }}
+      HAS_SERVICES_ROLE: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE != '' }}
+    outputs:
+      cs_status: ${{ needs.change-set.outputs.status }}
+      change_set_arn: ${{ needs.change-set.outputs.change_set_arn }}
+      change_set_name: ${{ needs.change-set.outputs.change_set_name }}
+      role_secret: ${{ needs.change-set.outputs.role_secret }}
+      tier: ${{ needs.change-set.outputs.tier }}
+      template_file: ${{ needs.change-set.outputs.template_file }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Download reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*-report"
+          merge-multiple: true
+          path: reports
+
+      - name: Configure AWS credentials (email)
+        if: env.HAS_SERVICES_ROLE == 'true' && env.NOTIFY_CHANNEL != 'none'
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE }}
+          role-session-name: cfn-notify-${{ github.run_id }}
+          aws-region: ${{ env.SERVICES_REGION }}
+
+      - name: Email the observation and approval request
+        run: python "$PIPELINE_DIR/scripts/notify.py" approval
+
+      - name: Upload email preview
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: email-approval
+          path: reports/email/
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+
+  # ───────────────────────────────────────────── 5 (optional) ──────────────────────────────────
+  # Runs only when executionMode = pipeline-after-approval. GitHub pauses here with
+  # "Waiting for review" until a required reviewer of the environment approves.
+  execute:
+    name: 🚀 Execute change set
+    needs: approval-request
+    if: ${{ !cancelled() && inputs.executionMode == 'pipeline-after-approval' && needs.approval-request.result == 'success' && needs.approval-request.outputs.cs_status == 'CREATE_COMPLETE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment:
+      name: ${{ vars.CFN_APPROVAL_ENVIRONMENT || 'cfn-change-approval' }}
+      url: ${{ steps.execute.outputs.stack_console_url }}
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    env:
+      CHANGE_SET_ARN: ${{ needs.approval-request.outputs.change_set_arn }}
+      CHANGE_SET_NAME: ${{ needs.approval-request.outputs.change_set_name }}
+      TEMPLATE_FILE: ${{ needs.approval-request.outputs.template_file }}
+      TIER: ${{ needs.approval-request.outputs.tier }}
+      HAS_SERVICES_ROLE: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up tooling
+        uses: ./.github/actions/setup-cfn-pipeline
+
+      - name: Verify a reviewer approved this run
+        id: approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BLOCK_SELF_APPROVAL: ${{ vars.CFN_BLOCK_SELF_APPROVAL || 'false' }}
+        run: python "$PIPELINE_DIR/scripts/verify_approval.py"
+
+      - name: Configure AWS credentials (target account)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets[needs.approval-request.outputs.role_secret] }}
+          role-session-name: cfn-execute-${{ github.run_id }}
+          aws-region: ${{ env.TARGET_REGION }}
+          role-duration-seconds: 3600
+
+      - name: Execute change set and stream stack events
+        id: execute
+        env:
+          APPROVER: ${{ steps.approval.outputs.approver }}
+          APPROVAL_COMMENT: ${{ steps.approval.outputs.approval_comment }}
+          # lets the script re-assume the role via OIDC, so deployments longer than 1 hour keep being watched
+          CFN_OIDC_ROLE_ARN: ${{ secrets[needs.approval-request.outputs.role_secret] }}
+        run: python "$PIPELINE_DIR/scripts/execute.py"
+
+      - name: Download reports
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*-report"
+          merge-multiple: true
+          path: reports
+
+      - name: Configure AWS credentials (email)
+        if: always() && env.HAS_SERVICES_ROLE == 'true' && env.NOTIFY_CHANNEL != 'none'
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.CFN_PIPELINE_SERVICES_ROLE }}
+          role-session-name: cfn-notify-${{ github.run_id }}
+          aws-region: ${{ env.SERVICES_REGION }}
+
+      - name: Email the deployment result
+        if: always() && steps.execute.outcome != 'skipped'
+        run: python "$PIPELINE_DIR/scripts/notify.py" result
+
+      - name: Upload execution report and email preview
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: execution-report
+          path: |
+            reports/execution-result.json
+            reports/email/
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true

@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudFormation deployment pipeline - shared services. Lets the pipeline send its emails
+  (Amazon SES, or SNS) and ask Amazon Bedrock for drift-fix suggestions. Deploy once, in the
+  account and region where your SES sending identity lives (for example SHAREDSERVICES / eu-west-1),
+  then store the PipelineServicesRoleArn output in the repository secret CFN_PIPELINE_SERVICES_ROLE.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: GitHub OIDC trust
+        Parameters:
+          - CreateRole
+          - GitHubOidcProviderArn
+          - GitHubOidcHost
+          - GitHubSubjectPatterns
+          - ExistingRoleName
+      - Label:
+          default: Email
+        Parameters:
+          - SenderEmailAddress
+          - CreateSenderIdentity
+          - SnsTopicArn
+      - Label:
+          default: Amazon Bedrock
+        Parameters:
+          - BedrockModelId
+          - BedrockGeoPrefix
+
+Parameters:
+  CreateRole:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: >-
+      true = create a dedicated GitHub OIDC role for the pipeline. false = only create the managed
+      policy and attach it to ExistingRoleName.
+  GitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ARN of the GitHub OIDC identity provider that already exists in this account
+      (IAM > Identity providers). Required when CreateRole is true.
+  GitHubOidcHost:
+    Type: String
+    Default: token.actions.tescoims.ghe.com
+    AllowedValues:
+      - token.actions.tescoims.ghe.com
+      - token.actions.githubusercontent.com
+    Description: OIDC issuer host - GitHub Enterprise Cloud with data residency (ghe.com) or github.com.
+  GitHubSubjectPatterns:
+    Type: CommaDelimitedList
+    Default: "repo:plat-eng/AWS-Landing-Zone:*"
+    Description: >-
+      OIDC 'sub' patterns allowed to assume the role (StringLike). Repositories created after
+      GitHub's immutable-subject change also need their immutable-ID form (for example repo:plat-eng@*).
+  ExistingRoleName:
+    Type: String
+    Default: ""
+    Description: Optional - an existing role (for example the one behind S3_ACCESS_GITHUB_ROLE) to attach the policy to.
+  SenderEmailAddress:
+    Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: Must be an email address.
+    Description: >-
+      From address used by the pipeline (repository variable CFN_MAIL_FROM). It must be a verified
+      SES identity - the address itself or its domain.
+  CreateSenderIdentity:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: >-
+      true = create an SES email-address identity for SenderEmailAddress (SES emails a verification
+      link). Keep false when the domain is already verified in SES.
+  SnsTopicArn:
+    Type: String
+    Default: ""
+    Description: Optional SNS topic, only needed for CFN_NOTIFY_CHANNEL=sns (plain-text notifications).
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-sonnet-5-5
+    Description: Bedrock foundation model used for drift-fix suggestions.
+  BedrockGeoPrefix:
+    Type: String
+    Default: eu
+    AllowedValues: [eu, us, au, global]
+    Description: Cross-region inference profile prefix. 'eu' keeps prompts inside EU regions.
+
+Conditions:
+  MakeRole: !Equals [!Ref CreateRole, "true"]
+  AttachToExisting: !Not [!Equals [!Ref ExistingRoleName, ""]]
+  UseGhe: !Equals [!Ref GitHubOidcHost, token.actions.tescoims.ghe.com]
+  HasSnsTopic: !Not [!Equals [!Ref SnsTopicArn, ""]]
+  MakeSenderIdentity: !Equals [!Ref CreateSenderIdentity, "true"]
+
+Rules:
+  RoleNeedsProvider:
+    RuleCondition: !Equals [!Ref CreateRole, "true"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref GitHubOidcProviderArn, ""]]
+        AssertDescription: GitHubOidcProviderArn is required when CreateRole is true.
+
+Resources:
+  PipelineServicesPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub cfn-pipeline-services-${AWS::Region}
+      Description: Lets the CloudFormation deployment pipeline send emails and call Amazon Bedrock.
+      Roles: !If [AttachToExisting, [!Ref ExistingRoleName], !Ref AWS::NoValue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SendPipelineEmail
+            Effect: Allow
+            Action:
+              - ses:SendEmail
+              - ses:SendRawEmail
+            Resource:
+              - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+              - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/*
+            Condition:
+              StringEqualsIfExists:
+                ses:FromAddress: !Ref SenderEmailAddress
+          - !If
+            - HasSnsTopic
+            - Sid: PublishPipelineNotifications
+              Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref SnsTopicArn
+            - !Ref AWS::NoValue
+          - Sid: InvokeBedrockForDriftFixes
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockGeoPrefix}.${BedrockModelId}
+              # a geo/global profile routes to several regions, so allow the model in each of them
+              - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockModelId}
+
+  PipelineServicesRole:
+    Type: AWS::IAM::Role
+    Condition: MakeRole
+    Properties:
+      RoleName: !Sub cfn-pipeline-services-${AWS::Region}
+      Description: Assumed by the CloudFormation deployment pipeline (GitHub Actions OIDC) to send emails and call Amazon Bedrock.
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - !Ref PipelineServicesPolicy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GitHubActionsOidc
+            Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition: !If
+              - UseGhe
+              - StringEquals:
+                  "token.actions.tescoims.ghe.com:aud": sts.amazonaws.com
+                StringLike:
+                  "token.actions.tescoims.ghe.com:sub": !Ref GitHubSubjectPatterns
+              - StringEquals:
+                  "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                StringLike:
+                  "token.actions.githubusercontent.com:sub": !Ref GitHubSubjectPatterns
+      Tags:
+        - Key: Purpose
+          Value: cfn-deploy-pipeline
+
+  SenderIdentity:
+    Type: AWS::SES::EmailIdentity
+    Condition: MakeSenderIdentity
+    Properties:
+      EmailIdentity: !Ref SenderEmailAddress
+
+Outputs:
+  PipelineServicesRoleArn:
+    Condition: MakeRole
+    Description: Store in the repository secret CFN_PIPELINE_SERVICES_ROLE
+    Value: !GetAtt PipelineServicesRole.Arn
+  PipelineServicesPolicyArn:
+    Description: Managed policy with the SES / SNS / Bedrock permissions
+    Value: !Ref PipelineServicesPolicy
+  BedrockModelId:
+    Description: Store in the repository variable CFN_BEDROCK_MODEL_ID (the default already matches)
+    Value: !Sub ${BedrockGeoPrefix}.${BedrockModelId}

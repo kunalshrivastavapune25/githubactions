@@ -1,0 +1,4 @@
+[
+  { "ParameterKey": "Environment", "ParameterValue": "sandbox" },
+  { "ParameterKey": "QueueVisibilityTimeout", "ParameterValue": "30" }
+]

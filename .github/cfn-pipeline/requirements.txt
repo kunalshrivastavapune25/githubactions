@@ -1,0 +1,5 @@
+# Runtime dependencies for the pipeline scripts (installed fresh on each GitHub-hosted runner).
+# boto3 must be recent: drift-aware change sets (DeploymentMode=REVERT_DRIFT) and DescribeEvents
+# were added in late 2025, so pip always resolves the newest release here.
+boto3>=1.40.0
+PyYAML>=6.0

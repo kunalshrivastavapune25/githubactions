@@ -1,0 +1,23 @@
+{
+  "_readme": "Maps each roleAlias (the dropdown in the Run workflow form) to the repository secret that holds that account's deploy-role ARN, plus an environment tier used in email subjects. To add an account: add it here AND to the roleAlias options in .github/workflows/cfn-deploy-pipeline.yml. Tiers for the un-suffixed aliases are assumed to be prd — adjust if needed.",
+  "aliases": {
+    "NETWORK":            { "secret": "NETWORK_SERVICES_ROLE",       "tier": "prd" },
+    "DIRECTORY":          { "secret": "DIRECTORY_SERVICES_ROLE",     "tier": "prd" },
+    "SECURITY":           { "secret": "SECURITY_INFRA_ROLE",         "tier": "prd" },
+    "SHAREDSERVICES":     { "secret": "SHAREDSERVICES_ROLE",         "tier": "prd" },
+    "MANAGEMENT":         { "secret": "MGMT_ROLE",                   "tier": "prd" },
+    "LOGARCHIVE":         { "secret": "LOGARCHIVE_ROLE",             "tier": "prd" },
+    "COREAUDIT":          { "secret": "COREAUDIT_ROLE",              "tier": "prd" },
+    "MONITORING":         { "secret": "MONITORING_ROLE",             "tier": "prd" },
+    "DIRECTORY-DEV":      { "secret": "DIRECTORY_SERVICES_DEV_ROLE", "tier": "dev" },
+    "DIRECTORY-PPE":      { "secret": "DIRECTORY_SERVICES_PPE_ROLE", "tier": "ppe" },
+    "MONITORING-PPE":     { "secret": "PPE_MONITORING_SERVICE_ROLE", "tier": "ppe" },
+    "SHAREDSERVICES-DEV": { "secret": "DEV_SHAREDSERVICES_ROLE",     "tier": "dev" },
+    "SHAREDSERVICES-PPE": { "secret": "PPE_SHARED_SERVICE_ROLE",     "tier": "ppe" },
+    "SANDBOX":            { "secret": "SANDBOX_ROLE",                "tier": "sandbox" },
+    "TST-NETWORK":        { "secret": "TST_NETWORK_SERVICE_ROLE",    "tier": "tst" },
+    "PPE-NETWORK":        { "secret": "PPE_NETWORK_SERVICE_ROLE",    "tier": "ppe" },
+    "BACKUP":             { "secret": "BACKUP_ROLE",                 "tier": "prd" },
+    "CRV":                { "secret": "CRV_ROLE",                    "tier": "prd" }
+  }
+}

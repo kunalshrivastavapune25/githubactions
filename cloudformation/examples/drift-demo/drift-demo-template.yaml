@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Drift demo for the CloudFormation deployment pipeline. Deploy it to a sandbox account, then change
+  the queue's visibility timeout or the log group's retention in the console and run the pipeline
+  again to see the drift alert, the live YAML and the Amazon Q suggested code.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [sandbox, dev, tst, ppe]
+    Default: sandbox
+    Description: Used in resource names.
+  QueueVisibilityTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 0
+    MaxValue: 43200
+    Description: Seconds a received message stays hidden from other consumers.
+
+Resources:
+  DemoQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub cfn-pipeline-drift-demo-${Environment}
+      VisibilityTimeout: !Ref QueueVisibilityTimeout
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Purpose
+          Value: cfn-pipeline-drift-demo
+
+  DemoLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /cfn-pipeline/drift-demo/${Environment}
+      RetentionInDays: 14
+
+Outputs:
+  QueueUrl:
+    Value: !Ref DemoQueue
+  QueueArn:
+    Value: !GetAtt DemoQueue.Arn
+  LogGroupName:
+    Value: !Ref DemoLogGroup

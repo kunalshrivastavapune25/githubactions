@@ -1,0 +1,10 @@
+[
+  { "ParameterKey": "CreateRole", "ParameterValue": "true" },
+  { "ParameterKey": "GitHubOidcProviderArn", "ParameterValue": "arn:aws:iam::111111111111:oidc-provider/token.actions.tescoims.ghe.com" },
+  { "ParameterKey": "GitHubOidcHost", "ParameterValue": "token.actions.tescoims.ghe.com" },
+  { "ParameterKey": "GitHubSubjectPatterns", "ParameterValue": "repo:plat-eng/AWS-Landing-Zone:*" },
+  { "ParameterKey": "SenderEmailAddress", "ParameterValue": "cfn-pipeline@example.com" },
+  { "ParameterKey": "CreateSenderIdentity", "ParameterValue": "false" },
+  { "ParameterKey": "BedrockModelId", "ParameterValue": "anthropic.claude-sonnet-5-5" },
+  { "ParameterKey": "BedrockGeoPrefix", "ParameterValue": "eu" }
+]
