@@ -1,16 +1,3 @@
-None selected
-
-Skip to content
-Using Gmail with screen readers
-9 of 192,207
-Git actions
-Inbox
-
-kunal shrivastava <kunalshrivastava.pune@gmail.com>
-Attachments
-1:41 PM (5 hours ago)
-to me
-
 Both cases are handled. The drift stage notices whether the stack already exists and picks the right change set type.
 
 | Stage | New stack (first deployment) | Next deployment (adding resources to an existing stack) |
@@ -53,6 +40,9 @@ The page is private, so your client can't open it until you share it from the pa
 All ten risks come straight from `latest_cft_deployment.yml`, so each one can be backed up by pointing at the line. Two that the client may question:
 - **Risk 7 (failure diagnostics):** for small templates, the "fetch failure reason" block in the old file never runs. GitHub stops the step as soon as `aws cloudformation deploy` fails, before it reaches that block.
 - **Risk 5 (parameters with spaces or commas):** if the WAF logs bucket parameter failure you hit earlier came from this workflow, that's a real example you can cite here.
+<img width="2080" height="2020" alt="image" src="https://github.com/user-attachments/assets/096da4b6-83ac-43ff-8dd1-39b48bc69822" />
+<img width="2080" height="3620" alt="image" src="https://github.com/user-attachments/assets/3032fc94-89d6-4ba3-a1e4-4991ba8a79c1" />
+<img width="2080" height="1734" alt="image" src="https://github.com/user-attachments/assets/42e2308e-a7a9-4691-a2cc-6846eba03ef1" />
 
 
 
@@ -60,5 +50,9 @@ All ten risks come straight from `latest_cft_deployment.yml`, so each one can be
 
 
 
- 6 Attachments
-  •  Scanned by Gmail
+
+
+
+
+
+
