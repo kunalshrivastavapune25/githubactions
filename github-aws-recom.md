@@ -1,3 +1,29 @@
+Currently, we manage our IaC deployments through GitHub Actions. We have GitHub pipelines that can be manually triggered by providing the target AWS account details, CloudFormation template, and parameter files, after which the infrastructure is deployed to the specified account.
+
+We are looking to move this deployment process to AWS-native CI/CD services and would like guidance from the AWS SMEs on the best approach to implement it.
+
+Our high-level requirements are as follows:
+
+Whenever code is merged into the main branch, an AWS CodePipeline should be triggered automatically.
+The pipeline should first perform a CloudFormation drift detection check on the target stack(s).
+If any drift is detected:
+The pipeline should stop immediately.
+A notification email should be sent to the relevant team with details of the detected drift.
+If no drift is detected, the pipeline should proceed with pre-deployment validation checks, including:
+CloudFormation/YAML syntax and formatting validation.
+Security and compliance scanning of the templates.
+Any AWS-recommended best practice checks.
+A CloudFormation Change Set should then be created, and an approval email should be sent clearly highlighting the proposed infrastructure changes and affected resources.
+Only after all validations and approvals have been completed should the deployment proceed.
+
+We would appreciate recommendations on the AWS-native services, tools, and best practices that can be used to implement this workflow.
+
+Additionally, since we have an AWS Organization consisting of 44 accounts, we would like guidance on the following:
+
+Should the CI/CD pipeline be hosted centrally in the Management/Root account, or would it be better to host it in a dedicated shared services/tooling account and deploy across accounts?
+Should GitHub be used only to deploy and manage the CI/CD pipeline itself, with all subsequent infrastructure deployments being handled by AWS-native services?
+
+
 # AWS-Native CI/CD Architecture for Multi-Account CloudFormation Deployments 
  
  ## High-Level Architecture 
