@@ -1,3 +1,10 @@
+Both dropdowns are in place, and all 19 test scenarios pass.
+
+GitHub's Run workflow form can't combine a dropdown with free typing in one box, so the region uses a dropdown with an `other` option, and a Custom region box appears beside it for that case.
+
+Here's the full updated file:
+
+```yaml
 # ─────────────────────────────────────────────────────────────────────────────
 #   🧰 Prepare  →  🔎 Drift check  →  📝 Change set      (you execute it in the AWS console)
 #
@@ -573,3 +580,6 @@ jobs:
               echo "</details>"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+```
+
+**Keep one thing in sync:** the alias dropdown only shows the 18 aliases in the `case` statement. If you add a new alias to the `case` in the Prepare stage, also add it to the `roleAlias` options list at the top, or it won't be selectable.
