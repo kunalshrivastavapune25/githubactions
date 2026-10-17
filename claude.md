@@ -1,6 +1,3 @@
-Here's the full file. It's the same content as the download, with no changes.
-
-```yaml
 # ─────────────────────────────────────────────────────────────────────────────
 #   🧰 Prepare  →  🔎 Drift check  →  📝 Change set      (you execute it in the AWS console)
 #
@@ -12,7 +9,7 @@ Here's the full file. It's the same content as the download, with no changes.
 #   Inputs, secrets and BUCKET_NAME are exactly the same as before.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CloudFormation Stack using S3 as required
-run-name: "📝 ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION }}"
+run-name: "📝 ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
 
 on:
   workflow_dispatch:
@@ -24,12 +21,41 @@ on:
         description: "Name of CloudFormation stack to deploy"
         required: true
       roleAlias:
-        description: "Alias for the IAM role to assume (e.g. NETWORK, DIRECTORY)"
+        description: "Alias for the IAM role to assume"
         required: true
+        type: choice
+        options:
+          - NETWORK
+          - DIRECTORY
+          - SECURITY
+          - SHAREDSERVICES
+          - MANAGEMENT
+          - LOGARCHIVE
+          - COREAUDIT
+          - MONITORING
+          - DIRECTORY-DEV
+          - DIRECTORY-PPE
+          - MONITORING-PPE
+          - SHAREDSERVICES-DEV
+          - SHAREDSERVICES-PPE
+          - SANDBOX
+          - TST-NETWORK
+          - PPE-NETWORK
+          - BACKUP
+          - CRV
       AWS_REGION:
-        description: "AWS Region for deployment"
+        description: "AWS Region for deployment – pick one, or 'other' and type it under Custom region"
         required: false
+        type: choice
         default: 'eu-west-1'
+        options:
+          - eu-west-1
+          - us-east-1
+          - other
+      CUSTOM_REGION:
+        description: "Only used when AWS Region is 'other' (e.g. ap-south-1)"
+        required: false
+        default: ''
 
 permissions:
   id-token: write
@@ -37,7 +63,7 @@ permissions:
 
 # One run per stack at a time: a second run on the same stack waits instead of colliding.
 concurrency:
-  group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION }}-${{ inputs.stackName }}
+  group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}-${{ inputs.stackName }}
   cancel-in-progress: false
 
 env:
@@ -46,7 +72,8 @@ env:
   STACK_NAME: ${{ inputs.stackName }}
   FOLDER_PATH: ${{ inputs.folderPath }}
   ROLE_ALIAS: ${{ inputs.roleAlias }}
-  REGION: ${{ inputs.AWS_REGION }}
+  # Region = the dropdown pick, or the Custom region text when the pick is 'other'
+  REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}
 
 defaults:
   run:
@@ -70,8 +97,17 @@ jobs:
       - name: Set role from alias
         id: setrole
         run: |
-          # Maps the alias to the NAME of the secret that holds the role ARN.
-          # Each stage reads that secret itself (GitHub drops secret values passed between jobs).
+          region_re='^[a-z]{2}(-[a-z]+)+-[0-9]+$'
+          if [[ ! "$REGION" =~ $region_re ]]; then
+            if [ "$REGION" = other ]; then
+              msg="Choose a region, or type one under 'Custom region' (e.g. ap-south-1)."
+            else
+              msg="'$REGION' is not a valid AWS region (e.g. eu-west-1)."
+            fi
+            echo "::error title=Invalid region::$msg"
+            exit 1
+          fi
+
           case "$ROLE_ALIAS" in
             NETWORK)            secret=NETWORK_SERVICES_ROLE ;;
             DIRECTORY)          secret=DIRECTORY_SERVICES_ROLE ;;
@@ -148,7 +184,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets[steps.setrole.outputs.secret] }}
           role-session-name: cft_deployment
-          aws-region: ${{ inputs.AWS_REGION }}
+          aws-region: ${{ env.REGION }}
 
       - name: Check stack status
         id: stack
@@ -212,7 +248,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets[needs.prepare.outputs.role_secret] }}
           role-session-name: cft_deployment
-          aws-region: ${{ inputs.AWS_REGION }}
+          aws-region: ${{ env.REGION }}
 
       - name: Detect drift
         run: |
@@ -308,7 +344,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}
           role-session-name: s3_upload
-          aws-region: ${{ inputs.AWS_REGION }}
+          aws-region: ${{ env.REGION }}
 
       - name: Generate pre-signed PUT/GET URLs and upload template
         if: needs.prepare.outputs.large == 'true'
@@ -334,7 +370,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets[needs.prepare.outputs.role_secret] }}
           role-session-name: cft_deployment
-          aws-region: ${{ inputs.AWS_REGION }}
+          aws-region: ${{ env.REGION }}
 
       - name: Create change set
         env:
@@ -537,4 +573,3 @@ jobs:
               echo "</details>"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-```
