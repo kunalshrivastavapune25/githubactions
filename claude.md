@@ -1,22 +1,41 @@
-Both dropdowns are in place, and all 19 test scenarios pass.
+I'll add the yes/no deploy switch as a separate **Deploy** stage after the change set, then write an EC2 test template. First I'm reading the current workflow and my test harness.
 
-GitHub's Run workflow form can't combine a dropdown with free typing in one box, so the region uses a dropdown with an `other` option, and a Custom region box appears beside it for that case.
+Tests pass first time, which I don't fully trust yet. I'm reading the real Deploy log and planting bugs to confirm the tests catch them.
 
-Here's the full updated file:
+Tests and checks are done. I'm now re-reading the final workflow so I can print it inline exactly.
+
+I added a `deploy` yes/no choice (default **no**) and a 🚀 **Deploy** stage after the change set. I also wrote an EC2 test stack with an end-to-end test plan. I haven't run any of it against real AWS. I tested the workflow against a simulated AWS CLI: 35 scenarios pass, including 14 new deploy cases. I also planted four bugs to check the tests catch them, and they did. The first real run will be the test of how CloudFormation actually behaves.
+
+## How the new switch behaves
+
+- **Deploy = no (default):** exactly as before. The pipeline stops at the change set and the Deploy box stays grey.
+- **Deploy = yes:** after the change set is created, the Deploy stage executes that same change set and follows the stack events live until it finishes.
+  - Green means `CREATE_COMPLETE` or `UPDATE_COMPLETE`.
+  - Red means a rollback, a failed rollback, or an obsolete change set. The log shows which resource failed and why.
+- **Skipped with Deploy = yes:** if drift is found, the change set fails, or there is nothing to change, Deploy is skipped and nothing is executed.
+- **No pause for review:** with Deploy = yes there is no point where you review the change set before it runs.
+- **Branch warning:** running Deploy = yes from an unmerged branch prints a warning.
+- **Run name:** it shows 🚀 for yes and 📝 for no.
+- **IAM:** the GitHub roles now need `cloudformation:ExecuteChangeSet` and `cloudformation:DescribeStackEvents`. If you leave `ExecuteChangeSet` off a role (for example the production ones), Deploy = yes simply fails there and Deploy = no keeps working.
+
+## Updated workflow
 
 ```yaml
 # ─────────────────────────────────────────────────────────────────────────────
-#   🧰 Prepare  →  🔎 Drift check  →  📝 Change set      (you execute it in the AWS console)
+#   🧰 Prepare  →  🔎 Drift check  →  📝 Change set  →  🚀 Deploy (only when Deploy = yes)
 #
 #   Every stage is its own job, so the run page draws them as connected boxes
 #   that turn green (passed), red (failed) or grey (skipped).
 #     • Drift check runs only for an existing stack – any drift stops the run.
-#     • The pipeline never deploys. It stops once the change set is ready, prints
-#       exactly what will change, and links straight to it in the AWS console.
-#   Inputs, secrets and BUCKET_NAME are exactly the same as before.
+#     • Change set prints exactly what will change and links to it in the AWS console.
+#     • Deploy = no (default): the pipeline stops there and nothing is deployed –
+#       you review the change set and execute it in the AWS console yourself.
+#     • Deploy = yes: the Deploy stage executes that same change set and follows the
+#       stack events until it finishes. It is skipped when there is nothing to change.
+#   Inputs, secrets and BUCKET_NAME are the same as before, plus the Deploy choice.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CloudFormation Stack using S3 as required
-run-name: "📝 ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
+run-name: "${{ inputs.deploy == 'yes' && '🚀' || '📝' }} ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
 
 on:
   workflow_dispatch:
@@ -63,6 +82,14 @@ on:
         description: "Only used when AWS Region is 'other' (e.g. ap-south-1)"
         required: false
         default: ''
+      deploy:
+        description: "Deploy the change set once it is created? 'no' = stop at the change set (you execute it in the console)"
+        required: false
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
 
 permissions:
   id-token: write
@@ -81,6 +108,7 @@ env:
   ROLE_ALIAS: ${{ inputs.roleAlias }}
   # Region = the dropdown pick, or the Custom region text when the pick is 'other'
   REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}
+  DEPLOY: ${{ inputs.deploy }}
 
 defaults:
   run:
@@ -104,6 +132,8 @@ jobs:
       - name: Set role from alias
         id: setrole
         run: |
+          # Maps the alias to the NAME of the secret that holds the role ARN.
+          # Each stage reads that secret itself (GitHub drops secret values passed between jobs).
           region_re='^[a-z]{2}(-[a-z]+)+-[0-9]+$'
           if [[ ! "$REGION" =~ $region_re ]]; then
             if [ "$REGION" = other ]; then
@@ -228,6 +258,12 @@ jobs:
               exit 1 ;;
           esac
           echo "🏗️  Stack      : $STACK_NAME – $plan"
+          if [ "$DEPLOY" = yes ]; then
+            dep="🚀 yes – the change set is executed right after it is created"
+          else
+            dep="✋ no – stops at the change set, you execute it in the console"
+          fi
+          echo "🚀 Deploy     : $dep"
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
 
           how="sent inline"
@@ -241,6 +277,7 @@ jobs:
             printf '| **Template** | `%s` (%s bytes, %s) |\n' "$TEMPLATE_FILE" "$SIZE" "$how"
             printf '| **Parameters** | `%s` |\n' "$PARAMS_FILE"
             printf '| **Plan** | %s |\n' "$plan"
+            printf '| **Deploy** | %s |\n' "$dep"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ── 2 · Drift check: existing stacks only – stop if anything drifted ──────────
@@ -331,12 +368,16 @@ jobs:
             printf '### 🔎 Drift check\n⚠️ %s – continuing.\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # ── 3 · Change set: create it, show what will change, then STOP ───────────────
+  # ── 3 · Change set: create it and show what will change ───────────────────────
   changeset:
     name: 📝 Change set
     needs: [prepare, drift]
     if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.drift.result == 'success' || needs.drift.result == 'skipped') }}
     runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.cs.outputs.has_changes }}
+      change_set: ${{ steps.cs.outputs.change_set }}
+      stack_id: ${{ steps.cs.outputs.stack_id }}
     env:
       TEMPLATE_FILE: ${{ needs.prepare.outputs.template_file }}
       PARAMS_FILE: ${{ needs.prepare.outputs.params_file }}
@@ -380,6 +421,7 @@ jobs:
           aws-region: ${{ env.REGION }}
 
       - name: Create change set
+        id: cs
         env:
           TEMPLATE_URL: ${{ steps.presign_upload.outputs.get_url }}
         run: |
@@ -478,6 +520,7 @@ jobs:
             echo "✅ No changes – the stack already matches this template and these parameters. Nothing to execute."
             aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" || true
             printf '### 📝 Change set\n✅ No changes – the stack is already up to date. Nothing to execute.\n' >> "$GITHUB_STEP_SUMMARY"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -548,7 +591,7 @@ jobs:
           others=$(aws cloudformation list-change-sets --stack-name "$STACK_NAME" --output json 2> /dev/null |
                      jq -r --arg me "$cs_name" '[.Summaries[]? | select(.ChangeSetName != $me and .ExecutionStatus == "AVAILABLE") | .ChangeSetName] | join(", ")' || true)
           if [ -n "$others" ]; then
-            echo "::warning title=Older change sets waiting::$STACK_NAME also has older change sets ready: $others. Execute only $cs_name, or delete the old ones."
+            echo "::warning title=Older change sets waiting::$STACK_NAME also has older change sets ready: $others. Don't execute them by mistake – delete any you no longer need."
           fi
 
           # Direct link to this change set in the console
@@ -556,17 +599,34 @@ jobs:
           enc() { jq -rn --arg v "$1" '$v | @uri'; }
           console="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/changesets/changes?stackId=$(enc "$stack_id")&changeSetId=$(enc "$cs_id")"
 
-          echo "✅ Change set $cs_name is ready. Nothing has been deployed."
-          echo "👉 Review and execute it in the AWS console (account $account · $ROLE_ALIAS · $REGION):"
-          echo "   $console"
-          echo "::notice title=Change set ready – not deployed::Review and execute $cs_name in the AWS console (account $account, $REGION). The link is in the log and the run summary."
+          {
+            echo "has_changes=true"
+            echo "change_set=$cs_name"
+            echo "stack_id=$stack_id"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$DEPLOY" = yes ]; then
+            echo "✅ Change set $cs_name is ready. Deploy = yes → the next stage executes it."
+            echo "   Follow it in the AWS console too (account $account · $ROLE_ALIAS · $REGION):"
+            echo "   $console"
+            echo "::notice title=Change set ready – deploying next::$cs_name is executed by the Deploy stage (account $account, $REGION)."
+            heading="### 📝 Change set ready – deploying next"
+            next=$(printf '🚀 **Deploy = yes** – the next stage executes this change set. [Open it in the AWS console](%s)' "$console")
+          else
+            echo "✅ Change set $cs_name is ready. Nothing has been deployed."
+            echo "👉 Review and execute it in the AWS console (account $account · $ROLE_ALIAS · $REGION):"
+            echo "   $console"
+            echo "::notice title=Change set ready – not deployed::Review and execute $cs_name in the AWS console (account $account, $REGION). The link is in the log and the run summary."
+            heading="### 📝 Change set ready for review – nothing deployed yet"
+            next=$(printf '👉 **[Review and execute it in the AWS console](%s)**' "$console")
+          fi
 
           {
-            echo "### 📝 Change set ready for review – nothing deployed yet"
+            echo "$heading"
             printf '`%s` (%s) on `%s` · account `%s` (%s) · %s\n\n' "$cs_name" "$cs_type" "$STACK_NAME" "$account" "$ROLE_ALIAS" "$REGION"
             printf '**%s** to add · **%s** to modify · **%s** to remove' "$n_add" "$n_mod" "$n_del"
             if [ "$n_rep" -gt 0 ]; then printf ' · ⚠️ **%s** replacement(s)' "$n_rep"; fi
-            printf '\n\n👉 **[Review and execute it in the AWS console](%s)**\n\n' "$console"
+            printf '\n\n%s\n\n' "$next"
             if [ "$n_all" -gt 0 ]; then
               echo "| Action | Resource | Type | Replacement |"
               echo "|---|---|---|---|"
@@ -580,6 +640,259 @@ jobs:
               echo "</details>"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 4 · Deploy: only when Deploy = yes – execute the change set and follow it ──
+  deploy:
+    name: 🚀 Deploy
+    needs: [prepare, changeset]
+    if: ${{ !cancelled() && inputs.deploy == 'yes' && needs.changeset.result == 'success' && needs.changeset.outputs.has_changes == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CHANGE_SET: ${{ needs.changeset.outputs.change_set }}
+      STACK_ID: ${{ needs.changeset.outputs.stack_id }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.prepare.outputs.role_secret] }}
+          role-session-name: cft_deployment
+          aws-region: ${{ env.REGION }}
+
+      - name: Execute change set and follow the stack events
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          lost="Could not read the stack from CloudFormation (the sign-in may have expired). The deployment is NOT cancelled – it keeps running in AWS, follow it in the console."
+
+          if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=Deploying from a branch::This run is on '$GITHUB_REF_NAME', not '$DEFAULT_BRANCH' – you are deploying code that is not merged yet."
+          fi
+
+          enc() { jq -rn --arg v "$1" '$v | @uri'; }
+          console="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/stackinfo?stackId=$(enc "$STACK_ID")"
+
+          # Note which events already exist, so only this deployment's events are shown
+          events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+            fail "Can't read stack events" "Nothing was deployed. The role needs cloudformation:DescribeStackEvents to follow a deployment."
+          jq -r '.StackEvents[]?.EventId' <<< "$events" > "$RUNNER_TEMP/seen.txt"
+          : > "$RUNNER_TEMP/events.txt"
+          : > "$RUNNER_TEMP/failed.txt"
+
+          echo "🚀 Executing change set $CHANGE_SET on $STACK_NAME …"
+          aws cloudformation execute-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" ||
+            fail "Execute failed" "CloudFormation did not start the change set (see the error above) – nothing was deployed. The role needs cloudformation:ExecuteChangeSet."
+          echo "▶ Started – following the stack events (checked every 15 s)"
+          echo
+
+          deadline=$((SECONDS + 3300))   # the sign-in lasts about an hour, so stop following after 55 minutes
+          while :; do
+            status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                       --query 'Stacks[0].StackStatus' --output text) || fail "Lost contact" "$lost"
+            cs_state=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" \
+                         --query ExecutionStatus --output text 2> /dev/null) || cs_state=UNKNOWN
+            events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+              fail "Lost contact" "$lost"
+
+            # New events only, oldest first
+            jq --rawfile seen "$RUNNER_TEMP/seen.txt" '
+              ($seen | split("\n")) as $s
+              | [.StackEvents[]? | select((.EventId as $i | $s | index($i)) == null)] | sort_by(.Timestamp)
+            ' <<< "$events" > "$RUNNER_TEMP/new.json"
+            jq -r '
+              def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+              .[] | "   \(.Timestamp[11:19])  \(.LogicalResourceId | pad(34)) \(.ResourceStatus)"
+                    + (if (.ResourceStatus | test("FAILED")) and .ResourceStatusReason != null
+                       then "\n        ↳ \(.ResourceStatusReason)" else "" end)
+            ' "$RUNNER_TEMP/new.json" | tee -a "$RUNNER_TEMP/events.txt"
+            jq -r '.[] | select(.ResourceStatus | test("FAILED")) | select(.ResourceStatusReason != null)
+                   | "\(.LogicalResourceId): \(.ResourceStatusReason)"' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/failed.txt"
+            jq -r '.[].EventId' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/seen.txt"
+
+            # Finished = the stack is no longer busy AND the change set has left AVAILABLE / EXECUTE_IN_PROGRESS
+            case "$status" in
+              *_IN_PROGRESS) ;;
+              *) case "$cs_state" in AVAILABLE|EXECUTE_IN_PROGRESS) ;; *) break ;; esac ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] ||
+              fail "Still running" "$STACK_NAME is still $status after 55 minutes. The deployment is NOT cancelled – follow it in the AWS console: $console"
+            sleep 15
+          done
+
+          # ── Verdict ──
+          msg=""
+          if [ "$cs_state" = OBSOLETE ]; then
+            msg="The change set became obsolete – another change reached the stack first, so this one was not deployed. Run the pipeline again."
+          else
+            case "$status" in
+              CREATE_COMPLETE|UPDATE_COMPLETE) ;;
+              UPDATE_ROLLBACK_COMPLETE)
+                msg="The update failed and CloudFormation rolled the stack back to its previous state." ;;
+              ROLLBACK_COMPLETE)
+                msg="The create failed and the stack was rolled back. Delete the stack in the CloudFormation console before running again." ;;
+              UPDATE_ROLLBACK_FAILED)
+                msg="The update failed and so did the rollback. In the console use Stack actions → Continue update rollback." ;;
+              ROLLBACK_FAILED)
+                msg="The create failed and so did the rollback. Delete the stack in the console (retain the resources that block it)." ;;
+              *)
+                msg="The stack ended as $status." ;;
+            esac
+          fi
+
+          {
+            echo "### 🚀 Deploy"
+            if [ -z "$msg" ]; then echo "✅ **Deployed** – the stack finished as \`$status\`."; else echo "❌ **Deploy failed** – $msg"; fi
+            printf '\n`%s` · change set `%s` · [open the stack in the AWS console](%s)\n' "$STACK_NAME" "$CHANGE_SET" "$console"
+            if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+              printf '\n**What failed**\n\n```text\n'
+              cat "$RUNNER_TEMP/failed.txt"
+              printf '```\n'
+            fi
+            printf '\n<details><summary>Stack events</summary>\n\n```text\n'
+            cat "$RUNNER_TEMP/events.txt"
+            printf '```\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo
+          if [ -z "$msg" ]; then
+            echo "✅ Deployed – $STACK_NAME is $status."
+            echo "::notice title=Deployed::$STACK_NAME finished as $status"
+            exit 0
+          fi
+          echo "❌ $msg"
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "What failed:"
+            sed 's/^/   • /' "$RUNNER_TEMP/failed.txt"
+          fi
+          echo "::error title=Deploy failed::$msg"
+          exit 1
 ```
 
-**Keep one thing in sync:** the alias dropdown only shows the 18 aliases in the `case` statement. If you add a new alias to the `case` in the Prepare stage, also add it to the `roleAlias` options list at the top, or it won't be selectable.
+## EC2 test stack
+
+Put these two files in one folder, for example `cloudformation/sandbox/ec2-test/`, and run the pipeline with the SANDBOX alias or another non-production one.
+
+**`ec2-test-template.yaml`**
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Pipeline test stack - one small EC2 instance with its own security group.
+  Cheap, harmless, and every property below can be changed or drifted to exercise the pipeline.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the security group
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet for the instance (must belong to the VPC above)
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux 2023 x86_64 AMI of this region (root device /dev/xvda)
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.nano, t3.micro, t3.small, t3.medium]
+    Description: Change it to see an in-place update (the instance is stopped and started)
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, tst, ppe, prd]
+  AllowedCidr:
+    Type: String
+    Default: 10.0.0.0/8
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$'
+    ConstraintDescription: Must look like 10.0.0.0/8
+    Description: Source range allowed to reach the instance on HTTPS
+
+Resources:
+  TestSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Pipeline test - HTTPS from the allowed range only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedCidr
+          Description: HTTPS from the allowed range
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  TestInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref TestSecurityGroup
+      MetadataOptions:
+        HttpTokens: required          # IMDSv2 only
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-instance'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: pipeline-test
+
+Outputs:
+  InstanceId:
+    Description: Test instance
+    Value: !Ref TestInstance
+  SecurityGroupId:
+    Description: Test security group
+    Value: !Ref TestSecurityGroup
+```
+
+**`params.json`** (replace the three `REPLACE_ME` values)
+
+```json
+[
+  { "ParameterKey": "VpcId",        "ParameterValue": "vpc-REPLACE_ME" },
+  { "ParameterKey": "SubnetId",     "ParameterValue": "subnet-REPLACE_ME" },
+  { "ParameterKey": "AmiId",        "ParameterValue": "ami-REPLACE_ME" },
+  { "ParameterKey": "InstanceType", "ParameterValue": "t3.micro" },
+  { "ParameterKey": "Environment",  "ParameterValue": "dev" },
+  { "ParameterKey": "AllowedCidr",  "ParameterValue": "10.0.0.0/8" }
+]
+```
+
+Things to know before you run it:
+- **AMI:** it must be valid for your region. A quick way to get one:
+  `aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --region eu-west-1 --query Parameter.Value --output text`
+- **VPC and subnet:** any private subnet works, because nothing needs to reach the instance.
+- **AMI is a fixed parameter on purpose:** a "latest AMI" lookup would show up as an instance replacement whenever AWS publishes a new image, and that would muddy your tests.
+- **Permissions:** the sandbox role needs normal EC2 create and modify rights. The instance uses an encrypted volume and IMDSv2 only, which some landing-zone SCPs require.
+- **Drift:** the template sets the security group rule and the tags explicitly. CloudFormation drift detection only checks properties the template sets, so these are the ones you can drift.
+- **Cost:** about one cent an hour. Delete the stack in the console when you're done, since the pipeline never deletes.
+
+## End-to-end test plan
+
+Use a stack name like `pipeline-ec2-test`, region `eu-west-1`.
+
+| # | What you do | Deploy | What you should see |
+|---|---|---|---|
+| 1 | First run as is | **no** | Create change set with 2 resources to add; drift skipped; Deploy grey. Open the console link and **Execute** it yourself to test the manual path. |
+| 2 | Run again, no edits | yes | Drift ✅ green, "No changes", Deploy grey. |
+| 3 | Add a tag to the instance in the template | yes | 1 modify; Deploy ✅ with live events. |
+| 4 | In `params.json`, change `InstanceType` to `t3.small` | no, then yes | The change set shows `"t3.micro" → "t3.small"`; the instance is stopped and started. |
+| 5 | **Drift:** in the console, add an inbound rule (say 8080 from `10.0.0.0/8`) to the security group and change the instance's Name tag. Then run with any change. | yes | Drift ❌ red with expected-versus-actual per property; Change set and Deploy grey; nothing executed. Revert the manual edits, re-run and it goes green. |
+| 6 | Change the security group's `GroupDescription` text | no | `⚠ REPLACEMENT` warning on the security group. Skip executing it, or run it with yes. |
+| 7 | **Failure during deploy:** set `AllowedCidr` to `300.0.0.0/8` | yes | Change set ✅, Deploy ❌ with the EC2 error and `UPDATE_ROLLBACK_COMPLETE`. EC2 should reject this CIDR during execution. The stack returns to its previous state. |
+| 8 | **Failure at change-set stage:** set `AmiId` to a well-formed AMI ID that doesn't exist | either | Change set ❌, nothing created. |
+| 9 | Delete the stack in the console | – | Cleanup. |
+
+Next, if you want it: a GitHub Environment approval on the Deploy stage, so Deploy = yes pauses for a named approver.
