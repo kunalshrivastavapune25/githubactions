@@ -1,0 +1,1278 @@
+I'll build this as a small AWS CodePipeline with an approval step and an execute step, plus the GitHub change that triggers it. First I'm checking a few CodePipeline rules that decide the design: whether a pipeline needs a source stage, how parallel runs and variables behave, and what approvals cost.
+
+Template structure checks out: every reference resolves, there are no dependency loops, and all pipeline variables are declared. Now updating the workflow's Deploy stage.
+
+All 45 scenarios pass. I'm planting bugs in the new safety paths to confirm the tests catch them.
+
+Every planted bug is caught. Running the final syntax checks, then I'll print everything.
+
+I built the gatekeeper as a small AWS pipeline with an approval step and an execute step, and changed the GitHub workflow to start it. I tested it against a simulated AWS CLI only: 45 scenarios pass, 10 of them new gatekeeper cases, and four bugs I planted on purpose were all caught. I also checked the template's structure (every reference resolves, no dependency loops), but I haven't deployed it to real AWS. Its first deployment in your sandbox account will be the real test.
+
+## The one thing that isn't exactly as you described
+
+AWS CodePipeline requires the first stage of every pipeline to be a "source" stage, so a pipeline with only Approve and Execute isn't allowed. I added a small first stage called **Request**. It picks up a JSON record the workflow uploads (stack, change set, who ran it, commit, link to the GitHub run). It never starts the pipeline on its own, so in practice your pipeline still has just the two steps:
+
+```
+GitHub (Deploy = yes)                              AWS – same account and region as the stack
+ Prepare → Drift → Change set → Deploy ──starts──► ① Request  saves the request record (required first stage)
+                                   │               ② Approve  ── SNS email ──► approvers
+                                   │                            Approve or Reject in the AWS console
+                                   │               ③ Execute  executes the change set
+                                   │                            ↓
+                                   │               Email: approved / rejected or expired / executed / failed
+                                   └── GitHub run ends green: "🛂 Waiting for gatekeeper approval"
+```
+
+## How it behaves
+
+- **The account decides, not the person running the workflow.** With Deploy = yes, the Deploy stage looks for a pipeline named `cfn-changeset-approval` in that account and region.
+  - If it exists, GitHub uploads the request, starts the pipeline, and stops. GitHub never executes the change set.
+  - If it doesn't exist, the change set is executed straight away, as it works today.
+  - So you only deploy the gatekeeper into accounts that need approval, for example production.
+- **Errors never skip the approval.** Only a "pipeline not found" answer leads to direct execution. Any other error, such as missing permission or a same-named pipeline that isn't the gatekeeper, stops the run with nothing deployed.
+- **The approval email** contains a link to the change set, the GitHub run link, and who requested it. Approvers review the change set, then click Approve or Reject in the console.
+- **A request expires after 7 days** with no decision (adjustable up to 60 days). The change set stays untouched.
+- **Requests don't block each other.** The pipeline runs in PARALLEL mode, so each request waits for its own decision.
+- **Cost:** waiting at an approval isn't billed. The execute step costs $0.002 per minute.
+- **Why one copy per account:** CodePipeline's built-in "execute change set" step can't switch to a different account per request. Keeping a copy in each account avoids cross-account roles and any extra code. If a gated account also deploys to `us-east-1`, it needs a second copy in that region.
+
+## 1. Gatekeeper template
+
+Put this in a folder such as `cloudformation/<account-folder>/cfn-gatekeeper/`.
+
+**`cfn-gatekeeper-template.yaml`**
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Gatekeeper for the GitHub CloudFormation workflow. When the workflow runs with Deploy = yes,
+  it starts this pipeline instead of executing the change set itself: approvers get an email,
+  and the change set is executed only after someone approves. Deploy one copy in every
+  account and region where deployments must be approved.
+
+Parameters:
+  PipelineName:
+    Type: String
+    Default: cfn-changeset-approval
+    AllowedPattern: '^[A-Za-z0-9.@_-]{1,100}$'
+    Description: Must match APPROVAL_PIPELINE in the GitHub workflow
+  ApproverEmail:
+    Type: String
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: Must be an email address
+    Description: Who is asked to approve (a team distribution list works best)
+  ApproverEmail2:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: Must be empty or an email address
+    Description: Optional second approver address
+  ApproverEmail3:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: Must be empty or an email address
+    Description: Optional third approver address
+  ApprovalTimeoutMinutes:
+    Type: Number
+    Default: 10080
+    MinValue: 5
+    MaxValue: 86400
+    Description: How long a request waits for a decision before it expires (10080 = 7 days)
+  ExecutionPolicyArn:
+    Type: String
+    Default: arn:aws:iam::aws:policy/AdministratorAccess
+    Description: >-
+      Permissions used when the change set is executed. CloudFormation makes the resource changes
+      with these permissions, so they must cover everything your templates create or change.
+
+Conditions:
+  HasApprover2: !Not [!Equals [!Ref ApproverEmail2, '']]
+  HasApprover3: !Not [!Equals [!Ref ApproverEmail3, '']]
+
+Resources:
+  # ── Request bucket: holds each approval request (versioned = full history) and the pipeline artifacts ──
+  RequestBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: tidy-old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 365
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  RequestBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RequestBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt RequestBucket.Arn
+              - !Sub '${RequestBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # ── Approvers: every address must click "Confirm subscription" in the first email ──
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${PipelineName}-approvers'
+      DisplayName: CFN Gatekeeper
+
+  ApproverSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref ApproverEmail
+
+  ApproverSubscription2:
+    Type: AWS::SNS::Subscription
+    Condition: HasApprover2
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref ApproverEmail2
+
+  ApproverSubscription3:
+    Type: AWS::SNS::Subscription
+    Condition: HasApprover3
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref ApproverEmail3
+
+  ApprovalTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref ApprovalTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: OutcomeEmails
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref ApprovalTopic
+            Condition:
+              ArnEquals:
+                'aws:SourceArn': !GetAtt OutcomeRule.Arn
+
+  # ── Roles: the pipeline itself (minimal) and the one that executes change sets ──
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Gatekeeper pipeline service role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: gatekeeper-pipeline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RequestsAndArtifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetObjectTagging
+                  - s3:GetObjectVersionTagging
+                  - s3:PutObject
+                Resource: !Sub '${RequestBucket.Arn}/*'
+              - Sid: RequestBucket
+                Effect: Allow
+                Action:
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketLocation
+                  - s3:GetBucketAcl
+                  - s3:ListBucket
+                Resource: !GetAtt RequestBucket.Arn
+              - Sid: EmailApprovers
+                Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref ApprovalTopic
+
+  ChangeSetExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Executes approved change sets for the gatekeeper pipeline
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt PipelineRole.Arn
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref ExecutionPolicyArn
+      Policies:
+        - PolicyName: execute-change-sets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplate
+                Resource: '*'
+
+  # Separate policy so the two roles above don't reference each other in a loop
+  PipelineCanUseExecutionRole:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: use-change-set-execution-role
+      Roles:
+        - !Ref PipelineRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt ChangeSetExecutionRole.Arn
+
+  # ── The pipeline: Request (placeholder, required by CodePipeline) → Approve → Execute ──
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: PipelineCanUseExecutionRole
+    Properties:
+      Name: !Ref PipelineName
+      PipelineType: V2
+      ExecutionMode: PARALLEL   # each request waits for its own decision – one never blocks or replaces another
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref RequestBucket
+      Variables:                # filled in by the GitHub workflow for every request
+        - Name: StackName
+          DefaultValue: not-set
+          Description: Stack the change set belongs to
+        - Name: ChangeSetName
+          DefaultValue: not-set
+          Description: Change set to execute
+        - Name: RequestedBy
+          DefaultValue: unknown
+          Description: GitHub user who ran the workflow
+        - Name: RunUrl
+          DefaultValue: https://github.com
+          Description: GitHub Actions run that created the change set
+        - Name: ChangeSetUrl
+          DefaultValue: https://console.aws.amazon.com/cloudformation/home
+          Description: Console link to the change set
+      Stages:
+        # CodePipeline insists the first stage is a source. This one only picks up the
+        # request record the workflow uploads – it never triggers the pipeline by itself.
+        - Name: Request
+          Actions:
+            - Name: ApprovalRequest
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              Configuration:
+                S3Bucket: !Ref RequestBucket
+                S3ObjectKey: approval-request.json
+                PollForSourceChanges: 'false'
+              OutputArtifacts:
+                - Name: ApprovalRequest
+
+        - Name: Approve
+          Actions:
+            - Name: Approval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              TimeoutInMinutes: !Ref ApprovalTimeoutMinutes
+              Configuration:
+                NotificationArn: !Ref ApprovalTopic
+                ExternalEntityLink: '#{variables.ChangeSetUrl}'
+                CustomData: >-
+                  Execute change set #{variables.ChangeSetName} on stack #{variables.StackName}?
+                  Requested by #{variables.RequestedBy}; all GitHub checks passed.
+                  Review the change set (link below), then Approve to execute it or Reject to stop.
+                  Run: #{variables.RunUrl}
+
+        - Name: Execute
+          Actions:
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              RoleArn: !GetAtt ChangeSetExecutionRole.Arn
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                StackName: '#{variables.StackName}'
+                ChangeSetName: '#{variables.ChangeSetName}'
+
+  # ── Outcome emails: approved, rejected/expired, executed, execution failed ──
+  OutcomeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Emails the approvers the outcome of each gatekeeper request
+      EventPattern:
+        source:
+          - aws.codepipeline
+        detail-type:
+          - CodePipeline Action Execution State Change
+        detail:
+          pipeline:
+            - !Ref PipelineName
+          action:
+            - Approval
+            - ExecuteChangeSet
+          state:
+            - SUCCEEDED
+            - FAILED
+      Targets:
+        - Id: approvers
+          Arn: !Ref ApprovalTopic
+          InputTransformer:
+            InputPathsMap:
+              action: $.detail.action
+              state: $.detail.state
+              execution: $.detail.execution-id
+            InputTemplate: !Sub >-
+              "${PipelineName}: <action> <state>. (Approval FAILED means rejected or expired.)
+              Details: https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${PipelineName}/executions/<execution>/timeline?region=${AWS::Region}"
+
+Outputs:
+  PipelineName:
+    Description: Gatekeeper pipeline (the GitHub workflow looks for this name)
+    Value: !Ref Pipeline
+  ApprovalTopicArn:
+    Description: Approvers' email topic
+    Value: !Ref ApprovalTopic
+  RequestBucketName:
+    Description: Bucket the workflow uploads approval requests to
+    Value: !Ref RequestBucket
+  ChangeSetExecutionRoleArn:
+    Description: Role that executes approved change sets
+    Value: !GetAtt ChangeSetExecutionRole.Arn
+```
+
+**`params.json`** (set the approver email)
+
+```json
+[
+  { "ParameterKey": "PipelineName",           "ParameterValue": "cfn-changeset-approval" },
+  { "ParameterKey": "ApproverEmail",          "ParameterValue": "cloud-approvers@REPLACE_ME.com" },
+  { "ParameterKey": "ApproverEmail2",         "ParameterValue": "" },
+  { "ParameterKey": "ApproverEmail3",         "ParameterValue": "" },
+  { "ParameterKey": "ApprovalTimeoutMinutes", "ParameterValue": "10080" },
+  { "ParameterKey": "ExecutionPolicyArn",     "ParameterValue": "arn:aws:iam::aws:policy/AdministratorAccess" }
+]
+```
+
+## 2. Updated workflow
+
+Only the Deploy stage changed in substance. The other changes are a new `APPROVAL_PIPELINE` setting, one new output from the change set stage (the change set ID, used for the email link), and some wording.
+
+```yaml
+# ─────────────────────────────────────────────────────────────────────────────
+#   🧰 Prepare  →  🔎 Drift check  →  📝 Change set  →  🚀 Deploy (only when Deploy = yes)
+#
+#   Every stage is its own job, so the run page draws them as connected boxes
+#   that turn green (passed), red (failed) or grey (skipped).
+#     • Drift check runs only for an existing stack – any drift stops the run.
+#     • Change set prints exactly what will change and links to it in the AWS console.
+#     • Deploy = no (default): the pipeline stops there and nothing is deployed –
+#       you review the change set and execute it in the AWS console yourself.
+#     • Deploy = yes: the Deploy stage takes over (skipped when there is nothing to change):
+#         – the account has the gatekeeper pipeline (APPROVAL_PIPELINE) → approvers are
+#           emailed and AWS executes the change set only after someone approves;
+#         – no gatekeeper pipeline → the change set is executed straight away and followed.
+#   Inputs, secrets and BUCKET_NAME are the same as before, plus the Deploy choice.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CloudFormation Stack using S3 as required
+run-name: "${{ inputs.deploy == 'yes' && '🚀' || '📝' }} ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      folderPath:
+        description: "Path under cloudformation/ (e.g. 'vpc' or 'network/peering')"
+        required: true
+      stackName:
+        description: "Name of CloudFormation stack to deploy"
+        required: true
+      roleAlias:
+        description: "Alias for the IAM role to assume"
+        required: true
+        type: choice
+        options:
+          - NETWORK
+          - DIRECTORY
+          - SECURITY
+          - SHAREDSERVICES
+          - MANAGEMENT
+          - LOGARCHIVE
+          - COREAUDIT
+          - MONITORING
+          - DIRECTORY-DEV
+          - DIRECTORY-PPE
+          - MONITORING-PPE
+          - SHAREDSERVICES-DEV
+          - SHAREDSERVICES-PPE
+          - SANDBOX
+          - TST-NETWORK
+          - PPE-NETWORK
+          - BACKUP
+          - CRV
+      AWS_REGION:
+        description: "AWS Region for deployment – pick one, or 'other' and type it under Custom region"
+        required: false
+        type: choice
+        default: 'eu-west-1'
+        options:
+          - eu-west-1
+          - us-east-1
+          - other
+      CUSTOM_REGION:
+        description: "Only used when AWS Region is 'other' (e.g. ap-south-1)"
+        required: false
+        default: ''
+      deploy:
+        description: "Deploy the change set once it is created? 'no' = stop at the change set (you execute it in the console)"
+        required: false
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+
+permissions:
+  id-token: write
+  contents: read
+
+# One run per stack at a time: a second run on the same stack waits instead of colliding.
+concurrency:
+  group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}-${{ inputs.stackName }}
+  cancel-in-progress: false
+
+env:
+  BUCKET_NAME: ss-cfts3
+  # The workflow inputs, handed to the scripts as plain env vars (nothing new to configure).
+  STACK_NAME: ${{ inputs.stackName }}
+  FOLDER_PATH: ${{ inputs.folderPath }}
+  ROLE_ALIAS: ${{ inputs.roleAlias }}
+  # Region = the dropdown pick, or the Custom region text when the pick is 'other'
+  REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}
+  DEPLOY: ${{ inputs.deploy }}
+  # Gatekeeper pipeline (cfn-gatekeeper-template.yaml). Accounts that have it can only deploy after approval.
+  APPROVAL_PIPELINE: cfn-changeset-approval
+
+defaults:
+  run:
+    shell: bash   # runs as bash -eo pipefail: any failing command fails the stage
+
+jobs:
+  # ── 1 · Prepare: resolve the role, find the files, check the stack ─────────────
+  prepare:
+    name: 🧰 Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      role_secret: ${{ steps.setrole.outputs.secret }}
+      template_file: ${{ steps.find_files.outputs.template_file }}
+      params_file: ${{ steps.find_files.outputs.params_file }}
+      large: ${{ steps.find_files.outputs.large }}
+      mode: ${{ steps.stack.outputs.mode }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set role from alias
+        id: setrole
+        run: |
+          # Maps the alias to the NAME of the secret that holds the role ARN.
+          # Each stage reads that secret itself (GitHub drops secret values passed between jobs).
+          region_re='^[a-z]{2}(-[a-z]+)+-[0-9]+$'
+          if [[ ! "$REGION" =~ $region_re ]]; then
+            if [ "$REGION" = other ]; then
+              msg="Choose a region, or type one under 'Custom region' (e.g. ap-south-1)."
+            else
+              msg="'$REGION' is not a valid AWS region (e.g. eu-west-1)."
+            fi
+            echo "::error title=Invalid region::$msg"
+            exit 1
+          fi
+
+          case "$ROLE_ALIAS" in
+            NETWORK)            secret=NETWORK_SERVICES_ROLE ;;
+            DIRECTORY)          secret=DIRECTORY_SERVICES_ROLE ;;
+            SECURITY)           secret=SECURITY_INFRA_ROLE ;;
+            SHAREDSERVICES)     secret=SHAREDSERVICES_ROLE ;;
+            MANAGEMENT)         secret=MGMT_ROLE ;;
+            LOGARCHIVE)         secret=LOGARCHIVE_ROLE ;;
+            COREAUDIT)          secret=COREAUDIT_ROLE ;;
+            MONITORING)         secret=MONITORING_ROLE ;;
+            DIRECTORY-DEV)      secret=DIRECTORY_SERVICES_DEV_ROLE ;;
+            DIRECTORY-PPE)      secret=DIRECTORY_SERVICES_PPE_ROLE ;;
+            MONITORING-PPE)     secret=PPE_MONITORING_SERVICE_ROLE ;;
+            SHAREDSERVICES-DEV) secret=DEV_SHAREDSERVICES_ROLE ;;
+            SHAREDSERVICES-PPE) secret=PPE_SHARED_SERVICE_ROLE ;;
+            SANDBOX)            secret=SANDBOX_ROLE ;;
+            TST-NETWORK)        secret=TST_NETWORK_SERVICE_ROLE ;;
+            PPE-NETWORK)        secret=PPE_NETWORK_SERVICE_ROLE ;;
+            BACKUP)             secret=BACKUP_ROLE ;;
+            CRV)                secret=CRV_ROLE ;;
+            # Add more mappings here
+            *)
+              echo "::error title=Unknown role alias::No secret found for alias '$ROLE_ALIAS'"
+              exit 1
+              ;;
+          esac
+          echo "🔑 Role alias : $ROLE_ALIAS → secret $secret"
+          echo "secret=$secret" >> "$GITHUB_OUTPUT"
+
+      - name: Find template and params
+        id: find_files
+        env:
+          ROLE_ARN: ${{ secrets[steps.setrole.outputs.secret] }}
+        run: |
+          fail() { echo "::error title=Prepare failed::$1"; exit 1; }
+
+          [ -n "$ROLE_ARN" ] || fail "The secret for role alias '$ROLE_ALIAS' is empty or not set."
+          [[ "$STACK_NAME" =~ ^[A-Za-z][A-Za-z0-9-]{0,127}$ ]] ||
+            fail "'$STACK_NAME' is not a valid stack name (letters, digits and hyphens, starting with a letter)."
+
+          dir="cloudformation/${FOLDER_PATH}"
+          [ -d "$dir" ] || fail "Folder $dir not found."
+
+          # Template directly in the folder first; sub-folders only as a fallback (as before).
+          match=( -type f \( -iname "*-template.yaml" -o -iname "*-template.yml" \) )
+          mapfile -t found < <(find "$dir" -maxdepth 1 "${match[@]}" | sort)
+          [ "${#found[@]}" -gt 0 ] || mapfile -t found < <(find "$dir" "${match[@]}" | sort)
+          [ "${#found[@]}" -gt 0 ] || fail "No template matching '*-template.y[a]ml' found in $dir"
+          if [ "${#found[@]}" -gt 1 ]; then
+            echo "::warning title=More than one template::${#found[@]} templates in $dir – using ${found[0]}"
+          fi
+          template_file="${found[0]}"
+
+          params_file="$dir/params.json"
+          [ -f "$params_file" ] || fail "params.json not found in $dir"
+          jq -e 'type == "array"' "$params_file" > /dev/null ||
+            fail "$params_file must be a JSON list of ParameterKey/ParameterValue objects."
+
+          size=$(stat --format=%s "$template_file")
+          large=false
+          if [ "$size" -gt 51200 ]; then large=true; fi
+
+          echo "📄 Template   : $template_file ($size bytes)"
+          echo "📄 Parameters : $params_file ($(jq length "$params_file") entries)"
+          if [ "$large" = true ]; then echo "📦 Over 51,200 bytes – the template will go through S3."; fi
+          {
+            echo "template_file=$template_file"
+            echo "params_file=$params_file"
+            echo "size=$size"
+            echo "large=$large"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[steps.setrole.outputs.secret] }}
+          role-session-name: cft_deployment
+          aws-region: ${{ env.REGION }}
+
+      - name: Check stack status
+        id: stack
+        env:
+          TEMPLATE_FILE: ${{ steps.find_files.outputs.template_file }}
+          PARAMS_FILE: ${{ steps.find_files.outputs.params_file }}
+          SIZE: ${{ steps.find_files.outputs.size }}
+          LARGE: ${{ steps.find_files.outputs.large }}
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          echo "☁️  Account    : $account ($REGION)"
+
+          if ! status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                          --query 'Stacks[0].StackStatus' --output text 2> "$RUNNER_TEMP/err"); then
+            grep -q 'does not exist' "$RUNNER_TEMP/err" || { cat "$RUNNER_TEMP/err"; exit 1; }
+            status=NOT_FOUND
+          fi
+
+          case "$status" in
+            NOT_FOUND|REVIEW_IN_PROGRESS)
+              mode=create
+              plan="🆕 New stack → CREATE change set (drift check not needed)" ;;
+            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE|IMPORT_COMPLETE|IMPORT_ROLLBACK_COMPLETE)
+              mode=update
+              plan="🔄 Exists ($status) → drift check, then UPDATE change set" ;;
+            ROLLBACK_COMPLETE)
+              echo "::error title=Stack can't be updated::$STACK_NAME is in ROLLBACK_COMPLETE (its first create failed). Delete the stack in the console, then re-run."
+              exit 1 ;;
+            *_IN_PROGRESS)
+              echo "::error title=Stack is busy::$STACK_NAME is $status. Wait for it to finish, then re-run."
+              exit 1 ;;
+            *)
+              echo "::error title=Stack can't be updated::$STACK_NAME is in $status. Fix it in the CloudFormation console, then re-run."
+              exit 1 ;;
+          esac
+          echo "🏗️  Stack      : $STACK_NAME – $plan"
+          if [ "$DEPLOY" = yes ]; then
+            dep="🚀 yes – executed after the change set is created (after approval, if this account has the gatekeeper pipeline)"
+          else
+            dep="✋ no – stops at the change set, you execute it in the console"
+          fi
+          echo "🚀 Deploy     : $dep"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+          how="sent inline"
+          if [ "$LARGE" = true ]; then how="uploaded to S3 – over 51,200 bytes"; fi
+          {
+            echo "### 🧰 Prepare"
+            echo "| | |"
+            echo "|---|---|"
+            printf '| **Stack** | `%s` |\n' "$STACK_NAME"
+            printf '| **Account** | %s · `%s` · %s |\n' "$ROLE_ALIAS" "$account" "$REGION"
+            printf '| **Template** | `%s` (%s bytes, %s) |\n' "$TEMPLATE_FILE" "$SIZE" "$how"
+            printf '| **Parameters** | `%s` |\n' "$PARAMS_FILE"
+            printf '| **Plan** | %s |\n' "$plan"
+            printf '| **Deploy** | %s |\n' "$dep"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 2 · Drift check: existing stacks only – stop if anything drifted ──────────
+  drift:
+    name: 🔎 Drift check
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'update'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.prepare.outputs.role_secret] }}
+          role-session-name: cft_deployment
+          aws-region: ${{ env.REGION }}
+
+      - name: Detect drift
+        run: |
+          echo "🔎 Checking $STACK_NAME for drift (changes made outside CloudFormation)…"
+          id=$(aws cloudformation detect-stack-drift --stack-name "$STACK_NAME" \
+                 --query StackDriftDetectionId --output text)
+          while :; do
+            res=$(aws cloudformation describe-stack-drift-detection-status \
+                    --stack-drift-detection-id "$id" --output json)
+            [ "$(jq -r .DetectionStatus <<< "$res")" = DETECTION_IN_PROGRESS ] || break
+            echo "   … still checking"
+            sleep 10
+          done
+          detection=$(jq -r .DetectionStatus <<< "$res")
+          drift=$(jq -r '.StackDriftStatus // "UNKNOWN"' <<< "$res")
+          count=$(jq -r '.DriftedStackResourceCount // 0' <<< "$res")
+          reason=$(jq -r '.DetectionStatusReason // ""' <<< "$res")
+
+          if [ "$drift" = DRIFTED ]; then
+            aws cloudformation describe-stack-resource-drifts --stack-name "$STACK_NAME" \
+              --stack-resource-drift-status-filters MODIFIED DELETED --output json > "$RUNNER_TEMP/drift.json"
+
+            # Drifted resources as a table, then the property-level differences
+            jq -r '
+              def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+              "   \("DRIFT" | pad(10))\("RESOURCE" | pad(40))\("TYPE" | pad(42))PHYSICAL ID",
+              (.StackResourceDrifts[]
+               | "   \(.StackResourceDriftStatus | pad(10))\(.LogicalResourceId | pad(40))\(.ResourceType | pad(42))\(.PhysicalResourceId // "-")")
+            ' "$RUNNER_TEMP/drift.json" > "$RUNNER_TEMP/drift_table.txt"
+            jq -r '
+              .StackResourceDrifts[] | select(.StackResourceDriftStatus == "MODIFIED")
+              | .LogicalResourceId as $id | .PropertyDifferences[]?
+              | "• \($id) → \(.PropertyPath) (\(.DifferenceType))\n    expected: \(.ExpectedValue)\n    actual  : \(.ActualValue)"
+            ' "$RUNNER_TEMP/drift.json" > "$RUNNER_TEMP/drift_diff.txt"
+
+            echo
+            echo "❌ DRIFT FOUND – $count resource(s) no longer match the template:"
+            echo
+            cat "$RUNNER_TEMP/drift_table.txt"
+            if [ -s "$RUNNER_TEMP/drift_diff.txt" ]; then
+              echo
+              echo "What changed (expected = template, actual = live in AWS):"
+              cat "$RUNNER_TEMP/drift_diff.txt"
+            fi
+            echo
+            echo "⛔ Stopping before the change set. Undo the manual change (or add it to the template), then re-run."
+
+            {
+              echo "### 🔎 Drift check"
+              echo "❌ **Drift found in $count resource(s) – run stopped before the change set.**"
+              echo
+              echo "| Drift | Resource | Type | Physical ID |"
+              echo "|---|---|---|---|"
+              jq -r '.StackResourceDrifts[] | "| \(.StackResourceDriftStatus) | `\(.LogicalResourceId)` | \(.ResourceType) | \(.PhysicalResourceId // "-") |"' "$RUNNER_TEMP/drift.json"
+              if [ -s "$RUNNER_TEMP/drift_diff.txt" ]; then
+                echo
+                echo '```text'
+                cat "$RUNNER_TEMP/drift_diff.txt"
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Drift detected::$count resource(s) in $STACK_NAME drifted from the template – stopped before the change set."
+            exit 1
+          fi
+
+          if [ "$drift" = IN_SYNC ] && [ "$detection" = DETECTION_COMPLETE ]; then
+            echo "✅ No drift – every resource matches the template."
+            printf '### 🔎 Drift check\n✅ No drift – the stack matches its template.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            msg="Drift check couldn't cover every resource ($detection, $drift)${reason:+: $reason}"
+            echo "⚠️  $msg – continuing."
+            echo "::warning title=Drift check incomplete::$msg"
+            printf '### 🔎 Drift check\n⚠️ %s – continuing.\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── 3 · Change set: create it and show what will change ───────────────────────
+  changeset:
+    name: 📝 Change set
+    needs: [prepare, drift]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.drift.result == 'success' || needs.drift.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.cs.outputs.has_changes }}
+      change_set: ${{ steps.cs.outputs.change_set }}
+      change_set_id: ${{ steps.cs.outputs.change_set_id }}
+      stack_id: ${{ steps.cs.outputs.stack_id }}
+    env:
+      TEMPLATE_FILE: ${{ needs.prepare.outputs.template_file }}
+      PARAMS_FILE: ${{ needs.prepare.outputs.params_file }}
+      MODE: ${{ needs.prepare.outputs.mode }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials for S3 upload
+        if: needs.prepare.outputs.large == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}
+          role-session-name: s3_upload
+          aws-region: ${{ env.REGION }}
+
+      - name: Generate pre-signed PUT/GET URLs and upload template
+        if: needs.prepare.outputs.large == 'true'
+        id: presign_upload
+        run: |
+          key="${STACK_NAME}-$(date +%s).yaml"   # unique key per run
+          echo "📦 Uploading the large template to S3 as $key"
+          pip install --quiet boto3
+          urls=$(python cloudformation/production/shared_services/Github_s3/presign.py "$key")
+          put_url=$(grep '^put_url=' <<< "$urls" | cut -d'=' -f2- || true)
+          get_url=$(grep '^get_url=' <<< "$urls" | cut -d'=' -f2- || true)
+          if [ -z "$put_url" ] || [ -z "$get_url" ]; then
+            echo "::error title=Upload failed::presign.py did not return put_url and get_url"
+            exit 1
+          fi
+          curl --fail --silent --show-error -X PUT -T "$TEMPLATE_FILE" "$put_url" ||
+            { echo "::error title=Upload failed::Could not upload the template to S3"; exit 1; }
+          echo "✔ Uploaded"
+          echo "get_url=$get_url" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.prepare.outputs.role_secret] }}
+          role-session-name: cft_deployment
+          aws-region: ${{ env.REGION }}
+
+      - name: Create change set
+        id: cs
+        env:
+          TEMPLATE_URL: ${{ steps.presign_upload.outputs.get_url }}
+        run: |
+          if [ -n "$TEMPLATE_URL" ]; then
+            tpl=(--template-url "$TEMPLATE_URL")
+          else
+            tpl=(--template-body "file://$TEMPLATE_FILE")
+          fi
+
+          echo "🧪 Checking template…"
+          aws cloudformation get-template-summary "${tpl[@]}" --output json > "$RUNNER_TEMP/template.json"
+          echo "✔ Template OK – $(jq '.Parameters // [] | length' "$RUNNER_TEMP/template.json") parameter(s) declared"
+
+          # Parameters follow the same rules as `aws cloudformation deploy`:
+          #   • value from params.json when it's there
+          #   • not in params.json → existing stack keeps its current value, new stack uses the template default
+          #   • keys in params.json that the template doesn't declare are ignored (with a warning)
+          if [ "$MODE" = update ]; then
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+              --query 'Stacks[0].Parameters[].ParameterKey' --output json > "$RUNNER_TEMP/current.json"
+          else
+            echo '[]' > "$RUNNER_TEMP/current.json"
+          fi
+          jq --slurpfile tpl "$RUNNER_TEMP/template.json" --slurpfile cur "$RUNNER_TEMP/current.json" '
+            . as $given
+            | ($cur[0] // []) as $current
+            | [ ($tpl[0].Parameters // [])[].ParameterKey as $k
+                | ([$given[] | select(.ParameterKey == $k)][0]) as $p
+                | if $p != null and ($p | has("ParameterValue")) then
+                    {ParameterKey: $k, ParameterValue: ($p.ParameterValue | if type == "array" then join(",") else tostring end)}
+                  elif ($current | index($k)) != null then
+                    {ParameterKey: $k, UsePreviousValue: true}
+                  else empty end ]
+          ' "$PARAMS_FILE" > "$RUNNER_TEMP/params.json"
+
+          # NoEcho parameter values are masked everywhere in this log
+          jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
+            [($tpl[0].Parameters // [])[] | select(.NoEcho) | .ParameterKey] as $hidden
+            | .[] | select(.ParameterKey as $k | $hidden | index($k) != null)
+            | .ParameterValue // empty | select(length > 0)
+          ' "$RUNNER_TEMP/params.json" | while IFS= read -r value; do echo "::add-mask::$value"; done
+
+          jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
+            (($tpl[0].Parameters // []) | map(.ParameterKey)) as $declared
+            | .[].ParameterKey | select(. as $k | $declared | index($k) == null)
+          ' "$PARAMS_FILE" | while read -r key; do
+            echo "::warning title=Unused parameter::'$key' is in params.json but not in the template – ignored"
+          done
+
+          echo "::group::📋 Parameters ($(jq length "$RUNNER_TEMP/params.json"))"
+          jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
+            [($tpl[0].Parameters // [])[] | select(.NoEcho) | .ParameterKey] as $hidden
+            | .[] | "   \(.ParameterKey) = " + (
+                if .UsePreviousValue then "(keeps current value)"
+                elif (.ParameterKey as $k | $hidden | index($k)) != null then "****"
+                else .ParameterValue end)
+          ' "$RUNNER_TEMP/params.json"
+          echo "::endgroup::"
+
+          params=()
+          if [ "$(jq length "$RUNNER_TEMP/params.json")" -gt 0 ]; then
+            params=(--parameters "file://$RUNNER_TEMP/params.json")
+          fi
+
+          cs_name="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cs_type=UPDATE
+          if [ "$MODE" = create ]; then cs_type=CREATE; fi
+          echo "📝 Creating $cs_type change set $cs_name…"
+          if ! created=$(aws cloudformation create-change-set \
+                           --stack-name "$STACK_NAME" \
+                           --change-set-name "$cs_name" \
+                           --change-set-type "$cs_type" \
+                           "${tpl[@]}" "${params[@]}" \
+                           --capabilities CAPABILITY_NAMED_IAM \
+                           --description "GitHub Actions run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}" \
+                           --output json); then
+            echo "::error title=Change set failed::CloudFormation rejected the change set – see the error above."
+            exit 1
+          fi
+          cs_id=$(jq -r .Id <<< "$created")
+          stack_id=$(jq -r .StackId <<< "$created")
+
+          while :; do
+            cs=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" \
+                   --change-set-name "$cs_name" --include-property-values --output json)
+            status=$(jq -r .Status <<< "$cs")
+            case "$status" in
+              CREATE_PENDING|CREATE_IN_PROGRESS) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+          reason=$(jq -r '.StatusReason // ""' <<< "$cs")
+
+          # Nothing to change → this stage passes and there is nothing to execute
+          if [ "$status" = FAILED ] && grep -qE "didn't contain changes|No updates are to be performed" <<< "$reason"; then
+            echo "✅ No changes – the stack already matches this template and these parameters. Nothing to execute."
+            aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" || true
+            printf '### 📝 Change set\n✅ No changes – the stack is already up to date. Nothing to execute.\n' >> "$GITHUB_STEP_SUMMARY"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$status" != CREATE_COMPLETE ]; then
+            echo "❌ Change set $status: $reason"
+            echo "::error title=Change set failed::$reason"
+            printf '### 📝 Change set\n❌ **%s** – %s\n' "$status" "$reason" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # ── What will change: one line per resource, then each property with before → after ──
+          read -r n_all n_add n_mod n_del n_rep <<< "$(jq -r '
+            [.Changes[]?.ResourceChange // empty]
+            | [., map(select(.Action == "Add")), map(select(.Action == "Modify")),
+               map(select(.Action == "Remove")), map(select(.Replacement == "True"))]
+            | map(length) | @tsv' <<< "$cs")"
+
+          jq -r '
+            def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+            def clip: if length > 300 then .[:300] + " …" else . end;
+            # JSON values print as-is, plain text gets quotes
+            def fmt: if . == null then "(none)" else tostring | . as $s
+                     | (try ($s | fromjson | type) catch "string") as $t
+                     | (if $t == "string" then ($s | tojson) else $s end) | clip end;
+            def secretish: test("password|secret|token|passphrase|credential|privatekey"; "i");
+            def icon: if .Action == "Add" then "➕" elif .Action == "Remove" then "➖"
+                      elif .Replacement == "True" then "🔄" elif .Action == "Modify" then "🔧" else "• " end;
+            [.Changes[]?.ResourceChange // empty] as $changes
+            | if ($changes | length) == 0 then
+                "   (no resource changes – stack-level update only, e.g. outputs or tags)"
+              else
+                $changes[]
+                | (("   \(icon) \(.Action | pad(8)) \(.LogicalResourceId | pad(38)) \(.ResourceType | pad(42)) "
+                    + (if .Replacement == "True" then "⚠ REPLACEMENT"
+                       elif .Replacement == "Conditional" then "may be replaced"
+                       elif .Action == "Remove" then "(\(.PolicyAction // "Delete"))"
+                       else "" end)) | sub(" +$"; "")),
+                  ([.Details[]?.Target // empty
+                    | {path: (.Path // ("/" + .Attribute + (if .Name then "/" + .Name else "" end))),
+                       type: (.AttributeChangeType // ""), before: .BeforeValue, after: .AfterValue,
+                       rec: (.RequiresRecreation // "Never")}]
+                   | unique_by([.path, .type, .before, .after])[]
+                   | (.path | secretish) as $hide
+                   | (if $hide and .before != null then "(hidden)" else (.before | fmt) end) as $b
+                   | (if $hide and .after != null then "(hidden)" else (.after | fmt) end) as $a
+                   | "        \(if .type == "Add" then "+" elif .type == "Remove" then "-" elif .type == "Modify" then "~" else "•" end) \(.path | pad(42)) "
+                     + (if .type == "Add" then "→ \($a)"
+                        elif .type == "Remove" then "\($b) → (removed)"
+                        elif .before == null and .after == null then "(resolved at deploy time)"
+                        else "\($b) → \($a)" end)
+                     + (if .rec == "Always" then "   ⚠ forces replacement"
+                        elif .rec == "Conditionally" then "   (may force replacement)" else "" end))
+              end
+          ' <<< "$cs" > "$RUNNER_TEMP/changes.txt"
+
+          echo "📋 Planned changes: $n_add to add · $n_mod to modify · $n_del to remove"
+          echo
+          cat "$RUNNER_TEMP/changes.txt"
+          echo
+          if [ "$n_rep" -gt 0 ]; then
+            echo "::warning title=Replacement::$n_rep resource(s) will be REPLACED (deleted and re-created) if you execute this change set"
+          fi
+          if [ "$n_del" -gt 0 ]; then
+            echo "::warning title=Removal::$n_del resource(s) will be removed if you execute this change set"
+          fi
+
+          # Older pipeline change sets still waiting on this stack could be executed by mistake
+          others=$(aws cloudformation list-change-sets --stack-name "$STACK_NAME" --output json 2> /dev/null |
+                     jq -r --arg me "$cs_name" '[.Summaries[]? | select(.ChangeSetName != $me and .ExecutionStatus == "AVAILABLE") | .ChangeSetName] | join(", ")' || true)
+          if [ -n "$others" ]; then
+            echo "::warning title=Older change sets waiting::$STACK_NAME also has older change sets ready: $others. Don't execute them by mistake – delete any you no longer need."
+          fi
+
+          # Direct link to this change set in the console
+          account=$(cut -d: -f5 <<< "$stack_id")
+          enc() { jq -rn --arg v "$1" '$v | @uri'; }
+          console="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/changesets/changes?stackId=$(enc "$stack_id")&changeSetId=$(enc "$cs_id")"
+
+          {
+            echo "has_changes=true"
+            echo "change_set=$cs_name"
+            echo "change_set_id=$cs_id"
+            echo "stack_id=$stack_id"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$DEPLOY" = yes ]; then
+            echo "✅ Change set $cs_name is ready. Deploy = yes → the Deploy stage takes it from here"
+            echo "   (straight away, or after approval if this account has the gatekeeper pipeline)."
+            echo "   Change set in the AWS console (account $account · $ROLE_ALIAS · $REGION):"
+            echo "   $console"
+            echo "::notice title=Change set ready – deploying next::$cs_name goes to the Deploy stage (account $account, $REGION)."
+            heading="### 📝 Change set ready – deploying next"
+            next=$(printf '🚀 **Deploy = yes** – the Deploy stage executes this change set, after approval where the gatekeeper pipeline exists. [Open it in the AWS console](%s)' "$console")
+          else
+            echo "✅ Change set $cs_name is ready. Nothing has been deployed."
+            echo "👉 Review and execute it in the AWS console (account $account · $ROLE_ALIAS · $REGION):"
+            echo "   $console"
+            echo "::notice title=Change set ready – not deployed::Review and execute $cs_name in the AWS console (account $account, $REGION). The link is in the log and the run summary."
+            heading="### 📝 Change set ready for review – nothing deployed yet"
+            next=$(printf '👉 **[Review and execute it in the AWS console](%s)**' "$console")
+          fi
+
+          {
+            echo "$heading"
+            printf '`%s` (%s) on `%s` · account `%s` (%s) · %s\n\n' "$cs_name" "$cs_type" "$STACK_NAME" "$account" "$ROLE_ALIAS" "$REGION"
+            printf '**%s** to add · **%s** to modify · **%s** to remove' "$n_add" "$n_mod" "$n_del"
+            if [ "$n_rep" -gt 0 ]; then printf ' · ⚠️ **%s** replacement(s)' "$n_rep"; fi
+            printf '\n\n%s\n\n' "$next"
+            if [ "$n_all" -gt 0 ]; then
+              echo "| Action | Resource | Type | Replacement |"
+              echo "|---|---|---|---|"
+              jq -r '.Changes[]?.ResourceChange // empty | "| \(.Action) | `\(.LogicalResourceId)` | \(.ResourceType) | \(.Replacement // "-") |"' <<< "$cs"
+              echo
+              echo "<details><summary>Property-level changes (before → after)</summary>"
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/changes.txt"
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 4 · Deploy: only when Deploy = yes ───────────────────────────────────────────
+  #   Gatekeeper pipeline in this account/region → email the approvers; AWS executes after approval.
+  #   No gatekeeper pipeline                     → execute the change set now and follow it.
+  deploy:
+    name: 🚀 Deploy
+    needs: [prepare, changeset]
+    if: ${{ !cancelled() && inputs.deploy == 'yes' && needs.changeset.result == 'success' && needs.changeset.outputs.has_changes == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CHANGE_SET: ${{ needs.changeset.outputs.change_set }}
+      CHANGE_SET_ID: ${{ needs.changeset.outputs.change_set_id }}
+      STACK_ID: ${{ needs.changeset.outputs.stack_id }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.prepare.outputs.role_secret] }}
+          role-session-name: cft_deployment
+          aws-region: ${{ env.REGION }}
+
+      - name: Check for the gatekeeper pipeline
+        id: gate
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+
+          if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=Deploying from a branch::This run is on '$GITHUB_REF_NAME', not '$DEFAULT_BRANCH' – you are deploying code that is not merged yet."
+          fi
+
+          # Only "pipeline not found" means there is no gatekeeper here. Any other error stops
+          # the run, so a missing permission can never skip the approval.
+          if pipeline=$(aws codepipeline get-pipeline --name "$APPROVAL_PIPELINE" --output json 2> "$RUNNER_TEMP/err"); then
+            source_cfg='[.pipeline.stages[0].actions[]? | select(.actionTypeId.provider == "S3")][0].configuration'
+            bucket=$(jq -r "$source_cfg.S3Bucket // empty" <<< "$pipeline")
+            key=$(jq -r "$source_cfg.S3ObjectKey // empty" <<< "$pipeline")
+            declared=$(jq -c '[.pipeline.variables[]?.name]' <<< "$pipeline")
+            if [ -z "$bucket" ] || [ -z "$key" ] ||
+               ! jq -e 'index("StackName") != null and index("ChangeSetName") != null' <<< "$declared" > /dev/null; then
+              fail "Gatekeeper pipeline not usable" "'$APPROVAL_PIPELINE' exists but is not the gatekeeper pipeline (no S3 request source, or no StackName/ChangeSetName variables). Nothing was deployed."
+            fi
+            echo "🛂 '$APPROVAL_PIPELINE' found – this account needs approval. The change set runs only after someone approves."
+            {
+              echo "mode=approval"
+              echo "bucket=$bucket"
+              echo "key=$key"
+              echo "declared=$declared"
+            } >> "$GITHUB_OUTPUT"
+          elif grep -q 'PipelineNotFoundException' "$RUNNER_TEMP/err"; then
+            echo "▶ No gatekeeper pipeline in this account/region – executing the change set directly."
+            echo "mode=direct" >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/err"
+            fail "Can't check for approval" "Could not look up '$APPROVAL_PIPELINE' (see the error above) – nothing was deployed. The role needs codepipeline:GetPipeline."
+          fi
+
+      - name: Request approval
+        if: steps.gate.outputs.mode == 'approval'
+        env:
+          REQUEST_BUCKET: ${{ steps.gate.outputs.bucket }}
+          REQUEST_KEY: ${{ steps.gate.outputs.key }}
+          DECLARED: ${{ steps.gate.outputs.declared }}
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          enc() { jq -rn --arg v "$1" '$v | @uri'; }
+          account=$(cut -d: -f5 <<< "$STACK_ID")
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          cs_url="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/changesets/changes?stackId=$(enc "$STACK_ID")&changeSetId=$(enc "$CHANGE_SET_ID")"
+
+          # The request record: what is to be approved, who asked, from which run (S3 keeps every version)
+          jq -n --arg stack "$STACK_NAME" --arg cs "$CHANGE_SET" --arg cs_id "$CHANGE_SET_ID" \
+                --arg account "$account" --arg alias "$ROLE_ALIAS" --arg region "$REGION" \
+                --arg by "$GITHUB_ACTOR" --arg branch "$GITHUB_REF_NAME" --arg commit "$GITHUB_SHA" \
+                --arg run "$run_url" --arg url "$cs_url" '
+            {stackName: $stack, changeSet: $cs, changeSetId: $cs_id, account: $account, roleAlias: $alias,
+             region: $region, requestedBy: $by, branch: $branch, commit: $commit, runUrl: $run, changeSetUrl: $url}
+          ' > "$RUNNER_TEMP/approval-request.json"
+          aws s3 cp "$RUNNER_TEMP/approval-request.json" "s3://$REQUEST_BUCKET/$REQUEST_KEY" --only-show-errors ||
+            fail "Approval request failed" "Could not upload the request to s3://$REQUEST_BUCKET – nothing was deployed. The role needs s3:PutObject on that bucket."
+
+          # Values for the pipeline – only the variables this pipeline declares
+          vars=$(jq -nc --argjson declared "$DECLARED" --arg stack "$STACK_NAME" --arg cs "$CHANGE_SET" \
+                        --arg by "$GITHUB_ACTOR" --arg run "$run_url" --arg url "$cs_url" '
+            [ {name: "StackName", value: $stack}, {name: "ChangeSetName", value: $cs},
+              {name: "RequestedBy", value: $by}, {name: "RunUrl", value: $run}, {name: "ChangeSetUrl", value: $url} ]
+            | map(select(.name as $n | $declared | index($n) != null))')
+          exec_id=$(aws codepipeline start-pipeline-execution --name "$APPROVAL_PIPELINE" --variables "$vars" \
+                      --client-request-token "gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+                      --query pipelineExecutionId --output text) ||
+            fail "Approval request failed" "Could not start '$APPROVAL_PIPELINE' (see the error above) – nothing was deployed. The role needs codepipeline:StartPipelineExecution."
+
+          approval_url="https://${REGION}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${APPROVAL_PIPELINE}/executions/${exec_id}/timeline?region=${REGION}"
+          echo "📨 Approval requested – the approvers have been emailed."
+          echo "   Nothing is executed until someone approves. Approve or reject it here (account $account · $ROLE_ALIAS · $REGION):"
+          echo "   $approval_url"
+          echo "::notice title=Waiting for approval::$CHANGE_SET on $STACK_NAME will be executed by '$APPROVAL_PIPELINE' once someone approves (account $account, $REGION)."
+          {
+            echo "### 🛂 Waiting for gatekeeper approval"
+            printf '`%s` · change set `%s` · account `%s` (%s) · %s\n\n' "$STACK_NAME" "$CHANGE_SET" "$account" "$ROLE_ALIAS" "$REGION"
+            echo "The approvers have been emailed. AWS executes the change set only after someone approves it; if nobody decides in time the request expires and nothing changes."
+            echo
+            printf '👉 **[Approve or reject in the AWS console](%s)** · [Review the change set](%s)\n' "$approval_url" "$cs_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Execute change set and follow the stack events
+        if: steps.gate.outputs.mode == 'direct'
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          lost="Could not read the stack from CloudFormation (the sign-in may have expired). The deployment is NOT cancelled – it keeps running in AWS, follow it in the console."
+
+          enc() { jq -rn --arg v "$1" '$v | @uri'; }
+          console="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/stackinfo?stackId=$(enc "$STACK_ID")"
+
+          # Note which events already exist, so only this deployment's events are shown
+          events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+            fail "Can't read stack events" "Nothing was deployed. The role needs cloudformation:DescribeStackEvents to follow a deployment."
+          jq -r '.StackEvents[]?.EventId' <<< "$events" > "$RUNNER_TEMP/seen.txt"
+          : > "$RUNNER_TEMP/events.txt"
+          : > "$RUNNER_TEMP/failed.txt"
+
+          echo "🚀 Executing change set $CHANGE_SET on $STACK_NAME …"
+          aws cloudformation execute-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" ||
+            fail "Execute failed" "CloudFormation did not start the change set (see the error above) – nothing was deployed. The role needs cloudformation:ExecuteChangeSet."
+          echo "▶ Started – following the stack events (checked every 15 s)"
+          echo
+
+          deadline=$((SECONDS + 3300))   # the sign-in lasts about an hour, so stop following after 55 minutes
+          while :; do
+            status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                       --query 'Stacks[0].StackStatus' --output text) || fail "Lost contact" "$lost"
+            cs_state=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" \
+                         --query ExecutionStatus --output text 2> /dev/null) || cs_state=UNKNOWN
+            events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+              fail "Lost contact" "$lost"
+
+            # New events only, oldest first
+            jq --rawfile seen "$RUNNER_TEMP/seen.txt" '
+              ($seen | split("\n")) as $s
+              | [.StackEvents[]? | select((.EventId as $i | $s | index($i)) == null)] | sort_by(.Timestamp)
+            ' <<< "$events" > "$RUNNER_TEMP/new.json"
+            jq -r '
+              def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+              .[] | "   \(.Timestamp[11:19])  \(.LogicalResourceId | pad(34)) \(.ResourceStatus)"
+                    + (if (.ResourceStatus | test("FAILED")) and .ResourceStatusReason != null
+                       then "\n        ↳ \(.ResourceStatusReason)" else "" end)
+            ' "$RUNNER_TEMP/new.json" | tee -a "$RUNNER_TEMP/events.txt"
+            jq -r '.[] | select(.ResourceStatus | test("FAILED")) | select(.ResourceStatusReason != null)
+                   | "\(.LogicalResourceId): \(.ResourceStatusReason)"' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/failed.txt"
+            jq -r '.[].EventId' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/seen.txt"
+
+            # Finished = the stack is no longer busy AND the change set has left AVAILABLE / EXECUTE_IN_PROGRESS
+            case "$status" in
+              *_IN_PROGRESS) ;;
+              *) case "$cs_state" in AVAILABLE|EXECUTE_IN_PROGRESS) ;; *) break ;; esac ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] ||
+              fail "Still running" "$STACK_NAME is still $status after 55 minutes. The deployment is NOT cancelled – follow it in the AWS console: $console"
+            sleep 15
+          done
+
+          # ── Verdict ──
+          msg=""
+          if [ "$cs_state" = OBSOLETE ]; then
+            msg="The change set became obsolete – another change reached the stack first, so this one was not deployed. Run the pipeline again."
+          else
+            case "$status" in
+              CREATE_COMPLETE|UPDATE_COMPLETE) ;;
+              UPDATE_ROLLBACK_COMPLETE)
+                msg="The update failed and CloudFormation rolled the stack back to its previous state." ;;
+              ROLLBACK_COMPLETE)
+                msg="The create failed and the stack was rolled back. Delete the stack in the CloudFormation console before running again." ;;
+              UPDATE_ROLLBACK_FAILED)
+                msg="The update failed and so did the rollback. In the console use Stack actions → Continue update rollback." ;;
+              ROLLBACK_FAILED)
+                msg="The create failed and so did the rollback. Delete the stack in the console (retain the resources that block it)." ;;
+              *)
+                msg="The stack ended as $status." ;;
+            esac
+          fi
+
+          {
+            echo "### 🚀 Deploy"
+            if [ -z "$msg" ]; then echo "✅ **Deployed** – the stack finished as \`$status\`."; else echo "❌ **Deploy failed** – $msg"; fi
+            printf '\n`%s` · change set `%s` · [open the stack in the AWS console](%s)\n' "$STACK_NAME" "$CHANGE_SET" "$console"
+            if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+              printf '\n**What failed**\n\n```text\n'
+              cat "$RUNNER_TEMP/failed.txt"
+              printf '```\n'
+            fi
+            printf '\n<details><summary>Stack events</summary>\n\n```text\n'
+            cat "$RUNNER_TEMP/events.txt"
+            printf '```\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo
+          if [ -z "$msg" ]; then
+            echo "✅ Deployed – $STACK_NAME is $status."
+            echo "::notice title=Deployed::$STACK_NAME finished as $status"
+            exit 0
+          fi
+          echo "❌ $msg"
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "What failed:"
+            sed 's/^/   • /' "$RUNNER_TEMP/failed.txt"
+          fi
+          echo "::error title=Deploy failed::$msg"
+          exit 1
+```
+
+## 3. One-time setup in each account that needs approval
+
+1. **Deploy the gatekeeper with your own workflow.** Set stack name `cfn-gatekeeper`, that account's alias, and Deploy = **no**, then execute the change set in the console. No gatekeeper exists yet, so this first deployment can't go through one. Later updates to it will go through the gatekeeper itself.
+2. **Approvers confirm their subscription.** Each address gets a "Confirm subscription" email from AWS and must click it once, or no approval emails arrive.
+3. **Ignore the first failed run.** CodePipeline runs once automatically when it's created. That run fails at Request because no request exists yet, and it sends no email.
+4. **Give approvers permission to approve.** They need console access to the account and this permission:
+   ```json
+   { "Effect": "Allow",
+     "Action": ["codepipeline:PutApprovalResult", "codepipeline:GetPipeline", "codepipeline:GetPipelineState",
+                "codepipeline:GetPipelineExecution", "codepipeline:ListPipelineExecutions", "codepipeline:ListActionExecutions"],
+     "Resource": "arn:aws:codepipeline:*:*:cfn-changeset-approval*" }
+   ```
+5. **Check the GitHub role's permissions.** It needs `codepipeline:GetPipeline`, `codepipeline:StartPipelineExecution`, and `s3:PutObject` on the request bucket. If your deployment roles are already broad, there's nothing to add.
+6. **Lock it down, so nobody can skip the gate.** In gated accounts, explicitly deny the GitHub role these two actions:
+   ```json
+   { "Effect": "Deny", "Action": ["codepipeline:PutApprovalResult", "cloudformation:ExecuteChangeSet"], "Resource": "*" }
+   ```
+   This stops a modified workflow from approving its own request or executing directly. For a hard gate, also remove `ExecuteChangeSet` from people's day-to-day SSO permission sets in those accounts. The pipeline's execution role is then the only thing that can deploy.
+
+Two things to know:
+- **The execution role defaults to AdministratorAccess.** CloudFormation makes the changes with the permissions of whoever executes the change set, and that role must cover everything your templates create. You can narrow it through `ExecutionPolicyArn`.
+- **Where the outcome shows up.** The GitHub run now ends green at "Waiting for approval". The actual result arrives in the outcome email and in CodePipeline. The outcome email doesn't name the stack; its link opens the run, where the stack is shown.
+
+To try it end to end, deploy the gatekeeper in your sandbox account and run the EC2 test stack with Deploy = yes.
+
+Sources:
+- [Pipeline declaration – first stage must be a source](https://docs.aws.amazon.com/en_en/codepipeline/latest/userguide/pipeline-requirements.html)
+- [Execution modes (PARALLEL)](https://docs.aws.amazon.com/codepipeline/latest/userguide/execution-modes.html)
+- [CodePipeline pricing – manual approval not charged](https://aws.amazon.com/codepipeline/pricing)
+- [CodePipeline quotas – approval timeout up to 60 days, variable limits](https://docs.amazonaws.cn/en_us/codepipeline/latest/userguide/limits.html)
+- [Amazon S3 source action reference](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-S3.html)
+- [CloudFormation deploy action reference](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-CloudFormation.html)
+- [Tutorial using variables in CloudFormation actions](https://docs.aws.amazon.com/codepipeline/latest/userguide/tutorials-cloudformation-action.html)
+- [Variables reference](https://docs.aws.amazon.com/en_en/codepipeline/latest/userguide/reference-variables.html)
