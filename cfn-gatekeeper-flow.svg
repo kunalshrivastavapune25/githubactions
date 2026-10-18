@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1080 1706" role="img" aria-label="Flowchart. A GitHub Actions run goes through Prepare, Drift check and Change set; failed checks, drift or a failed change set stop the run. With Deploy set to no, the run ends and you execute the change set in the console. With Deploy set to yes, the run looks for the gatekeeper pipeline in the stack&#x27;s account: if it is not there the change set is executed straight away; if it is there, the run saves a request and starts the pipeline, which emails the approvers and executes the change set only after someone approves." xmlns="http://www.w3.org/2000/svg" width="1080" height="1706">
+<title>CloudFormation Gatekeeper Flow</title>
+<style>
+  svg { --bg:#F4F6F9;--fg:#14202B;--muted:#586776;--surface:#FFFFFF;--line:#44525F;--rule:#CDD5DD;
+    --lane-gh:#E9EEF3;--lane-aws:#FAF1E4;--accent:#B45F06;--accent-ink:#874400;--accent-soft:#FCE7CD;
+    --stop:#B42318;--stop-soft:#FCEAE8;--ok:#12733F;--ok-soft:#E2F3E9;--hold:#1E5EA8;--hold-soft:#E4EDF8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "IBM Plex Sans", Helvetica, Arial, sans-serif; }
+  @media (prefers-color-scheme: dark) { svg { --bg:#0D1318;--fg:#E3EAF0;--muted:#94A3B2;--surface:#151E26;--line:#A9B7C5;--rule:#2B3842;
+    --lane-gh:#111A21;--lane-aws:#1B1610;--accent:#EE9B3F;--accent-ink:#F6B66E;--accent-soft:#33240F;
+    --stop:#FF8B7B;--stop-soft:#351714;--ok:#5CCF8F;--ok-soft:#0F2C1D;--hold:#8BBAF1;--hold-soft:#12233A; } }
+  .bg { fill: var(--bg); }
+  .lane-gh { fill: var(--lane-gh); } .lane-aws { fill: var(--lane-aws); }
+  .lane-label { font-weight: 600; font-size: 12px; letter-spacing: .08em; fill: var(--muted); }
+  .lane-label-aws { fill: var(--accent-ink); }
+  .lane-sub { font-weight: 600; font-size: 11px; letter-spacing: .08em; fill: var(--muted); }
+  .lane-sub-note { font-size: 11px; fill: var(--muted); }
+  .divider { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 4 5; fill: none; }
+  .n { stroke-width: 1.25; }
+  .n-step, .n-dec, .n-end { fill: var(--surface); stroke: var(--line); }
+  .n-start { fill: var(--surface); stroke: var(--fg); stroke-width: 1.75; }
+  .n-accent, .n-wait { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.75; }
+  .n-stop { fill: var(--stop-soft); stroke: var(--stop); }
+  .n-ok { fill: var(--ok-soft); stroke: var(--ok); }
+  .n-hold { fill: var(--hold-soft); stroke: var(--hold); }
+  .t-title { font-size: 13px; font-weight: 600; fill: var(--fg); }
+  .t-sub { font-size: 11.5px; fill: var(--muted); }
+  .t-title.t-stop { fill: var(--stop); } .t-title.t-ok { fill: var(--ok); } .t-title.t-hold { fill: var(--hold); }
+  .t-title.t-accent, .t-title.t-wait { fill: var(--accent-ink); }
+  .t-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "IBM Plex Mono", monospace; font-size: 11px; }
+  .e { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-linejoin: round; }
+  .e-stop { stroke: var(--stop); } .e-accent { stroke: var(--accent); stroke-width: 2.25; }
+  .m { fill: var(--line); } .m-stop { fill: var(--stop); } .m-accent { fill: var(--accent); }
+  .el { font-size: 11px; fill: var(--muted); paint-order: stroke; stroke-width: 5px; stroke-linejoin: round; }
+  .el-gh { stroke: var(--lane-gh); } .el-aws { stroke: var(--lane-aws); }
+</style>
+<rect class="bg" x="0" y="0" width="1080" height="1706"/>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path class="m" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arr-stop" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path class="m-stop" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arr-accent" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path class="m-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <rect class="lane lane-gh" x="10" y="14" width="1060" height="1300" rx="16"/>
+  <rect class="lane lane-aws" x="10" y="1330" width="1060" height="364" rx="16"/>
+  <text class="lane-label" x="30" y="46">GITHUB ACTIONS · ONE WORKFLOW RUN</text>
+  <text class="lane-label lane-label-aws" x="580" y="1360">AWS ACCOUNT · GATEKEEPER PIPELINE</text>
+  <line class="divider" x1="24" y1="1552" x2="1056" y2="1552"/>
+  <text class="lane-sub" x="30" y="1606">APPROVERS</text>
+  <text class="lane-sub-note" x="30" y="1623">email + AWS console</text>
+  <g class="edges">
+    <polyline class="e e-e" points="540,115 540,160" marker-end="url(#arr)"/>
+    <polyline class="e e-stop" points="390,196 265,196" marker-end="url(#arr-stop)"/>
+    <text class="el el-gh" x="327.5" y="188" text-anchor="middle">a check fails</text>
+    <polyline class="e e-e" points="540,232 540,266" marker-end="url(#arr)"/>
+    <polyline class="e e-stop" points="440,306 265,306" marker-end="url(#arr-stop)"/>
+    <text class="el el-gh" x="352.5" y="298" text-anchor="middle">rolled back · busy</text>
+    <polyline class="e e-e" points="540,346 540,388" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="550" y="371" text-anchor="start">exists</text>
+    <polyline class="e e-e" points="640,306 900,306 900,648 690,648" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="770" y="298" text-anchor="middle">doesn&#x27;t exist</text>
+    <text class="el el-gh" x="912" y="466" text-anchor="start">new stack:</text>
+    <text class="el el-gh" x="912" y="481" text-anchor="start">drift check skipped</text>
+    <polyline class="e e-e" points="540,448 540,486" marker-end="url(#arr)"/>
+    <polyline class="e e-stop" points="440,526 265,526" marker-end="url(#arr-stop)"/>
+    <text class="el el-gh" x="352.5" y="518" text-anchor="middle">yes</text>
+    <polyline class="e e-e" points="540,566 540,604" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="550" y="589" text-anchor="start">no (partial check: warning)</text>
+    <polyline class="e e-e" points="540,692 540,732" marker-end="url(#arr)"/>
+    <polyline class="e e-stop" points="440,772 265,772" marker-end="url(#arr-stop)"/>
+    <text class="el el-gh" x="352.5" y="764" text-anchor="middle">failed</text>
+    <polyline class="e e-e" points="640,772 765,772" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="702.5" y="764" text-anchor="middle">no changes</text>
+    <polyline class="e e-e" points="540,812 540,850" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="550" y="835" text-anchor="start">ready</text>
+    <polyline class="e e-e" points="640,890 765,890" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="702.5" y="882" text-anchor="middle">no (default)</text>
+    <polyline class="e e-e" points="540,930 540,968" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="550" y="953" text-anchor="start">yes</text>
+    <polyline class="e e-e" points="540,1044 540,1080" marker-end="url(#arr)"/>
+    <polyline class="e e-stop" points="420,1124 265,1124" marker-end="url(#arr-stop)"/>
+    <text class="el el-gh" x="342.5" y="1116" text-anchor="middle">lookup error</text>
+    <polyline class="e e-e" points="660,1124 765,1124" marker-end="url(#arr)"/>
+    <text class="el el-gh" x="712.5" y="1116" text-anchor="middle">not found</text>
+    <polyline class="e e-e" points="900,1154 900,1203" marker-end="url(#arr)"/>
+    <polyline class="e e-accent" points="540,1168 540,1206" marker-end="url(#arr-accent)"/>
+    <text class="el el-gh" x="550" y="1191" text-anchor="start">found</text>
+    <polyline class="e e-accent" points="390,1244 265,1244" marker-end="url(#arr-accent)"/>
+    <text class="el el-gh" x="327.5" y="1236" text-anchor="middle">then</text>
+    <polyline class="e e-accent" points="540,1282 540,1352 115,1352 115,1404" marker-end="url(#arr-accent)"/>
+    <text class="el el-aws" x="327.5" y="1344" text-anchor="middle">starts the pipeline in the stack&#x27;s account</text>
+    <polyline class="e e-accent" points="205,1440 245,1440" marker-end="url(#arr-accent)"/>
+    <polyline class="e e-accent" points="335,1476 335,1585" marker-end="url(#arr-accent)"/>
+    <text class="el el-aws" x="345" y="1522" text-anchor="start">SNS email</text>
+    <polyline class="e e-accent" points="420,1620 445,1620" marker-end="url(#arr-accent)"/>
+    <polyline class="e e-accent" points="595,1620 625,1620" marker-end="url(#arr-accent)"/>
+    <polyline class="e e-accent" points="680,1582 680,1476" marker-end="url(#arr-accent)"/>
+    <text class="el el-aws" x="690" y="1522" text-anchor="start">approve</text>
+    <polyline class="e e-stop" points="735,1620 830,1620" marker-end="url(#arr-stop)"/>
+    <text class="el el-aws" x="782.5" y="1612" text-anchor="middle">reject</text>
+    <polyline class="e e-e" points="770,1440 795,1440" marker-end="url(#arr)"/>
+    <polyline class="e e-e" points="850,1404 850,1380 942,1380" marker-end="url(#arr)"/>
+    <text class="el el-aws" x="862" y="1373" text-anchor="start">succeeded</text>
+    <polyline class="e e-stop" points="850,1476 850,1500 942,1500" marker-end="url(#arr-stop)"/>
+    <text class="el el-aws" x="862" y="1493" text-anchor="start">failed</text>
+  </g>
+  <g class="nodes">
+    <rect class="n n-start" x="390" y="61" width="300" height="54" rx="27"/>
+    <text class="t-title t-start" x="540" y="84.75" text-anchor="middle">Run workflow (any branch)</text>
+    <text class="t-sub t-start" x="540" y="100.25" text-anchor="middle">folder · stack · alias · region · Deploy</text>
+    <rect class="n n-step" x="390" y="160" width="300" height="72" rx="8"/>
+    <text class="t-title t-step" x="540" y="185" text-anchor="middle">🧰 Prepare</text>
+    <text class="t-sub t-step" x="540" y="200.5" text-anchor="middle">alias → role · template + params.json</text>
+    <text class="t-sub t-step" x="540" y="216" text-anchor="middle">signs in to AWS · reads stack status</text>
+    <rect class="n n-stop" x="35" y="169" width="230" height="54" rx="27"/>
+    <text class="t-title t-stop" x="150" y="192.75" text-anchor="middle">Run stops</text>
+    <text class="t-sub t-stop" x="150" y="208.25" text-anchor="middle">bad region, alias or files</text>
+    <polygon class="n n-dec" points="540,266 640,306 540,346 440,306"/>
+    <text class="t-title t-dec" x="540" y="310.5" text-anchor="middle">Stack status?</text>
+    <rect class="n n-stop" x="35" y="279" width="230" height="54" rx="27"/>
+    <text class="t-title t-stop" x="150" y="302.75" text-anchor="middle">Run stops</text>
+    <text class="t-sub t-stop" x="150" y="318.25" text-anchor="middle">stack rolled back or busy</text>
+    <rect class="n n-step" x="390" y="388" width="300" height="60" rx="8"/>
+    <text class="t-title t-step" x="540" y="414.75" text-anchor="middle">🔎 Drift check</text>
+    <text class="t-sub t-step" x="540" y="430.25" text-anchor="middle">compares live resources with the template</text>
+    <polygon class="n n-dec" points="540,486 640,526 540,566 440,526"/>
+    <text class="t-title t-dec" x="540" y="530.5" text-anchor="middle">Drift found?</text>
+    <rect class="n n-stop" x="35" y="499" width="230" height="54" rx="27"/>
+    <text class="t-title t-stop" x="150" y="522.75" text-anchor="middle">Run stops</text>
+    <text class="t-sub t-stop" x="150" y="538.25" text-anchor="middle">drift table: expected vs actual</text>
+    <rect class="n n-step" x="390" y="604" width="300" height="88" rx="8"/>
+    <text class="t-title t-step" x="540" y="629.25" text-anchor="middle">📝 Change set</text>
+    <text class="t-sub t-step t-mono" x="540" y="644.75" text-anchor="middle">creates gha-‹run›-‹attempt›</text>
+    <text class="t-sub t-step" x="540" y="660.25" text-anchor="middle">big templates go through S3</text>
+    <text class="t-sub t-step" x="540" y="675.75" text-anchor="middle">shows every change + console link</text>
+    <polygon class="n n-dec" points="540,732 640,772 540,812 440,772"/>
+    <text class="t-title t-dec" x="540" y="776.5" text-anchor="middle">Result?</text>
+    <rect class="n n-stop" x="35" y="745" width="230" height="54" rx="27"/>
+    <text class="t-title t-stop" x="150" y="768.75" text-anchor="middle">Run stops</text>
+    <text class="t-sub t-stop" x="150" y="784.25" text-anchor="middle">CloudFormation&#x27;s reason shown</text>
+    <rect class="n n-ok" x="765" y="745" width="270" height="54" rx="27"/>
+    <text class="t-title t-ok" x="900" y="768.75" text-anchor="middle">Already up to date</text>
+    <text class="t-sub t-ok" x="900" y="784.25" text-anchor="middle">nothing to execute</text>
+    <polygon class="n n-dec" points="540,850 640,890 540,930 440,890"/>
+    <text class="t-title t-dec" x="540" y="894.5" text-anchor="middle">Deploy?</text>
+    <rect class="n n-hold" x="765" y="863" width="270" height="54" rx="27"/>
+    <text class="t-title t-hold" x="900" y="886.75" text-anchor="middle">Run ends · nothing deployed</text>
+    <text class="t-sub t-hold" x="900" y="902.25" text-anchor="middle">you review + execute in the console</text>
+    <rect class="n n-step" x="390" y="968" width="300" height="76" rx="8"/>
+    <text class="t-title t-step" x="540" y="995" text-anchor="middle">🚀 Deploy</text>
+    <text class="t-sub t-step t-mono" x="540" y="1010.5" text-anchor="middle">looks for cfn-changeset-approval</text>
+    <text class="t-sub t-step" x="540" y="1026" text-anchor="middle">warns if the branch isn&#x27;t merged</text>
+    <polygon class="n n-dec" points="540,1080 660,1124 540,1168 420,1124"/>
+    <text class="t-title t-dec" x="540" y="1120" text-anchor="middle">Gatekeeper pipeline</text>
+    <text class="t-title t-dec" x="540" y="1137" text-anchor="middle">in this account?</text>
+    <rect class="n n-stop" x="35" y="1097" width="230" height="54" rx="27"/>
+    <text class="t-title t-stop" x="150" y="1120.75" text-anchor="middle">Run stops</text>
+    <text class="t-sub t-stop" x="150" y="1136.25" text-anchor="middle">lookup failed or wrong pipeline</text>
+    <rect class="n n-step" x="765" y="1094" width="270" height="60" rx="8"/>
+    <text class="t-title t-step" x="900" y="1120.75" text-anchor="middle">Executes the change set now</text>
+    <text class="t-sub t-step" x="900" y="1136.25" text-anchor="middle">follows the stack events live</text>
+    <rect class="n n-end" x="765" y="1203" width="270" height="54" rx="27"/>
+    <text class="t-title t-end" x="900" y="1226.75" text-anchor="middle">Deployed ✅ or rolled back ❌</text>
+    <text class="t-sub t-end" x="900" y="1242.25" text-anchor="middle">result + reasons in the run log</text>
+    <rect class="n n-accent" x="390" y="1206" width="300" height="76" rx="8"/>
+    <text class="t-title t-accent" x="540" y="1233" text-anchor="middle">📨 Request approval</text>
+    <text class="t-sub t-accent" x="540" y="1248.5" text-anchor="middle">saves the request record in S3</text>
+    <text class="t-sub t-accent" x="540" y="1264" text-anchor="middle">starts the pipeline (stack, change set)</text>
+    <rect class="n n-wait" x="35" y="1217" width="230" height="54" rx="27"/>
+    <text class="t-title t-wait" x="150" y="1240.75" text-anchor="middle">Run finishes ✅</text>
+    <text class="t-sub t-wait" x="150" y="1256.25" text-anchor="middle">waiting for approval</text>
+    <rect class="n n-step" x="25" y="1404" width="180" height="72" rx="8"/>
+    <text class="t-title t-step" x="115" y="1429" text-anchor="middle">① Request</text>
+    <text class="t-sub t-step" x="115" y="1444.5" text-anchor="middle">reads the request record</text>
+    <text class="t-sub t-step" x="115" y="1460" text-anchor="middle">required first stage</text>
+    <rect class="n n-accent" x="245" y="1404" width="180" height="72" rx="8"/>
+    <text class="t-title t-accent" x="335" y="1429" text-anchor="middle">② Approve</text>
+    <text class="t-sub t-accent" x="335" y="1444.5" text-anchor="middle">emails the approvers</text>
+    <text class="t-sub t-accent" x="335" y="1460" text-anchor="middle">waits up to 7 days</text>
+    <rect class="n n-step" x="590" y="1404" width="180" height="72" rx="8"/>
+    <text class="t-title t-step" x="680" y="1429" text-anchor="middle">③ Execute</text>
+    <text class="t-sub t-step" x="680" y="1444.5" text-anchor="middle">executes the change set</text>
+    <text class="t-sub t-step" x="680" y="1460" text-anchor="middle">with the execution role</text>
+    <polygon class="n n-dec" points="850,1404 905,1440 850,1476 795,1440"/>
+    <text class="t-title t-dec" x="850" y="1444.5" text-anchor="middle">Result?</text>
+    <rect class="n n-ok" x="942" y="1358" width="120" height="44" rx="22"/>
+    <text class="t-title t-ok" x="1002" y="1376.75" text-anchor="middle">Stack updated</text>
+    <text class="t-sub t-ok" x="1002" y="1392.25" text-anchor="middle">outcome email</text>
+    <rect class="n n-stop" x="942" y="1478" width="120" height="44" rx="22"/>
+    <text class="t-title t-stop" x="1002" y="1496.75" text-anchor="middle">Rolled back</text>
+    <text class="t-sub t-stop" x="1002" y="1512.25" text-anchor="middle">outcome email</text>
+    <rect class="n n-accent" x="250" y="1585" width="170" height="70" rx="8"/>
+    <text class="t-title t-accent" x="335" y="1609" text-anchor="middle">📧 Approval email</text>
+    <text class="t-sub t-accent" x="335" y="1624.5" text-anchor="middle">change set + run links</text>
+    <text class="t-sub t-accent" x="335" y="1640" text-anchor="middle">and who asked</text>
+    <rect class="n n-step" x="445" y="1585" width="150" height="70" rx="8"/>
+    <text class="t-title t-step" x="520" y="1609" text-anchor="middle">👤 Approver</text>
+    <text class="t-sub t-step" x="520" y="1624.5" text-anchor="middle">reviews the change set</text>
+    <text class="t-sub t-step" x="520" y="1640" text-anchor="middle">in the AWS console</text>
+    <polygon class="n n-dec" points="680,1582 735,1620 680,1658 625,1620"/>
+    <text class="t-title t-dec" x="680" y="1624.5" text-anchor="middle">Decision?</text>
+    <rect class="n n-stop" x="830" y="1593" width="220" height="54" rx="27"/>
+    <text class="t-title t-stop" x="940" y="1616.75" text-anchor="middle">Rejected or expired</text>
+    <text class="t-sub t-stop" x="940" y="1632.25" text-anchor="middle">no decision in 7 days = expired</text>
+  </g>
+</svg>
