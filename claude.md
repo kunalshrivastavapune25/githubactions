@@ -50,6 +50,7 @@ on:
         description: "Alias for the IAM role to assume"
         required: true
         type: choice
+        default: 'SANDBOX'
         options:
           - NETWORK
           - DIRECTORY
@@ -765,6 +766,7 @@ jobs:
           fi
           echo "::error title=Deploy failed::$msg"
           exit 1
+
 ```
 
 ## EC2 test stack
