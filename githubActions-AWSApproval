@@ -1276,3 +1276,75 @@ Sources:
 - [CloudFormation deploy action reference](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-CloudFormation.html)
 - [Tutorial using variables in CloudFormation actions](https://docs.aws.amazon.com/codepipeline/latest/userguide/tutorials-cloudformation-action.html)
 - [Variables reference](https://docs.aws.amazon.com/en_en/codepipeline/latest/userguide/reference-variables.html)
+
+
+Troubleshooting 
+The two failures have separate causes, and I'll fix both: the S3 bucket is missing settings your landing zone requires, and the SNS subscription was rejected because of the placeholder email. Your screenshot shows the message comes from `AWS::ControlTower::Hook`, which means a Control Tower proactive control rather than an SCP. That check reads the template before anything is created, so the fix goes in the template. I'm checking the exact rules for those two controls and S3 access logging first.
+
+I've sent the updated template and `params.json`. Your email is in as the approver, and there's one value for you to fill in before you redeploy.
+
+## Why it failed
+
+- **The S3 bucket was blocked before it was created.** The check came from a Control Tower proactive control (the `AWS::ControlTower::Hook` in your screenshot), not an SCP. It reads the template before CloudFormation creates anything. It wants every bucket to have access logging (CT.S3.PR.2) and Object Lock (CT.S3.PR.9).
+- **SNS rejected the email.** My placeholder `cloud-approvers@REPLACE_ME.com` isn't a valid address, because domain names can't contain underscores. It's now `kunal.shrivastava@zensar.com`.
+
+## The catch with those two rules
+
+S3 can't deliver access logs into a bucket that has Object Lock. So the template can't create its own log bucket: your control would force Object Lock onto it, and then no logs would arrive. The template now sends its logs to an **existing log bucket**, which you name in the new `AccessLogBucketName` parameter. The request bucket gets Object Lock with no default retention, so requests and pipeline files still work and still expire normally.
+
+These are the only changes in the template:
+
+```yaml
+  AccessLogBucketName:            # new parameter
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+    ...
+  RequestBucket:
+    Properties:
+      ObjectLockEnabled: true          # CT.S3.PR.9
+      LoggingConfiguration:            # CT.S3.PR.2
+        DestinationBucketName: !Ref AccessLogBucketName
+        LogFilePrefix: !Sub '${PipelineName}/'
+```
+
+I checked the rest of the template against the other Control Tower rules:
+- **S3:** it passes the other S3 rules.
+- **IAM:** those rules only block `*` wildcards, which the template doesn't use.
+- **CodePipeline, SNS, EventBridge:** these have no proactive controls.
+
+So the bucket should be the only blocker. If the check reports anything else, send me the message.
+
+## Find your log bucket
+
+The bucket must be in the same account and region (Sandbox, eu-west-1) and must not have Object Lock. Your read-only access is enough for these commands:
+
+```bash
+# Where do existing buckets in this account send their access logs?
+aws s3api get-bucket-logging --bucket <any-existing-bucket>
+
+# Or look for likely names
+aws s3api list-buckets --query "Buckets[?contains(Name, 'log')].Name" --output text
+
+# Check the one you find
+aws s3api get-bucket-location --bucket <log-bucket>             # should say eu-west-1
+aws s3api get-object-lock-configuration --bucket <log-bucket>   # "ObjectLockConfigurationNotFoundError" is what you want
+aws s3api get-bucket-policy --bucket <log-bucket> --query Policy --output text   # should allow logging.s3.amazonaws.com
+```
+
+- **If the bucket's policy names specific source buckets** (`aws:SourceArn`), add the new request bucket to it after the stack is created.
+- **If no such bucket exists,** it has to be created outside CloudFormation, because the Object Lock control would block it there. Agree that with whoever owns your landing-zone standards.
+- **Don't point the bucket at itself** (`LoggingConfiguration: {}`). It passes the check, but because of Object Lock nothing gets logged.
+
+## Redeploy
+
+1. **Delete the failed stack.** It's in `ROLLBACK_COMPLETE`, and the workflow won't update a stack in that state. Your screenshot shows the `AWSReadOnlyAccess` role, which can't delete, so use a role that can. There's nothing else to clean up: the bucket was never created, and the SNS topic was rolled back.
+2. **Fill in the log bucket.** Put the bucket name into `AccessLogBucketName` in `params.json` and commit both files. If you forget, the run stops at the change set before creating anything.
+3. **Deploy it.** Run the workflow with Deploy = no, then execute the change set in the console.
+4. **Confirm the subscription.** Click the AWS confirmation email sent to your Zensar address (check Junk). Approval emails only arrive once it's confirmed.
+
+Sources:
+- [Control Tower S3 controls (CT.S3.PR.2, CT.S3.PR.9)](https://docs.aws.amazon.com/controltower/latest/controlreference/s3-rules.html)
+- [Control Tower IAM controls](https://docs.aws.amazon.com/controltower/latest/controlreference/iam-rules.html)
+- [Control Tower proactive controls](https://docs.aws.eu//controltower/latest/userguide/proactive-controls.html)
+- [Enabling S3 server access logging](https://docs.aws.amazon.com/us_en/AmazonS3/latest/userguide/enable-server-access-logging.html)
+- [Troubleshoot server access logging – Object Lock blocks delivery](https://docs.aws.amazon.com/AmazonS3/latest/userguide/troubleshooting-server-access-logging.html)
