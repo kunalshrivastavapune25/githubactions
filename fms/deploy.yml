@@ -1,0 +1,480 @@
+#!/usr/bin/env python3
+"""
+fms_deploy.py - apply an edited CloudFormation template to an FMS policy stack: show
+exactly what changes, ask, then apply it in place.
+
+  python3 fms_deploy.py --stack-name ims-fms-policies --template ims-fms-policies.yml
+
+1. Lists the manual changes: every live policy in Firewall Manager is compared with the
+   template the stack was last deployed with, so anything changed in the console shows
+   up, with what your file does to it: keeps it, or REVERTS it. Policies deleted in the
+   console and policies that are in no stack are listed too.
+2. Creates an UPDATE change set from your template (parameters keep their current
+   values unless you pass --parameters).
+3. Shows what it changes. For FMS policies that is a JSON-path diff, for example
+     ManagedServiceData.preProcessRuleGroups[AWSManagedRulesBotControlRuleSet]
+         .ruleActionOverrides[TGT_VolumetricSession].actionToUse: {"challenge": {}} -> {"count": {}}
+4. Refuses (and deletes the change set) when an FMS policy would be deleted or
+   replaced, for example because a logical ID differs from the deployed template.
+5. Asks before applying. Type yes, and the change set runs: the policy is updated in
+   place through FMS PutPolicy, the other policies are left alone. Stack events are
+   shown as they happen, and afterwards each changed policy is compared with the live
+   one in Firewall Manager.
+
+Other uses
+  --drift-only            only list the manual changes (with or without --template);
+                          exit code 2 when there are some
+  --diff-only             list the manual changes and what your file changes; creates
+                          nothing in AWS
+  --save-deployed FILE    save the template the stack runs on now: start every edit
+                          from it, so logical IDs and untouched policies stay identical
+  --yes                   apply without asking (pipelines). Without --yes and without a
+                          terminal, the change set is left for you to execute in the console.
+
+Templates over 51,200 bytes go through S3: add --s3-bucket <bucket in the stack's region>.
+Needs fms_cfn_guard.py in the same folder, boto3, and PyYAML for YAML templates.
+"""
+
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+import time
+
+try:
+    import fms_cfn_guard as guard
+except ImportError:
+    sys.exit('fms_deploy.py needs fms_cfn_guard.py in the same folder.')
+
+BODY_LIMIT = 51200
+
+
+# ------------------------------------------------------------- manual changes
+
+class ManualChanges:
+    def __init__(self):
+        self.lines, self.outside, self.elsewhere = [], [], {}
+        self.total = self.policies = self.changes = self.reverts = 0
+        self.deleted, self.deleted_but_edited = [], []
+
+
+def _not_set(value):
+    return value is guard.MISSING or guard._absent_like(value, True)
+
+
+def _same_value(a, b):
+    if _not_set(a) or _not_set(b):
+        return _not_set(a) and _not_set(b)
+    return not list(guard.deep_diff(a, b, '', lenient_false=True))
+
+
+def verdict(path, deployed_val, live_val, deployed_p, live_p, file_p):
+    """What applying the file does to one manual change: 'kept', 'reverted' or ('replaced', value)."""
+    parts = path.parts
+    file_val = guard.value_at(file_p, parts)
+    if deployed_val is guard.ORDER:
+        def order(node):
+            if not isinstance(node, list):
+                return None
+            if live_val:
+                wanted = set(live_val[1])
+                return [guard._ident(x) for x in node if guard._ident(x) in wanted]
+            return [guard._canon(x) for x in node]
+        mine = order(file_val)
+        if mine == order(guard.value_at(live_p, parts)):
+            return 'kept'
+        return 'reverted' if mine == order(guard.value_at(deployed_p, parts)) else ('replaced', file_val)
+    item = live_val if live_val is not guard.MISSING else deployed_val
+    if (isinstance(file_val, list) and isinstance(guard.value_at(live_p, parts), list)
+            and not isinstance(item, (list, dict))):  # an item added to / removed from a plain list
+        present = any(guard._same(x, item) for x in file_val)
+        return 'kept' if present == (live_val is not guard.MISSING) else 'reverted'
+    if _same_value(file_val, live_val):
+        return 'kept'
+    return 'reverted' if _same_value(file_val, deployed_val) else ('replaced', file_val)
+
+
+def describe(path, deployed_val, live_val):
+    if deployed_val is guard.ORDER:
+        return (f'      ~ {path}: order deployed {guard.show(live_val[0])}, live {guard.show(live_val[1])}'
+                if live_val else f'      ~ {path}: same items, different order in live')
+    if live_val is guard.MISSING:
+        return f'      - {path}: deployed {guard.show(deployed_val)}, removed in live'
+    if deployed_val is guard.MISSING:
+        return f'      + {path}: added in live {guard.show(live_val)}'
+    return f'      ~ {path}: deployed {guard.show(deployed_val)}, live {guard.show(live_val)}'
+
+
+def stack_of(cfn, physical_id):
+    try:
+        found = cfn.describe_stack_resources(PhysicalResourceId=physical_id).get('StackResources', [])
+    except Exception as exc:
+        if 'does not exist' in str(exc):
+            return None
+        raise
+    return found[0]['StackName'] if found else None
+
+
+def manual_changes(aws, stack_name, new_t=None, overrides=None):
+    """Live policies vs. the deployed template; with new_t, also what the file does to each change."""
+    stack, params = guard.stack_info(aws.cfn, stack_name)
+    old_t = guard.load_template(guard.deployed_template(aws.cfn, stack_name))
+    ids = guard.physical_ids(aws.cfn, stack_name)
+    r_old = guard.Resolver(old_t, params, ids, aws, stack)
+    r_new = guard.Resolver(new_t, dict(params, **(overrides or {})), ids, aws, stack) if new_t is not None else None
+    old_res = old_t.get('Resources') or {}
+    new_res = (new_t.get('Resources') or {}) if new_t is not None else {}
+    report = ManualChanges()
+    policies = [lid for lid, res in old_res.items()
+                if isinstance(res, dict) and res.get('Type') == guard.FMS_TYPE and lid in ids]
+    report.total = len(policies)
+    for lid in policies:
+        name, pid = guard.policy_name(r_old, old_res[lid]), ids[lid]
+        edited = lid in new_res and guard._canon(old_res[lid]) != guard._canon(new_res[lid])
+        found = guard.live_policy(aws, pid)
+        if found is None:
+            report.deleted.append(lid)
+            if edited:
+                report.deleted_but_edited.append(lid)
+            report.lines.append(f'\n{lid} ("{name}", {pid}): DELETED in Firewall Manager; the stack still lists it')
+            continue
+        deployed_p = guard.normalize(r_old.resolve(old_res[lid].get('Properties') or {}))
+        live_p = guard.normalize(found[0])
+        live_p = {k: v for k, v in live_p.items() if k in deployed_p}
+        drift = list(guard.deep_diff(deployed_p, live_p, '', lenient_false=True))
+        if not drift:
+            continue
+        report.policies += 1
+        report.changes += len(drift)
+        report.lines.append(f'\n{lid} ("{name}", {pid}): changed outside CloudFormation')
+        file_p = guard.normalize(r_new.resolve(new_res[lid].get('Properties') or {})) if edited else None
+        for path, deployed_val, live_val in drift:
+            report.lines.append(describe(path, deployed_val, live_val))
+            if file_p is None:
+                continue
+            outcome = verdict(path, deployed_val, live_val, deployed_p, live_p, file_p)
+            added, removed = deployed_val is guard.MISSING, live_val is guard.MISSING
+            if outcome == 'kept':
+                text = ('your file has it too' if added else "your file doesn't have it either" if removed
+                        else 'your file has the same') + ' -> kept'
+            elif outcome == 'reverted':
+                report.reverts += 1
+                text = ("your file doesn't have it" if added else 'your file still has it' if removed
+                        else 'your file has the deployed value') + ' -> applying it REVERTS this change'
+            else:
+                text = f'your file sets {guard.show(outcome[1])} -> applying it replaces this change'
+            report.lines.append(f'          {text}')
+        if new_t is not None and lid in new_res and not edited:
+            report.lines.append("      Your file doesn't change this policy, so applying it leaves these changes "
+                                'live (and the stack template keeps the old values).')
+    managed = set(ids.values())
+    for page in aws.fms.get_paginator('list_policies').paginate():
+        for policy in page.get('PolicyList', []):
+            if policy['PolicyId'] in managed:
+                continue
+            owner = stack_of(aws.cfn, policy['PolicyId'])
+            if owner:
+                report.elsewhere.setdefault(owner, []).append(policy['PolicyName'])
+            else:
+                report.outside.append((policy['PolicyName'], policy['PolicyId']))
+    return report
+
+
+def print_manual_changes(report, stack_name, with_file):
+    print(f'Manual changes: the live policies in Firewall Manager vs. the template {stack_name} '
+          'was last deployed with')
+    for line in report.lines:
+        print(line)
+    for name, pid in report.outside:
+        print(f'\nIn no CloudFormation stack: "{name}" ({pid}), created outside CloudFormation')
+    if report.elsewhere:
+        print('\nManaged by other stacks: ' + '; '.join(f'{owner}: {", ".join(names)}'
+                                                   for owner, names in sorted(report.elsewhere.items())))
+    print()
+    if report.policies or report.deleted:
+        text = f'{report.changes} manual change(s) in {report.policies} of {report.total} policies'
+        if report.deleted:
+            text += f', {len(report.deleted)} polic{"y" if len(report.deleted) == 1 else "ies"} deleted'
+        if with_file:
+            text += f'; applying your file reverts {report.reverts} of them'
+        print(text + '.')
+    else:
+        print(f'No manual changes in the {report.total} live policies of {stack_name}.')
+
+
+# ------------------------------------------------------------------ diff only
+
+def local_diff(aws, stack_name, new_t, overrides):
+    """Template-to-template differences (deployed -> new) without touching AWS. Returns (lines, problems)."""
+    stack, params = guard.stack_info(aws.cfn, stack_name)
+    old_t = guard.load_template(guard.deployed_template(aws.cfn, stack_name))
+    ids = guard.physical_ids(aws.cfn, stack_name)
+    r_old = guard.Resolver(old_t, params, ids, aws, stack)
+    r_new = guard.Resolver(new_t, dict(params, **overrides), ids, aws, stack)
+    old_res, new_res = old_t.get('Resources') or {}, new_t.get('Resources') or {}
+
+    def fms(resources):
+        return [lid for lid, res in resources.items() if isinstance(res, dict) and res.get('Type') == guard.FMS_TYPE]
+
+    old_fms, new_fms = fms(old_res), fms(new_res)
+    lines, problems, unchanged = [], [], 0
+    for lid in [lid for lid in new_fms if lid in old_fms]:
+        name = guard.policy_name(r_new, new_res[lid])
+        diffs = guard.policy_diff(r_old, old_res[lid], r_new, new_res[lid])
+        attrs = list(guard.deep_diff({k: v for k, v in old_res[lid].items() if k not in ('Type', 'Properties')},
+                                     {k: v for k, v in new_res[lid].items() if k not in ('Type', 'Properties')}))
+        if diffs or attrs:
+            lines += [f'\n{lid} ("{name}", {ids.get(lid, "?")}): changes', guard.render(attrs + diffs)]
+        elif guard._canon(old_res[lid]) != guard._canon(new_res[lid]):
+            lines.append(f'\n{lid} ("{name}"): only formatting differs (no change in meaning)')
+        else:
+            unchanged += 1
+    added = {lid: guard.policy_name(r_new, new_res[lid]) for lid in new_fms if lid not in old_fms}
+    for lid in [lid for lid in old_fms if lid not in new_fms]:
+        name = guard.policy_name(r_old, old_res[lid])
+        twins = [other for other, other_name in added.items() if other_name == name]
+        if twins:
+            problems.append(f'{lid} ("{name}") is named {twins[0]} in the new template: CloudFormation would '
+                            f'delete the policy and create a new one. Keep {lid} as the logical ID.')
+            added.pop(twins[0])
+        else:
+            problems.append(f'{lid} ("{name}") is missing from the new template: CloudFormation would delete it.')
+    lines += [f'\n{lid} ("{name}"): new FMS policy' for lid, name in added.items()]
+    others = []
+    for lid in list(old_res) + [lid for lid in new_res if lid not in old_res]:
+        if lid in old_fms or lid in new_fms:
+            continue
+        if lid not in new_res:
+            others.append(f'      - {lid} ({old_res[lid].get("Type")}) removed')
+        elif lid not in old_res:
+            others.append(f'      + {lid} ({new_res[lid].get("Type")}) added')
+        elif guard._canon(old_res[lid]) != guard._canon(new_res[lid]):
+            others.append(f'      ~ {lid} ({new_res[lid].get("Type")}) changed')
+    if others:
+        lines += ['\nOther resources:'] + others
+    lines.append(f'\n{unchanged} FMS polic{"y" if unchanged == 1 else "ies"} unchanged.')
+    return lines, problems
+
+
+# ------------------------------------------------------------------ deploying
+
+def read_overrides(path):
+    if not path:
+        return {}
+    with open(path, encoding='utf-8') as fh:
+        data = json.load(fh)
+    if isinstance(data, dict):
+        return {k: str(v) for k, v in data.items()}
+    return {p['ParameterKey']: str(p['ParameterValue']) for p in data if 'ParameterValue' in p}
+
+
+def change_set_parameters(new_t, stack_params, overrides):
+    out = []
+    for name, spec in (new_t.get('Parameters') or {}).items():
+        if name in overrides:
+            out.append({'ParameterKey': name, 'ParameterValue': overrides[name]})
+        elif name in stack_params:
+            out.append({'ParameterKey': name, 'UsePreviousValue': True})
+        elif not (isinstance(spec, dict) and 'Default' in spec):
+            sys.exit(f'Parameter {name} is new and has no Default: give it a value with --parameters.')
+    return out
+
+
+def template_source(aws, args, text, stamp):
+    size = len(text.encode('utf-8'))
+    if size <= BODY_LIMIT:
+        return {'TemplateBody': text}
+    if not args.s3_bucket:
+        sys.exit(f'{args.template} is {size:,} bytes; CloudFormation takes at most {BODY_LIMIT:,} bytes inline. '
+                 'Add --s3-bucket <a bucket in the stack\'s region> to upload it.')
+    key = f'{args.s3_prefix}{args.stack_name}/{stamp}-{os.path.basename(args.template)}'
+    aws.s3.put_object(Bucket=args.s3_bucket, Key=key, Body=text.encode('utf-8'))
+    location = aws.s3.get_bucket_location(Bucket=args.s3_bucket).get('LocationConstraint') or 'us-east-1'
+    location = 'eu-west-1' if location == 'EU' else location
+    print(f'Uploaded the template to s3://{args.s3_bucket}/{key}')
+    return {'TemplateURL': f'https://{args.s3_bucket}.s3.{location}.amazonaws.com/{key}'}
+
+
+def capabilities(template):
+    types = [r.get('Type', '') for r in (template.get('Resources') or {}).values() if isinstance(r, dict)]
+    caps = ['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM'] if any(t.startswith('AWS::IAM::') for t in types) else []
+    return caps + (['CAPABILITY_AUTO_EXPAND'] if template.get('Transform') else [])
+
+
+def newest_event_id(cfn, stack_name):
+    events = cfn.describe_stack_events(StackName=stack_name).get('StackEvents', [])
+    return events[0]['EventId'] if events else None
+
+
+def follow_events(cfn, stack_name, marker, timeout):
+    """Print the stack's events from `marker` on; return the final stack status."""
+    seen, deadline = set(), time.time() + timeout
+    while True:
+        fresh, token = [], None
+        while True:
+            page = cfn.describe_stack_events(**({'StackName': stack_name, 'NextToken': token} if token
+                                                else {'StackName': stack_name}))
+            events = page.get('StackEvents', [])
+            cut = next((i for i, e in enumerate(events) if e['EventId'] == marker), None)
+            fresh += events if cut is None else events[:cut]
+            token = page.get('NextToken')
+            if cut is not None or not token:
+                break
+        for event in reversed(fresh):
+            if event['EventId'] in seen:
+                continue
+            seen.add(event['EventId'])
+            when = event['Timestamp'].strftime('%H:%M:%S') if hasattr(event['Timestamp'], 'strftime') \
+                else str(event['Timestamp'])
+            reason = event.get('ResourceStatusReason') or ''
+            print(f'  {when}  {event["LogicalResourceId"]:<44}{event["ResourceStatus"]:<38}{reason}'.rstrip())
+            if (event['LogicalResourceId'] == stack_name and event.get('ResourceType') == 'AWS::CloudFormation::Stack'
+                    and not event['ResourceStatus'].endswith('_IN_PROGRESS')):
+                return event['ResourceStatus']
+        if time.time() > deadline:
+            sys.exit(f'Stopped waiting after {timeout}s; the update keeps running. Check the stack in the console.')
+        time.sleep(5)
+
+
+def verify(aws, stack_name, lids):
+    stack, params = guard.stack_info(aws.cfn, stack_name)
+    template = guard.load_template(guard.deployed_template(aws.cfn, stack_name))
+    ids = guard.physical_ids(aws.cfn, stack_name)
+    resolver = guard.Resolver(template, params, ids, aws, stack)
+    resources = template.get('Resources') or {}
+    clean = True
+    for lid in lids:
+        name = guard.policy_name(resolver, resources.get(lid))
+        if lid not in ids:
+            clean = False
+            print(f'Live check: {lid} ("{name}") is not in the stack.')
+            continue
+        diffs = guard.drift_of(aws, resolver, (resources.get(lid) or {}).get('Properties') or {}, ids[lid])
+        if diffs:
+            clean = False
+            print(f'Live check: {lid} ("{name}") still differs from the template:')
+            print(guard.render(diffs))
+        elif diffs is None:
+            clean = False
+            print(f'Live check: {lid} ("{name}") was not found in Firewall Manager.')
+        else:
+            print(f'Live check: {lid} ("{name}", {ids[lid]}) now matches the template.')
+    return clean
+
+
+def delete_change_set(aws, args, name):
+    if not args.keep_change_set:
+        aws.cfn.delete_change_set(StackName=args.stack_name, ChangeSetName=name)
+
+
+def main(argv=None, aws_factory=None, ask=None):
+    parser = argparse.ArgumentParser(description='Show and apply changes to an FMS policy stack, in place.')
+    parser.add_argument('--stack-name', required=True)
+    parser.add_argument('--template', help='the edited template (YAML or JSON)')
+    parser.add_argument('--region', help='defaults to AWS_REGION / your CLI profile')
+    parser.add_argument('--parameters', help='JSON file with parameter values to change '
+                                             '(the others keep their current values)')
+    parser.add_argument('--drift-only', action='store_true', help='only list changes made outside CloudFormation '
+                                                                 '(exit code 2 when there are some)')
+    parser.add_argument('--diff-only', action='store_true', help='show the differences only; change nothing')
+    parser.add_argument('--save-deployed', metavar='FILE', help='save the deployed template to FILE and stop')
+    parser.add_argument('--yes', action='store_true', help='apply without asking')
+    parser.add_argument('--strict', action='store_true', help='refuse when there are warnings')
+    parser.add_argument('--change-set-name', help='default: fms-deploy-<UTC time>')
+    parser.add_argument('--keep-change-set', action='store_true', help="don't delete a change set that isn't applied")
+    parser.add_argument('--s3-bucket', help='for templates over 51,200 bytes')
+    parser.add_argument('--s3-prefix', default='cfn-templates/', help='key prefix in --s3-bucket')
+    parser.add_argument('--wait', type=int, default=300, help='seconds to wait for the change set')
+    parser.add_argument('--timeout', type=int, default=1800, help='seconds to wait for the update')
+    args = parser.parse_args(argv)
+    if not args.template and not args.save_deployed and not args.drift_only:
+        parser.error('give --template (or --drift-only, or --save-deployed FILE)')
+    aws = (aws_factory or guard.Aws)(args.region)
+
+    if args.save_deployed:
+        body = guard.deployed_template(aws.cfn, args.stack_name)
+        with open(args.save_deployed, 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write(json.dumps(body, indent=2) + '\n' if isinstance(body, dict) else body)
+        print(f'Saved the template {args.stack_name} runs on now to {args.save_deployed}. Make your edits in '
+              'this file, so that logical IDs and the policies you do not touch stay exactly as deployed.')
+        return 0
+
+    text, new_t = None, None
+    if args.template:
+        with open(args.template, encoding='utf-8') as fh:
+            text = fh.read()
+        new_t = guard.load_template(text)
+    overrides = read_overrides(args.parameters)
+
+    found = manual_changes(aws, args.stack_name, new_t, overrides)
+    print_manual_changes(found, args.stack_name, new_t is not None)
+    if args.drift_only:
+        return 2 if found.policies or found.deleted else 0
+
+    if args.diff_only:
+        lines, problems = local_diff(aws, args.stack_name, new_t, overrides)
+        print(f'\nWhat {args.template} changes, compared with the template {args.stack_name} runs on:')
+        print('\n'.join(lines))
+        for problem in problems:
+            print(f'\nBLOCKED  {problem}')
+        return 1 if problems else 0
+    print()
+
+    stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d-%H%M%S')
+    name = args.change_set_name or f'fms-deploy-{stamp}'
+    stack, stack_params = guard.stack_info(aws.cfn, args.stack_name)
+    aws.cfn.create_change_set(
+        StackName=args.stack_name, ChangeSetName=name, ChangeSetType='UPDATE',
+        Parameters=change_set_parameters(new_t, stack_params, overrides),
+        Capabilities=capabilities(new_t), Description=f'fms_deploy.py {os.path.basename(args.template)}',
+        **template_source(aws, args, text, stamp))
+    print(f'Created change set {name}; waiting for CloudFormation to work out the changes...')
+    review = guard.review_change_set(aws, args.stack_name, name, args.wait, check_live=False)
+    if found.reverts:
+        review.warnings.append(f'Applying {os.path.basename(args.template)} reverts {found.reverts} change(s) made '
+                               'outside CloudFormation (marked REVERTS under "Manual changes" above).')
+    for lid in found.deleted_but_edited:
+        review.blocked.append(f'{lid} no longer exists in Firewall Manager, so its update would fail. Re-import it '
+                              'or remove it from the stack first.')
+    review.report(args.strict)
+    if review.no_changes:
+        aws.cfn.delete_change_set(StackName=args.stack_name, ChangeSetName=name)
+        print(f'{args.template} matches what {args.stack_name} runs on now: nothing to apply.')
+        return 0
+    if review.exit_code(args.strict):
+        delete_change_set(aws, args, name)
+        print('Nothing was applied.' + ('' if args.keep_change_set else ' The change set was deleted.'))
+        return 1
+
+    if not args.yes:
+        if ask is None and not sys.stdin.isatty():
+            print(f'\nNot applied: no terminal to ask. Execute change set {name} in the console, or rerun '
+                  'with --yes.')
+            return 0
+        extra = f' ({len(review.warnings)} warning(s) above)' if review.warnings else ''
+        answer = (ask or input)(f'\nApply change set {name} to {args.stack_name}{extra}? Type yes to apply: ')
+        if answer.strip().lower() != 'yes':
+            delete_change_set(aws, args, name)
+            print('Nothing was applied.' + ('' if args.keep_change_set else ' The change set was deleted.'))
+            return 0
+
+    marker = newest_event_id(aws.cfn, args.stack_name)
+    aws.cfn.execute_change_set(StackName=args.stack_name, ChangeSetName=name)
+    print(f'\nApplying {name} to {args.stack_name} (event times in UTC):')
+    status = follow_events(aws.cfn, args.stack_name, marker, args.timeout)
+    if status != 'UPDATE_COMPLETE':
+        print(f'\nThe update ended in {status}: CloudFormation rolled back, so the policies are as they were. '
+              'The events above say why.')
+        return 1
+    print()
+    changed = review.modified + review.created
+    if changed:
+        verify(aws, args.stack_name, changed)
+        print('Firewall Manager now rolls the change out to the member accounts over the next few minutes.')
+    print(f'Done: {args.stack_name} is UPDATE_COMPLETE.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
