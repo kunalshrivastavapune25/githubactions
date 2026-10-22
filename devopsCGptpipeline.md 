@@ -1,0 +1,407 @@
+name: CloudFormation - Drift and Change Set Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      folderPath:
+        description: "Folder under cloudformation/"
+        required: true
+        type: string
+      stackName:
+        description: "CloudFormation stack name"
+        required: true
+        type: string
+      roleAlias:
+        description: "Existing AWS role alias"
+        required: true
+        type: string
+      AWS_REGION:
+        description: "AWS Region"
+        required: true
+        default: eu-west-1
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: "1 - Validate and Check Stack"
+    runs-on: ubuntu-latest
+    outputs:
+      stack_exists: ${{ steps.stack.outputs.exists }}
+      template_file: ${{ steps.files.outputs.template_file }}
+      params_file: ${{ steps.files.outputs.params_file }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find template and params
+        id: files
+        shell: bash
+        env:
+          FOLDER_PATH: ${{ inputs.folderPath }}
+        run: |
+          set -euo pipefail
+          case "$FOLDER_PATH" in /*|*..*) echo "ERROR: Invalid folder path"; exit 1;; esac
+          DIR="cloudformation/$FOLDER_PATH"
+          [[ -d "$DIR" ]] || { echo "ERROR: Folder not found: $DIR"; exit 1; }
+          mapfile -t TEMPLATES < <(find "$DIR" -maxdepth 1 -type f \( -iname '*-template.yaml' -o -iname '*-template.yml' -o -iname '*.template.yaml' -o -iname '*.template.yml' \))
+          [[ ${#TEMPLATES[@]} -eq 1 ]] || { echo "ERROR: Expected exactly one template; found ${#TEMPLATES[@]}"; exit 1; }
+          PARAMS="$DIR/params.json"
+          [[ -f "$PARAMS" ]] || { echo "ERROR: params.json not found: $PARAMS"; exit 1; }
+          jq -e 'type == "array" and all(.[]; has("ParameterKey") and has("ParameterValue"))' "$PARAMS" >/dev/null
+          echo "template_file=${TEMPLATES[0]}" >> "$GITHUB_OUTPUT"
+          echo "params_file=$PARAMS" >> "$GITHUB_OUTPUT"
+          echo "Template: ${TEMPLATES[0]}"
+          echo "Parameters: $PARAMS"
+
+      - name: Map existing role alias to secret
+        id: role
+        shell: bash
+        env:
+          ROLE_ALIAS: ${{ inputs.roleAlias }}
+          NETWORK: ${{ secrets.NETWORK_SERVICES_ROLE }}
+          DIRECTORY: ${{ secrets.DIRECTORY_SERVICES_ROLE }}
+          SECURITY: ${{ secrets.SECURITY_INFRA_ROLE }}
+          SHAREDSERVICES: ${{ secrets.SHAREDSERVICES_ROLE }}
+          MANAGEMENT: ${{ secrets.MGMT_ROLE }}
+          LOGARCHIVE: ${{ secrets.LOGARCHIVE_ROLE }}
+          COREAUDIT: ${{ secrets.COREAUDIT_ROLE }}
+          MONITORING: ${{ secrets.MONITORING_ROLE }}
+          DIRECTORY_DEV: ${{ secrets.DIRECTORY_SERVICES_DEV_ROLE }}
+          DIRECTORY_PPE: ${{ secrets.DIRECTORY_SERVICES_PPE_ROLE }}
+          MONITORING_PPE: ${{ secrets.PPE_MONITORING_SERVICE_ROLE }}
+          SHAREDSERVICES_DEV: ${{ secrets.DEV_SHAREDSERVICES_ROLE }}
+          SHAREDSERVICES_PPE: ${{ secrets.PPE_SHARED_SERVICE_ROLE }}
+          SANDBOX: ${{ secrets.SANDBOX_ROLE }}
+          TST_NETWORK: ${{ secrets.TST_NETWORK_SERVICE_ROLE }}
+          PPE_NETWORK: ${{ secrets.PPE_NETWORK_SERVICE_ROLE }}
+          BACKUP: ${{ secrets.BACKUP_ROLE }}
+          CRV: ${{ secrets.CRV_ROLE }}
+        run: |
+          set -euo pipefail
+          case "$ROLE_ALIAS" in
+            NETWORK) ARN="$NETWORK";; DIRECTORY) ARN="$DIRECTORY";; SECURITY) ARN="$SECURITY";;
+            SHAREDSERVICES) ARN="$SHAREDSERVICES";; MANAGEMENT) ARN="$MANAGEMENT";; LOGARCHIVE) ARN="$LOGARCHIVE";;
+            COREAUDIT) ARN="$COREAUDIT";; MONITORING) ARN="$MONITORING";; DIRECTORY-DEV) ARN="$DIRECTORY_DEV";;
+            DIRECTORY-PPE) ARN="$DIRECTORY_PPE";; MONITORING-PPE) ARN="$MONITORING_PPE";;
+            SHAREDSERVICES-DEV) ARN="$SHAREDSERVICES_DEV";; SHAREDSERVICES-PPE) ARN="$SHAREDSERVICES_PPE";;
+            SANDBOX) ARN="$SANDBOX";; TST-NETWORK) ARN="$TST_NETWORK";; PPE-NETWORK) ARN="$PPE_NETWORK";;
+            BACKUP) ARN="$BACKUP";; CRV) ARN="$CRV";;
+            *) echo "ERROR: Unsupported role alias: $ROLE_ALIAS"; exit 1;;
+          esac
+          [[ -n "$ARN" ]] || { echo "ERROR: Secret for alias $ROLE_ALIAS is empty or missing"; exit 1; }
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+          echo "Role alias mapped: $ROLE_ALIAS"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.arn }}
+          role-session-name: cfn-check-${{ github.run_id }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Check AWS identity and stack existence
+        id: stack
+        env:
+          STACK_NAME: ${{ inputs.stackName }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity
+          if aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>/tmp/cfn-error.txt; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Stack exists: $STACK_NAME"
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text
+          elif grep -qi 'does not exist' /tmp/cfn-error.txt; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Fresh stack: $STACK_NAME does not exist yet."
+          else
+            cat /tmp/cfn-error.txt
+            echo "ERROR: Unable to check stack existence."
+            exit 1
+          fi
+
+  drift:
+    name: "2 - Drift Detection"
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Map existing AWS role alias to secret
+        id: role
+        shell: bash
+        env:
+          ROLE_ALIAS: ${{ inputs.roleAlias }}
+          NETWORK: ${{ secrets.NETWORK_SERVICES_ROLE }}
+          DIRECTORY: ${{ secrets.DIRECTORY_SERVICES_ROLE }}
+          SECURITY: ${{ secrets.SECURITY_INFRA_ROLE }}
+          SHAREDSERVICES: ${{ secrets.SHAREDSERVICES_ROLE }}
+          MANAGEMENT: ${{ secrets.MGMT_ROLE }}
+          LOGARCHIVE: ${{ secrets.LOGARCHIVE_ROLE }}
+          COREAUDIT: ${{ secrets.COREAUDIT_ROLE }}
+          MONITORING: ${{ secrets.MONITORING_ROLE }}
+          DIRECTORY_DEV: ${{ secrets.DIRECTORY_SERVICES_DEV_ROLE }}
+          DIRECTORY_PPE: ${{ secrets.DIRECTORY_SERVICES_PPE_ROLE }}
+          MONITORING_PPE: ${{ secrets.PPE_MONITORING_SERVICE_ROLE }}
+          SHAREDSERVICES_DEV: ${{ secrets.DEV_SHAREDSERVICES_ROLE }}
+          SHAREDSERVICES_PPE: ${{ secrets.PPE_SHARED_SERVICE_ROLE }}
+          SANDBOX: ${{ secrets.SANDBOX_ROLE }}
+          TST_NETWORK: ${{ secrets.TST_NETWORK_SERVICE_ROLE }}
+          PPE_NETWORK: ${{ secrets.PPE_NETWORK_SERVICE_ROLE }}
+          BACKUP: ${{ secrets.BACKUP_ROLE }}
+          CRV: ${{ secrets.CRV_ROLE }}
+        run: |
+          set -euo pipefail
+          case "$ROLE_ALIAS" in
+            NETWORK) ARN="$NETWORK";; DIRECTORY) ARN="$DIRECTORY";; SECURITY) ARN="$SECURITY";;
+            SHAREDSERVICES) ARN="$SHAREDSERVICES";; MANAGEMENT) ARN="$MANAGEMENT";; LOGARCHIVE) ARN="$LOGARCHIVE";;
+            COREAUDIT) ARN="$COREAUDIT";; MONITORING) ARN="$MONITORING";; DIRECTORY-DEV) ARN="$DIRECTORY_DEV";;
+            DIRECTORY-PPE) ARN="$DIRECTORY_PPE";; MONITORING-PPE) ARN="$MONITORING_PPE";;
+            SHAREDSERVICES-DEV) ARN="$SHAREDSERVICES_DEV";; SHAREDSERVICES-PPE) ARN="$SHAREDSERVICES_PPE";;
+            SANDBOX) ARN="$SANDBOX";; TST-NETWORK) ARN="$TST_NETWORK";; PPE-NETWORK) ARN="$PPE_NETWORK";;
+            BACKUP) ARN="$BACKUP";; CRV) ARN="$CRV";;
+            *) echo "ERROR: Unsupported role alias: $ROLE_ALIAS"; exit 1;;
+          esac
+          [[ -n "$ARN" ]] || { echo "ERROR: Secret for alias $ROLE_ALIAS is empty or missing"; exit 1; }
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.arn }}
+          role-session-name: cfn-drift-${{ github.run_id }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Detect and log drift (skip for fresh stack)
+        id: check
+        env:
+          STACK_NAME: ${{ inputs.stackName }}
+          STACK_EXISTS: ${{ needs.validate.outputs.stack_exists }}
+        run: |
+          set -euo pipefail
+          if [[ "$STACK_EXISTS" == "false" ]]; then
+            echo "Fresh stack: drift detection is not applicable."
+            echo "result=NEW_STACK" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Checking for resource types that require manual drift review..."
+          aws cloudformation describe-stack-resources \
+            --stack-name "$STACK_NAME" \
+            --query 'StackResources[*].[LogicalResourceId,ResourceType,PhysicalResourceId]' \
+            --output json > /tmp/stack-resources.json
+
+          # AWS documentation: resource type support table marks AWS::FMS::Policy
+          # as NOT supporting drift detection. Do not block every FMS type because
+          # AWS marks some other FMS types as supported.
+          # Also block the resource types that AWS lists as not supporting the
+          # three-way comparison used by drift-aware change sets. This is a
+          # conservative policy for this preview workflow.
+          BLOCKED_TYPES=$(cat <<'EOF'
+          AWS::FMS::Policy
+          AWS::SageMaker::MlflowTrackingServer
+          AWS::Route53Resolver::FirewallRuleGroup
+          AWS::MediaLive::Multiplexprogram
+          AWS::VpcLattice::ResourceConfiguration
+          AWS::S3::StorageLensGroup
+          AWS::Bedrock::AgentAlias
+          AWS::MSK::Cluster
+          AWS::RDS::DBProxy
+          AWS::Redshift::ClusterParameterGroup
+          AWS::QBusiness::Index
+          AWS::NetworkManager::CoreNetwork
+          AWS::IAM::OIDCProvider
+          AWS::Organizations::ResourcePolicy
+          AWS::SNS::TopicInlinePolicy
+          AWS::Route53::KeySigningKey
+          AWS::DataZone::PolicyGrant
+          AWS::Transfer::Certificate
+          AWS::SageMaker::ImageVersion
+          AWS::Neptune::DBParameterGroup
+          AWS::ODB::CloudVmCluster
+          AWS::RolesAnywhere::TrustAnchor
+          AWS::Detective::Graph
+          AWS::Maester::DocumentType
+          AWS::SageMaker::ModelPackageGroup
+          AWS::S3Express::BucketPolicy
+          AWS::Panorama::PackageVersion
+          AWS::S3Tables::TableBucketPolicy
+          EOF
+          )
+
+          UNSUPPORTED=$(jq -r --arg types "$BLOCKED_TYPES" '
+            ($types | split("\n")) as $blocked |
+            .[] | . as $r | select(($blocked | index($r[1])) != null) |
+            "- Logical ID: \(.[0]); Type: \(.[1]); Physical ID: \(.[2] // "n/a")"
+          ' /tmp/stack-resources.json)
+
+          if [[ -n "$UNSUPPORTED" ]]; then
+            echo "============================================================"
+            echo "MANUAL REVIEW REQUIRED - PIPELINE STOPPED"
+            echo "AWS documents these resource types as unsupported for drift detection or"
+            echo "for three-way drift-aware change-set comparison."
+            echo "Do not use this automated workflow for this stack."
+            echo "Detected resources:"
+            printf '%s\n' "$UNSUPPORTED"
+            echo "No drift detection or change set will be started."
+            echo "============================================================"
+            exit 1
+          fi
+
+          echo "No explicitly blocked resource types found. Starting drift detection."
+          echo "Starting drift detection for $STACK_NAME"
+          DETECTION_ID=$(aws cloudformation detect-stack-drift --stack-name "$STACK_NAME" --query StackDriftDetectionId --output text)
+          echo "Detection ID: $DETECTION_ID"
+
+          for i in $(seq 1 60); do
+            STATUS=$(aws cloudformation describe-stack-drift-detection-status --stack-drift-detection-id "$DETECTION_ID" --query DetectionStatus --output text)
+            echo "Detection progress: $STATUS"
+            if [[ "$STATUS" == "DETECTION_COMPLETE" ]]; then break; fi
+            if [[ "$STATUS" == "DETECTION_FAILED" ]]; then
+              aws cloudformation describe-stack-drift-detection-status --stack-drift-detection-id "$DETECTION_ID" --output json
+              echo "ERROR: Drift detection failed."
+              exit 1
+            fi
+            sleep 5
+          done
+          [[ "$STATUS" == "DETECTION_COMPLETE" ]] || { echo "ERROR: Timed out waiting for drift detection."; exit 1; }
+
+          DRIFT=$(aws cloudformation describe-stack-drift-detection-status --stack-drift-detection-id "$DETECTION_ID" --query StackDriftStatus --output text)
+          echo "Stack drift status: $DRIFT"
+
+          # Stack-level IN_SYNC does not guarantee every resource was checked.
+          # AWS assigns NOT_CHECKED to resource types without drift-detection support.
+          aws cloudformation describe-stack-resource-drifts \
+            --stack-name "$STACK_NAME" \
+            --query 'StackResourceDrifts[*].[LogicalResourceId,ResourceType,StackResourceDriftStatus,PhysicalResourceId]' \
+            --output json > /tmp/resource-drifts.json
+          NOT_CHECKED=$(jq -r '.[] | select(.[2] == "NOT_CHECKED") | "- Logical ID: \(.[0]); Type: \(.[1]); Physical ID: \(.[3] // "n/a")"' /tmp/resource-drifts.json)
+          if [[ -n "$NOT_CHECKED" ]]; then
+            echo "============================================================"
+            echo "MANUAL REVIEW REQUIRED - PIPELINE STOPPED"
+            echo "AWS returned NOT_CHECKED for one or more resources. A stack-level IN_SYNC"
+            echo "status is not sufficient to approve automated change-set review."
+            printf '%s\n' "$NOT_CHECKED"
+            echo "No change set will be created. Review the stack manually."
+            echo "============================================================"
+            echo "result=UNSUPPORTED_RESOURCES" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if [[ "$DRIFT" != "IN_SYNC" ]]; then
+            echo "STOP: Stack is not IN_SYNC; no change set will be created."
+            aws cloudformation describe-stack-resource-drifts --stack-name "$STACK_NAME" --query "StackResourceDrifts[?StackResourceDriftStatus=='MODIFIED' || StackResourceDriftStatus=='DELETED' || StackResourceDriftStatus=='NOT_CHECKED'].[LogicalResourceId,ResourceType,StackResourceDriftStatus,PhysicalResourceId]" --output table || true
+            echo "result=DRIFTED" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Stack is IN_SYNC."
+          echo "result=IN_SYNC" >> "$GITHUB_OUTPUT"
+
+  create-change-set:
+    name: "3 - Create Change Set (No Deployment)"
+    runs-on: ubuntu-latest
+    needs: [validate, drift]
+    if: needs.drift.result == 'success' && (needs.drift.outputs.result == 'IN_SYNC' || needs.drift.outputs.result == 'NEW_STACK')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Map existing AWS role alias to secret
+        id: role
+        shell: bash
+        env:
+          ROLE_ALIAS: ${{ inputs.roleAlias }}
+          NETWORK: ${{ secrets.NETWORK_SERVICES_ROLE }}
+          DIRECTORY: ${{ secrets.DIRECTORY_SERVICES_ROLE }}
+          SECURITY: ${{ secrets.SECURITY_INFRA_ROLE }}
+          SHAREDSERVICES: ${{ secrets.SHAREDSERVICES_ROLE }}
+          MANAGEMENT: ${{ secrets.MGMT_ROLE }}
+          LOGARCHIVE: ${{ secrets.LOGARCHIVE_ROLE }}
+          COREAUDIT: ${{ secrets.COREAUDIT_ROLE }}
+          MONITORING: ${{ secrets.MONITORING_ROLE }}
+          DIRECTORY_DEV: ${{ secrets.DIRECTORY_SERVICES_DEV_ROLE }}
+          DIRECTORY_PPE: ${{ secrets.DIRECTORY_SERVICES_PPE_ROLE }}
+          MONITORING_PPE: ${{ secrets.PPE_MONITORING_SERVICE_ROLE }}
+          SHAREDSERVICES_DEV: ${{ secrets.DEV_SHAREDSERVICES_ROLE }}
+          SHAREDSERVICES_PPE: ${{ secrets.PPE_SHARED_SERVICE_ROLE }}
+          SANDBOX: ${{ secrets.SANDBOX_ROLE }}
+          TST_NETWORK: ${{ secrets.TST_NETWORK_SERVICE_ROLE }}
+          PPE_NETWORK: ${{ secrets.PPE_NETWORK_SERVICE_ROLE }}
+          BACKUP: ${{ secrets.BACKUP_ROLE }}
+          CRV: ${{ secrets.CRV_ROLE }}
+        run: |
+          set -euo pipefail
+          case "$ROLE_ALIAS" in
+            NETWORK) ARN="$NETWORK";; DIRECTORY) ARN="$DIRECTORY";; SECURITY) ARN="$SECURITY";;
+            SHAREDSERVICES) ARN="$SHAREDSERVICES";; MANAGEMENT) ARN="$MANAGEMENT";; LOGARCHIVE) ARN="$LOGARCHIVE";;
+            COREAUDIT) ARN="$COREAUDIT";; MONITORING) ARN="$MONITORING";; DIRECTORY-DEV) ARN="$DIRECTORY_DEV";;
+            DIRECTORY-PPE) ARN="$DIRECTORY_PPE";; MONITORING-PPE) ARN="$MONITORING_PPE";;
+            SHAREDSERVICES-DEV) ARN="$SHAREDSERVICES_DEV";; SHAREDSERVICES-PPE) ARN="$SHAREDSERVICES_PPE";;
+            SANDBOX) ARN="$SANDBOX";; TST-NETWORK) ARN="$TST_NETWORK";; PPE-NETWORK) ARN="$PPE_NETWORK";;
+            BACKUP) ARN="$BACKUP";; CRV) ARN="$CRV";;
+            *) echo "ERROR: Unsupported role alias: $ROLE_ALIAS"; exit 1;;
+          esac
+          [[ -n "$ARN" ]] || { echo "ERROR: Secret for alias $ROLE_ALIAS is empty or missing"; exit 1; }
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.arn }}
+          role-session-name: cfn-changeset-${{ github.run_id }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Create and display change set
+        env:
+          STACK_NAME: ${{ inputs.stackName }}
+          REGION: ${{ inputs.AWS_REGION }}
+          STACK_EXISTS: ${{ needs.validate.outputs.stack_exists }}
+          TEMPLATE_FILE: ${{ needs.validate.outputs.template_file }}
+          PARAMS_FILE: ${{ needs.validate.outputs.params_file }}
+        run: |
+          set -euo pipefail
+          SIZE=$(wc -c < "$TEMPLATE_FILE")
+          if (( SIZE > 51200 )); then
+            echo "ERROR: Template is $SIZE bytes; TemplateBody limit is 51,200 bytes."
+            echo "This minimal workflow does not include the existing S3 upload path for large templates."
+            exit 1
+          fi
+
+          if [[ "$STACK_EXISTS" == "true" ]]; then TYPE=UPDATE; else TYPE=CREATE; fi
+          CHANGE_SET_NAME="github-${GITHUB_RUN_ID}"
+          echo "Creating $TYPE change set: $CHANGE_SET_NAME"
+
+          aws cloudformation create-change-set \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET_NAME" \
+            --change-set-type "$TYPE" \
+            --template-body "file://$TEMPLATE_FILE" \
+            --parameters "file://$PARAMS_FILE" \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --region "$REGION"
+
+          STATUS=CREATE_PENDING
+          for i in $(seq 1 60); do
+            STATUS=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET_NAME" --query Status --output text --region "$REGION")
+            echo "Change set status: $STATUS"
+            [[ "$STATUS" == "CREATE_COMPLETE" || "$STATUS" == "FAILED" ]] && break
+            sleep 5
+          done
+
+          aws cloudformation describe-change-set \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET_NAME" \
+            --region "$REGION" \
+            --query '{ChangeSetName:ChangeSetName,Status:Status,ExecutionStatus:ExecutionStatus,StatusReason:StatusReason,Changes:Changes[*].ResourceChange.{Action:Action,LogicalResourceId:LogicalResourceId,ResourceType:ResourceType,Replacement:Replacement}}' \
+            --output json
+
+          echo "STOP: This workflow only creates and displays a change set."
+          echo "It does NOT execute or deploy the change set."
+          if [[ "$STATUS" != "CREATE_COMPLETE" && "$STATUS" != "FAILED" ]]; then
+            echo "ERROR: Timed out waiting for change set status."
+            exit 1
+          fi
