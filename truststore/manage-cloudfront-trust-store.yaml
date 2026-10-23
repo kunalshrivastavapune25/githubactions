@@ -190,7 +190,7 @@ jobs:
           role-session-name: cf_truststore_compare_${{ inputs.env }}
           aws-region: ${{ inputs.AWS_REGION }}
 
-      - name: Download current bundle and compare certificate fingerprints
+      - name: Download current bundle and generate certificate-by-certificate comparison
         id: compare
         env:
           TRUST_STORE_ID: ${{ needs.validate.outputs.trust_store_id }}
@@ -202,58 +202,166 @@ jobs:
           set -euo pipefail
           proposed="$GITHUB_WORKSPACE/$TRUSTSTORE_FILE"
           current="$RUNNER_TEMP/current-truststore.pem"
+          report="$RUNNER_TEMP/truststore-comparison.md"
           [[ -f "$proposed" ]] || { echo "::error title=Proposed file missing::$proposed not found."; exit 1; }
           aws s3 cp "s3://$BUCKET/$S3_KEY" "$current" --region "$BUNDLE_REGION"
           echo "Downloaded current bundle: s3://$BUCKET/$S3_KEY"
 
-          cert_fingerprints() {
-            local file="$1"
-            awk -v outdir="$RUNNER_TEMP" 'BEGIN { n=0; count=0 } /-----BEGIN CERTIFICATE-----/ { n=1; count++; f=outdir "/cert-" count ".pem" } n>0 { print > f } /-----END CERTIFICATE-----/ { close(f); n=0 }' "$file"
-            for cert in "$RUNNER_TEMP"/cert-*.pem; do
-              [[ -f "$cert" ]] || continue
-              openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | tr -d ':'
-            done | sort -u
-            rm -f "$RUNNER_TEMP"/cert-*.pem
-          }
-          cert_fingerprints "$proposed" > "$RUNNER_TEMP/proposed.fingerprints"
-          cert_fingerprints "$current" > "$RUNNER_TEMP/current.fingerprints"
-          comm -13 "$RUNNER_TEMP/current.fingerprints" "$RUNNER_TEMP/proposed.fingerprints" > "$RUNNER_TEMP/added.txt"
-          comm -23 "$RUNNER_TEMP/current.fingerprints" "$RUNNER_TEMP/proposed.fingerprints" > "$RUNNER_TEMP/removed.txt"
-          proposed_count=$(wc -l < "$RUNNER_TEMP/proposed.fingerprints" | tr -d ' ')
-          current_count=$(wc -l < "$RUNNER_TEMP/current.fingerprints" | tr -d ' ')
-          added_count=$(wc -l < "$RUNNER_TEMP/added.txt" | tr -d ' ')
-          removed_count=$(wc -l < "$RUNNER_TEMP/removed.txt" | tr -d ' ')
-          changed=false
-          if [[ "$added_count" -gt 0 || "$removed_count" -gt 0 ]]; then changed=true; fi
-          # Unique, immutable object key preserves the prior bundle for rollback.
-          new_key="truststore/truststore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.pem"
-          {
-            echo "proposed_count=$proposed_count"
-            echo "current_count=$current_count"
-            echo "changed=$changed"
-            echo "new_key=$new_key"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo "### 🔍 S3 comparison"
-            echo "- Environment: $ENVIRONMENT"
-            echo "- Current S3 object: s3://$BUCKET/$S3_KEY"
-            echo "- Proposed CA certificates: **$proposed_count**"
-            echo "- Current CA certificates: **$current_count**"
-            echo "- Added certificates: **$added_count**"
-            echo "- Removed certificates: **$removed_count**"
-            if [[ "$changed" == true ]]; then echo "- Result: **Changes detected**"; else echo "- Result: **No certificate changes**"; fi
-            if [[ "$added_count" -gt 0 ]]; then
-              echo "\n**Added SHA-256 fingerprints**"
-              sed 's/^/- `/' "$RUNNER_TEMP/added.txt" | sed 's/$/`/'
-            fi
-            if [[ "$removed_count" -gt 0 ]]; then
-              echo "\n**Removed SHA-256 fingerprints**"
-              sed 's/^/- `/' "$RUNNER_TEMP/removed.txt" | sed 's/$/`/'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "Current certificates: $current_count; proposed: $proposed_count; added: $added_count; removed: $removed_count"
-          if [[ "$changed" == false ]]; then echo "No certificate differences found."; fi
+          # Parse both PEM bundles, calculate SHA-256 fingerprints, and compare exact certificate identities.
+          # Certificate counts are deliberately split into entries, unique fingerprints, duplicates, and CA/non-CA.
+          python3 - "$proposed" "$current" "$report" <<'PY'
+          import hashlib, os, re, subprocess, sys, tempfile
+          from collections import Counter, defaultdict
+          from datetime import datetime
 
+          proposed_path, current_path, report_path = sys.argv[1:]
+
+          def parse_bundle(path, label):
+              raw = open(path, 'r', encoding='utf-8', errors='replace').read()
+              blocks = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', raw, re.S)
+              records = []
+              for index, pem in enumerate(blocks, 1):
+                  with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as f:
+                      f.write(pem + '\n')
+                      cert_path = f.name
+                  try:
+                      def openssl(*args):
+                          p = subprocess.run(['openssl', 'x509', '-in', cert_path, *args], text=True, capture_output=True)
+                          if p.returncode != 0:
+                              return ''
+                          return p.stdout.strip()
+                      fp_raw = openssl('-noout', '-fingerprint', '-sha256')
+                      fp = fp_raw.split('=', 1)[-1].replace(':', '').strip().upper() if '=' in fp_raw else ''
+                      subject = openssl('-noout', '-subject', '-nameopt', 'RFC2253').removeprefix('subject=')
+                      issuer = openssl('-noout', '-issuer', '-nameopt', 'RFC2253').removeprefix('issuer=')
+                      enddate = openssl('-noout', '-enddate').removeprefix('notAfter=')
+                      basic = openssl('-noout', '-ext', 'basicConstraints')
+                      ca = 'Yes' if re.search(r'CA\s*:\s*TRUE', basic, re.I) else ('No' if basic else 'Unknown')
+                      cn_match = re.search(r'(?:^|,)CN=([^,]+)', subject)
+                      cn = cn_match.group(1) if cn_match else (subject or '(subject unavailable)')
+                      records.append({'index': index, 'label': label, 'fingerprint': fp, 'cn': cn,
+                                      'subject': subject, 'issuer': issuer, 'expires': enddate or 'Unknown',
+                                      'ca': ca, 'parse_ok': bool(fp)})
+                  finally:
+                      os.unlink(cert_path)
+              return records
+
+          def md(value):
+              return str(value).replace('|', '\\|').replace('\n', ' ').replace('\r', ' ')
+
+          git = parse_bundle(proposed_path, 'Git')
+          prod = parse_bundle(current_path, 'Production S3')
+          git_valid = [r for r in git if r['fingerprint']]
+          prod_valid = [r for r in prod if r['fingerprint']]
+          git_fps = {r['fingerprint'] for r in git_valid}
+          prod_fps = {r['fingerprint'] for r in prod_valid}
+          git_counts = Counter(r['fingerprint'] for r in git_valid)
+          prod_counts = Counter(r['fingerprint'] for r in prod_valid)
+          prod_by_fp = defaultdict(list)
+          git_by_fp = defaultdict(list)
+          for r in prod_valid: prod_by_fp[r['fingerprint']].append(r)
+          for r in git_valid: git_by_fp[r['fingerprint']].append(r)
+          added = sorted(git_fps - prod_fps)
+          removed = sorted(prod_fps - git_fps)
+          changed = bool(added or removed)
+
+          def counts(records):
+              valid = [r for r in records if r['fingerprint']]
+              ca_count = sum(r['ca'] == 'Yes' for r in valid)
+              nonca_count = sum(r['ca'] == 'No' for r in valid)
+              unknown_count = sum(r['ca'] == 'Unknown' for r in valid)
+              freq = Counter(r['fingerprint'] for r in valid)
+              return len(records), len(freq), sum(n - 1 for n in freq.values()), ca_count, nonca_count, unknown_count
+
+          g_entries, g_unique, g_dups, g_ca, g_nonca, g_unknown = counts(git)
+          p_entries, p_unique, p_dups, p_ca, p_nonca, p_unknown = counts(prod)
+          with open(report_path, 'w', encoding='utf-8') as out:
+              env_name = os.environ.get('ENVIRONMENT', 'selected')
+              env_label = 'prod' if env_name == 'prd' else env_name
+              display_name = 'production' if env_name == 'prd' else env_name.upper()
+              out.write(f'# 🔍 Certificate comparison: Git proposal vs current {display_name} S3 bundle\n\n')
+              out.write(f'- Proposed Git file: `{proposed_path}`\n')
+              out.write(f'- Current {display_name} object: `s3://{os.environ["BUCKET"]}/{os.environ["S3_KEY"]}`\n\n')
+              out.write('## Bundle inventory\n\n')
+              out.write(f'| Metric | Proposed Git bundle | Current {display_name} bundle |\n|---|---:|---:|\n')
+              for label, gv, pv in [
+                  ('Certificate entries (PEM blocks)', g_entries, p_entries),
+                  ('Unique certificates (SHA-256)', g_unique, p_unique),
+                  ('Duplicate entries beyond first occurrence', g_dups, p_dups),
+                  ('PEM entries with CA:TRUE', g_ca, p_ca),
+                  ('PEM entries with CA:FALSE', g_nonca, p_nonca),
+                  ('PEM entries with CA status unavailable', g_unknown, p_unknown),
+              ]:
+                  out.write(f'| {label} | {gv} | {pv} |\n')
+              out.write('\n> Matching is by exact SHA-256 certificate fingerprint. A certificate with a different encoding or contents will not be treated as the same certificate unless the DER fingerprint matches.\n\n')
+              out.write(f'## Current {display_name} S3 validation inventory — every certificate\n\n')
+              out.write(f'| {env_label.title()} # | Certificate CN | Expires | CA? | Issuer | SHA-256 fingerprint | Remark vs Git |\n')
+              out.write('|---:|---|---|---|---|---|---|\n')
+              for p in prod:
+                  fp = p['fingerprint']
+                  if not fp:
+                      remark = f'Could not parse {display_name} certificate'
+                  elif fp not in git_fps:
+                      remark = f'Extra in {env_label} (not in Git)'
+                  else:
+                      remark = 'Exists in Git'
+                      if prod_counts[fp] > 1:
+                          remark += f' (duplicate entry in {env_label})'
+                  out.write(f"| {p['index']} | {md(p['cn'])} | {md(p['expires'])} | {p['ca']} | {md(p['issuer'])} | `{fp or 'UNPARSEABLE'}` | **{md(remark)}** |\n")
+              out.write('\n## Side-by-side comparison — every Git certificate\n\n')
+              out.write(f'| Git # | Git certificate CN / expiry | Git SHA-256 fingerprint | {display_name.title()} match | {display_name.title()} SHA-256 fingerprint | CA? (Git / {env_label}) | Remark |\n')
+              out.write('|---:|---|---|---|---|---|---|\n')
+              seen_git = set()
+              for g in git:
+                  fp = g['fingerprint']
+                  matches = prod_by_fp.get(fp, []) if fp else []
+                  if matches:
+                      p = matches[0]
+                      remark = f'Exists in {env_label}'
+                      prod_label = f"{p['cn']} / {p['expires']}"
+                      prod_fp = p['fingerprint']
+                      ca_label = f"{g['ca']} / {p['ca']}"
+                      if fp in seen_git:
+                          remark += ' (duplicate entry in Git)'
+                      seen_git.add(fp)
+                  else:
+                      remark = f'Not present in {env_label}'
+                      prod_label, prod_fp, ca_label = '—', '—', f"{g['ca']} / —"
+                  if not fp:
+                      remark = 'Could not parse Git certificate'
+                  out.write(f"| {g['index']} | {md(g['cn'])} / {md(g['expires'])} | `{fp or 'UNPARSEABLE'}` | {md(prod_label)} | `{prod_fp or '—'}` | {md(ca_label)} | **{md(remark)}** |\n")
+              out.write(f'\n## Certificates extra in {display_name} (present in S3, absent from Git)\n\n')
+              if removed:
+                  out.write(f'| {display_name.title()} # | {display_name.title()} certificate CN / expiry | {display_name.title()} SHA-256 fingerprint | CA? | Remark |\n|---:|---|---|---|---|\n')
+                  for fp in removed:
+                      for p in prod_by_fp[fp]:
+                          out.write(f"| {p['index']} | {md(p['cn'])} / {md(p['expires'])} | `{fp}` | {p['ca']} | **Extra in {env_label}** |\n")
+              else:
+                  out.write('None — every unique production certificate is present in Git.\n')
+              out.write('\n## Summary\n\n')
+              out.write(f'- Git unique certificates absent from {display_name} (would be added): **{len(added)}**\n')
+              out.write(f'- Unique {display_name} certificates absent from Git (would be removed): **{len(removed)}**\n')
+              out.write(f'- Result: **{"Changes detected" if changed else "No certificate changes"}**\n')
+              if any(not r['fingerprint'] for r in git + prod):
+                  out.write('- ⚠️ At least one PEM block could not be parsed by OpenSSL; review the inventory before applying.\n')
+
+          # Persist compact fingerprint lists for the step summary/logs and workflow outputs.
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'added.txt'), 'w') as f:
+              f.write(''.join(fp + '\n' for fp in added))
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'removed.txt'), 'w') as f:
+              f.write(''.join(fp + '\n' for fp in removed))
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'compare-outputs.txt'), 'w') as f:
+              f.write(f'proposed_count={g_unique}\ncurrent_count={p_unique}\nchanged={str(changed).lower()}\n')
+          print(f'Git entries={g_entries}, unique={g_unique}, duplicates={g_dups}, CA={g_ca}, non-CA={g_nonca}, unknown CA status={g_unknown}')
+          print(f'Production entries={p_entries}, unique={p_unique}, duplicates={p_dups}, CA={p_ca}, non-CA={p_nonca}, unknown CA status={p_unknown}')
+          print(f'Added unique certificates={len(added)}; removed unique certificates={len(removed)}; changed={str(changed).lower()}')
+          PY
+
+          cat "$RUNNER_TEMP/compare-outputs.txt" >> "$GITHUB_OUTPUT"
+          new_key="truststore/truststore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.pem"
+          echo "new_key=$new_key" >> "$GITHUB_OUTPUT"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          cat "$report"
   # 3. Apply only when explicitly selected. Never runs if validation/comparison fails.
   apply:
     name: "🚀 3 · Apply trust store"
