@@ -1,0 +1,97 @@
+---
+name: Validate Trust Store
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/validate-trust-store.yaml
+      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh
+      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.pem
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment to validate
+        required: true
+        type: choice
+        default: tst
+        options:
+          - tst
+          - ppe
+          - prd
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate truststore.pem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine changed environments
+        id: changed
+        env:
+          DISPATCH_ENV: ${{ inputs.env }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manually triggered for environment: $DISPATCH_ENV"
+            echo "envs=$DISPATCH_ENV" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files=$(git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...HEAD" -- 'truststore/*/truststore.pem')
+
+          if [ -z "$changed_files" ]; then
+            # PR touched the workflow or the validator script but no truststore.pem
+            # itself - fall back to validating every environment that currently has
+            # one, so a script fix still gets exercised against real data.
+            envs=$(find truststore -mindepth 2 -maxdepth 2 -name truststore.pem | sed -E 's#truststore/([^/]+)/truststore\.pem#\1#' | sort -u | tr '\n' ' ')
+            echo "No truststore.pem changes detected; falling back to all environments: $envs"
+            echo "envs=$envs" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          envs=$(echo "$changed_files" | sed -E 's#truststore/([^/]+)/truststore\.pem#\1#' | sort -u | tr '\n' ' ')
+          echo "Changed environment(s): $envs"
+          echo "envs=$envs" >> "$GITHUB_OUTPUT"
+
+      - name: Validate each changed truststore
+        if: steps.changed.outputs.envs != ''
+        run: |
+          status=0
+          esc=$'\033'
+          echo "## Truststore validation results" >> "$GITHUB_STEP_SUMMARY"
+
+          for env in ${{ steps.changed.outputs.envs }}; do
+            echo "::group::Validating ${env} truststore"
+            if output=$(bash cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh "$env" 2>&1); then
+              env_status=0
+              label="PASS"
+            else
+              env_status=1
+              label="FAIL"
+            fi
+            printf '%s\n' "$output"
+            echo "::endgroup::"
+
+            [ "$env_status" -ne 0 ] && status=1
+
+            {
+              echo ""
+              echo "### ${label}: ${env}"
+              echo '```text'
+              printf '%s\n' "$output" | sed "s/${esc}\[[0-9;]*m//g"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          exit "$status"
