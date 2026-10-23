@@ -1,0 +1,343 @@
+# CloudFront mTLS Trust Store Management
+# Pipeline: Validate -> Compare -> Apply (Apply defaults to no)
+# IMPORTANT: Replace the three TRUST_STORE_ID and TRUST_STORE_ARN / S3 bucket placeholders below.
+# TRUST_STORE_ID is the CloudFront trust-store ID (the value required by the AWS CLI), not its ARN.
+
+name: CloudFront mTLS Trust Store Management
+run-name: "🔐 Trust Store · ${{ inputs.env }} · Apply=${{ inputs.apply }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment to validate and compare
+        required: true
+        type: choice
+        default: tst
+        options: [tst, ppe, prd]
+      AWS_REGION:
+        description: AWS region used for S3 and the trust-store bundle source
+        required: true
+        type: choice
+        default: eu-west-1
+        options: [eu-west-1, us-east-1]
+      apply:
+        description: Apply the proposed bundle to CloudFront? 'no' only validates and compares
+        required: true
+        type: choice
+        default: 'no'
+        options: ['no', 'yes']
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudfront-trust-store-${{ inputs.env }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ENVIRONMENT: ${{ inputs.env }}
+  ROLE_ALIAS: ${{ inputs.env == 'tst' && 'TST-NETWORK' || inputs.env == 'ppe' && 'PPE-NETWORK' || 'NETWORK' }}
+  REGION: ${{ inputs.AWS_REGION }}
+  APPLY: ${{ inputs.apply }}
+  TRUSTSTORE_FILE: cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/${{ inputs.env }}/truststore.pem
+  VALIDATOR_SCRIPT: cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh
+
+jobs:
+  # 1. Validate the repository's proposed truststore bundle.
+  validate:
+    name: "🧪 1 · Validate trust store"
+    runs-on: ubuntu-latest
+    outputs:
+      role_secret: ${{ steps.role.outputs.secret }}
+      trust_store_id: ${{ steps.config.outputs.trust_store_id }}
+      trust_store_arn: ${{ steps.config.outputs.trust_store_arn }}
+      bucket: ${{ steps.config.outputs.bucket }}
+      s3_key: ${{ steps.config.outputs.s3_key }}
+      bundle_region: ${{ steps.config.outputs.bundle_region }}
+      account_id: ${{ steps.aws.outputs.account_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve AWS role secret
+        id: role
+        run: |
+          # Environment-to-role mapping agreed for this workflow:
+          # tst -> TST-NETWORK -> TST_NETWORK_SERVICE_ROLE
+          # ppe -> PPE-NETWORK -> PPE_NETWORK_SERVICE_ROLE
+          # prd -> NETWORK -> NETWORK_SERVICES_ROLE
+          case "$ENVIRONMENT" in
+            tst) secret=TST_NETWORK_SERVICE_ROLE ;;
+            ppe) secret=PPE_NETWORK_SERVICE_ROLE ;;
+            prd) secret=NETWORK_SERVICES_ROLE ;;
+            *) echo "::error title=Invalid environment::No role mapping for $ENVIRONMENT"; exit 1 ;;
+          esac
+          echo "secret=$secret" >> "$GITHUB_OUTPUT"
+          echo "Environment: $ENVIRONMENT; role alias: $ROLE_ALIAS (secret name: $secret)"
+
+      - name: Resolve environment trust-store configuration
+        id: config
+        run: |
+          # Replace all example values with the real values for your three environments.
+          case "$ENVIRONMENT" in
+            tst)
+              trust_store_id='REPLACE_WITH_TST_TRUST_STORE_ID'
+              trust_store_arn='arn:aws:cloudfront::REPLACE_WITH_TST_ACCOUNT_ID:trust-store/REPLACE_WITH_TST_TRUST_STORE_ID'
+              bucket='REPLACE_WITH_TST_S3_BUCKET'
+              s3_key='truststore.pem'
+              bundle_region="$REGION"
+              ;;
+            ppe)
+              trust_store_id='REPLACE_WITH_PPE_TRUST_STORE_ID'
+              trust_store_arn='arn:aws:cloudfront::REPLACE_WITH_PPE_ACCOUNT_ID:trust-store/REPLACE_WITH_PPE_TRUST_STORE_ID'
+              bucket='REPLACE_WITH_PPE_S3_BUCKET'
+              s3_key='truststore.pem'
+              bundle_region="$REGION"
+              ;;
+            prd)
+              trust_store_id='REPLACE_WITH_PRD_TRUST_STORE_ID'
+              trust_store_arn='arn:aws:cloudfront::REPLACE_WITH_PRD_ACCOUNT_ID:trust-store/REPLACE_WITH_PRD_TRUST_STORE_ID'
+              bucket='REPLACE_WITH_PRD_S3_BUCKET'
+              s3_key='truststore.pem'
+              bundle_region="$REGION"
+              ;;
+            *) echo "::error title=Invalid environment::$ENVIRONMENT"; exit 1 ;;
+          esac
+          for value in "$trust_store_id" "$trust_store_arn" "$bucket"; do
+            if [[ "$value" == *REPLACE_WITH* ]]; then
+              echo "::error title=Configuration incomplete::Replace the trust-store ID/ARN and S3 bucket placeholders for $ENVIRONMENT in this workflow."
+              exit 1
+            fi
+          done
+          {
+            echo "trust_store_id=$trust_store_id"
+            echo "trust_store_arn=$trust_store_arn"
+            echo "bucket=$bucket"
+            echo "s3_key=$s3_key"
+            echo "bundle_region=$bundle_region"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out trust-store source file and validate
+        id: validate_bundle
+        run: |
+          set -euo pipefail
+          [[ -f "$TRUSTSTORE_FILE" ]] || { echo "::error title=Trust store file missing::$TRUSTSTORE_FILE was not found."; exit 1; }
+          [[ -f "$VALIDATOR_SCRIPT" ]] || { echo "::error title=Validator missing::$VALIDATOR_SCRIPT was not found."; exit 1; }
+          echo "Environment: $ENVIRONMENT"
+          echo "Proposed file: $TRUSTSTORE_FILE"
+          output=$(bash "$VALIDATOR_SCRIPT" "$ENVIRONMENT" 2>&1) || { printf '%s\n' "$output"; echo "::error title=Validation failed::Existing trust-store validation failed."; exit 1; }
+          printf '%s\n' "$output"
+          printf '### 🧪 Validation — PASS\n\n- Environment: `%s`\n- Proposed bundle: `%s`\n\n```text\n%s\n```\n' "$ENVIRONMENT" "$TRUSTSTORE_FILE" "$output" >> "$GITHUB_STEP_SUMMARY"
+          # Additional structural check: the source must contain one or more PEM certificates.
+          count=$(grep -c -- '-----BEGIN CERTIFICATE-----' "$TRUSTSTORE_FILE" || true)
+          [[ "$count" -gt 0 ]] || { echo "::error title=Invalid PEM::No BEGIN CERTIFICATE block found."; exit 1; }
+          echo "proposed_count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[steps.role.outputs.secret] }}
+          role-session-name: cf_truststore_${{ inputs.env }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Verify assumed account and trust-store configuration
+        id: aws
+        env:
+          ROLE_ARN: ${{ secrets[steps.role.outputs.secret] }}
+          TRUST_STORE_ARN: ${{ steps.config.outputs.trust_store_arn }}
+        run: |
+          set -euo pipefail
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          arn_account=$(cut -d: -f5 <<< "$TRUST_STORE_ARN")
+          [[ "$account_id" == "$arn_account" ]] || {
+            echo "::error title=Account mismatch::Assumed account $account_id does not match trust-store ARN account $arn_account. Check roleAlias and environment mapping."; exit 1;
+          }
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+          echo "AWS account: $account_id"
+          echo "Trust store: $TRUST_STORE_ARN"
+          {
+            echo "### 🔐 Target account"
+            echo "- Environment: $ENVIRONMENT"
+            echo "- Role alias: $ROLE_ALIAS"
+            echo "- Account ID: $account_id"
+            echo "- Trust store ARN: $TRUST_STORE_ARN"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 2. Download the current S3 bundle and compare certificate fingerprints.
+  compare:
+    name: "🔍 2 · Compare with S3"
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      proposed_count: ${{ steps.compare.outputs.proposed_count }}
+      current_count: ${{ steps.compare.outputs.current_count }}
+      new_key: ${{ steps.compare.outputs.new_key }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.validate.outputs.role_secret] }}
+          role-session-name: cf_truststore_compare_${{ inputs.env }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Download current bundle and compare certificate fingerprints
+        id: compare
+        env:
+          TRUST_STORE_ID: ${{ needs.validate.outputs.trust_store_id }}
+          TRUST_STORE_ARN: ${{ needs.validate.outputs.trust_store_arn }}
+          BUCKET: ${{ needs.validate.outputs.bucket }}
+          S3_KEY: ${{ needs.validate.outputs.s3_key }}
+          BUNDLE_REGION: ${{ needs.validate.outputs.bundle_region }}
+        run: |
+          set -euo pipefail
+          proposed="$GITHUB_WORKSPACE/$TRUSTSTORE_FILE"
+          current="$RUNNER_TEMP/current-truststore.pem"
+          [[ -f "$proposed" ]] || { echo "::error title=Proposed file missing::$proposed not found."; exit 1; }
+          aws s3 cp "s3://$BUCKET/$S3_KEY" "$current" --region "$BUNDLE_REGION"
+          echo "Downloaded current bundle: s3://$BUCKET/$S3_KEY"
+
+          cert_fingerprints() {
+            local file="$1"
+            awk -v outdir="$RUNNER_TEMP" 'BEGIN { n=0; count=0 } /-----BEGIN CERTIFICATE-----/ { n=1; count++; f=outdir "/cert-" count ".pem" } n>0 { print > f } /-----END CERTIFICATE-----/ { close(f); n=0 }' "$file"
+            for cert in "$RUNNER_TEMP"/cert-*.pem; do
+              [[ -f "$cert" ]] || continue
+              openssl x509 -in "$cert" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | tr -d ':'
+            done | sort -u
+            rm -f "$RUNNER_TEMP"/cert-*.pem
+          }
+          cert_fingerprints "$proposed" > "$RUNNER_TEMP/proposed.fingerprints"
+          cert_fingerprints "$current" > "$RUNNER_TEMP/current.fingerprints"
+          comm -13 "$RUNNER_TEMP/current.fingerprints" "$RUNNER_TEMP/proposed.fingerprints" > "$RUNNER_TEMP/added.txt"
+          comm -23 "$RUNNER_TEMP/current.fingerprints" "$RUNNER_TEMP/proposed.fingerprints" > "$RUNNER_TEMP/removed.txt"
+          proposed_count=$(wc -l < "$RUNNER_TEMP/proposed.fingerprints" | tr -d ' ')
+          current_count=$(wc -l < "$RUNNER_TEMP/current.fingerprints" | tr -d ' ')
+          added_count=$(wc -l < "$RUNNER_TEMP/added.txt" | tr -d ' ')
+          removed_count=$(wc -l < "$RUNNER_TEMP/removed.txt" | tr -d ' ')
+          changed=false
+          if [[ "$added_count" -gt 0 || "$removed_count" -gt 0 ]]; then changed=true; fi
+          # Unique, immutable object key preserves the prior bundle for rollback.
+          new_key="truststore/truststore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.pem"
+          {
+            echo "proposed_count=$proposed_count"
+            echo "current_count=$current_count"
+            echo "changed=$changed"
+            echo "new_key=$new_key"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### 🔍 S3 comparison"
+            echo "- Environment: $ENVIRONMENT"
+            echo "- Current S3 object: s3://$BUCKET/$S3_KEY"
+            echo "- Proposed CA certificates: **$proposed_count**"
+            echo "- Current CA certificates: **$current_count**"
+            echo "- Added certificates: **$added_count**"
+            echo "- Removed certificates: **$removed_count**"
+            if [[ "$changed" == true ]]; then echo "- Result: **Changes detected**"; else echo "- Result: **No certificate changes**"; fi
+            if [[ "$added_count" -gt 0 ]]; then
+              echo "\n**Added SHA-256 fingerprints**"
+              sed 's/^/- `/' "$RUNNER_TEMP/added.txt" | sed 's/$/`/'
+            fi
+            if [[ "$removed_count" -gt 0 ]]; then
+              echo "\n**Removed SHA-256 fingerprints**"
+              sed 's/^/- `/' "$RUNNER_TEMP/removed.txt" | sed 's/$/`/'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Current certificates: $current_count; proposed: $proposed_count; added: $added_count; removed: $removed_count"
+          if [[ "$changed" == false ]]; then echo "No certificate differences found."; fi
+
+  # 3. Apply only when explicitly selected. Never runs if validation/comparison fails.
+  apply:
+    name: "🚀 3 · Apply trust store"
+    needs: [validate, compare]
+    if: ${{ !cancelled() && inputs.apply == 'yes' && needs.validate.result == 'success' && needs.compare.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.validate.outputs.role_secret] }}
+          role-session-name: cf_truststore_apply_${{ inputs.env }}
+          aws-region: ${{ inputs.AWS_REGION }}
+
+      - name: Upload versioned bundle and update CloudFront trust store
+        env:
+          TRUST_STORE_ID: ${{ needs.validate.outputs.trust_store_id }}
+          TRUST_STORE_ARN: ${{ needs.validate.outputs.trust_store_arn }}
+          BUCKET: ${{ needs.validate.outputs.bucket }}
+          BUNDLE_REGION: ${{ needs.validate.outputs.bundle_region }}
+          NEW_KEY: ${{ needs.compare.outputs.new_key }}
+        run: |
+          set -euo pipefail
+          proposed="$GITHUB_WORKSPACE/$TRUSTSTORE_FILE"
+          [[ -f "$proposed" ]] || { echo "::error title=Proposed file missing::$proposed not found."; exit 1; }
+
+          # Guard against applying to an account different from the ARN configured for this environment.
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          arn_account=$(cut -d: -f5 <<< "$TRUST_STORE_ARN")
+          [[ "$account_id" == "$arn_account" ]] || { echo "::error title=Account mismatch::Current account $account_id does not match $arn_account."; exit 1; }
+
+          echo "Uploading new immutable bundle to s3://$BUCKET/$NEW_KEY"
+          aws s3 cp "$proposed" "s3://$BUCKET/$NEW_KEY" --region "$BUNDLE_REGION" --content-type 'application/x-pem-file'
+
+          # CloudFront update requires the current trust-store ETag for optimistic concurrency.
+          aws cloudfront get-trust-store --id "$TRUST_STORE_ID" --output json > "$RUNNER_TEMP/trust-store.json"
+          etag=$(jq -r '.ETag // empty' "$RUNNER_TEMP/trust-store.json")
+          [[ -n "$etag" ]] || { echo "::error title=Missing ETag::Could not read the current trust-store ETag."; exit 1; }
+
+          aws cloudfront update-trust-store \
+            --id "$TRUST_STORE_ID" \
+            --if-match "$etag" \
+            --ca-certificates-bundle-source "CaCertificatesBundleS3Location={Bucket=$BUCKET,Key=$NEW_KEY,Region=$BUNDLE_REGION}" \
+            --output json > "$RUNNER_TEMP/update-result.json"
+
+          echo "Trust store update request accepted. Waiting for CloudFront status to become active..."
+          deadline=$((SECONDS + 1800))
+          while (( SECONDS < deadline )); do
+            aws cloudfront get-trust-store --id "$TRUST_STORE_ID" --output json > "$RUNNER_TEMP/trust-store-current.json"
+            status=$(jq -r '.TrustStore.Status // "unknown"' "$RUNNER_TEMP/trust-store-current.json")
+            reason=$(jq -r '.TrustStore.Reason // empty' "$RUNNER_TEMP/trust-store-current.json")
+            echo "Trust store status: $status${reason:+ — $reason}"
+            case "$status" in
+              active) break ;;
+              failed) echo "::error title=Trust store update failed::$reason"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          [[ "${status:-unknown}" == active ]] || { echo "::error title=Timed out::Trust store did not become active within 30 minutes. Check CloudFront in AWS; the request may still be processing."; exit 1; }
+
+          {
+            echo "### 🚀 Apply — SUCCESS"
+            echo "- Environment: $ENVIRONMENT"
+            echo "- Trust store ID: $TRUST_STORE_ID"
+            echo "- S3 bundle now referenced: s3://$BUCKET/$NEW_KEY"
+            echo "- CloudFront trust-store status: **$status**"
+            echo "- The previous S3 object was not overwritten, supporting rollback."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Trust store updated successfully: $TRUST_STORE_ARN"
+
+  apply_skipped:
+    name: "⏸️ 3 · Apply skipped (review only)"
+    needs: [validate, compare]
+    if: ${{ !cancelled() && inputs.apply == 'no' && needs.validate.result == 'success' && needs.compare.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record review-only outcome
+        run: |
+          echo "Apply = no. No S3 upload or CloudFront trust-store update was performed."
+          {
+            echo "### ⏸️ Apply skipped"
+            echo "Validation and comparison completed. **No changes were made to S3 or CloudFront.**"
+            echo "Re-run the workflow with Apply = yes to apply the proposed bundle."
+          } >> "$GITHUB_STEP_SUMMARY"
