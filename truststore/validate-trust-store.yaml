@@ -1,16 +1,41 @@
----
-name: Validate Trust Store
+# ─────────────────────────────────────────────────────────────────────────────
+#   🧪 Validate  →  🔍 Compare with S3  →  🚀 Apply (only when Apply = yes)
+#
+#   Every stage is its own job, so the run page draws them as connected boxes
+#   that turn green (passed), red (failed) or grey (skipped).
+#     • Validate: validate-truststore.sh as before, plus CloudFront's rules for a CA
+#       bundle (truststore_update.py). On a pull request it also lists what the PR
+#       adds and removes, and stops there – pull requests never touch AWS.
+#     • Compare with S3 (manual runs): downloads the PEM in the trust store's S3 bucket
+#       and lists the certificates added, removed, replaced and unchanged.
+#     • Apply = no (default): the run stops after Compare – nothing is uploaded.
+#     • Apply = yes: uploads truststore.pem to the same S3 key, points the trust store
+#       at the new S3 version and waits until it is active. Skipped when Compare finds
+#       nothing to apply. The previous S3 file is kept as a run artifact.
+#
+#   Each truststore/<env>/ folder holds truststore.pem and truststore.json:
+#     { "account_id": "123456789012", "trust_store": "<trust store name, ID or ARN>",
+#       "bucket": "<S3 bucket>", "key": "<S3 key of the PEM>", "region": "<bucket region>" }
+#   Roles are the same secrets as the CloudFormation pipeline:
+#     prd → NETWORK (NETWORK_SERVICES_ROLE), ppe → PPE-NETWORK, tst → TST-NETWORK.
+#   The role needs cloudfront:ListTrustStores, GetTrustStore, UpdateTrustStore,
+#   ListDistributionsByTrustStore and s3:GetObject, GetObjectVersion, PutObject on the PEM.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Trust store
+run-name: "${{ github.event_name == 'pull_request' && format('🧪 Trust store check · PR #{0}', github.event.pull_request.number) || format('{0} Trust store · {1}', inputs.apply == 'yes' && '🚀' || '🔍', inputs.env) }}"
 
 on:
   pull_request:
     paths:
       - .github/workflows/validate-trust-store.yaml
       - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh
+      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/truststore_update.py
       - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.pem
+      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.json
   workflow_dispatch:
     inputs:
       env:
-        description: Environment to validate
+        description: Environment (folder under truststore/)
         required: true
         type: choice
         default: tst
@@ -18,18 +43,42 @@ on:
           - tst
           - ppe
           - prd
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+      apply:
+        description: "Upload truststore.pem to S3 and update the trust store after the comparison? 'no' = stop after Compare"
+        required: false
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
 
 permissions:
   contents: read
 
+# One run per environment at a time (a second run waits); a newer push to a pull request
+# cancels the older check.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('truststore-pr-{0}', github.ref) || format('truststore-{0}', inputs.env) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BASE_DIR: cloudformation/deamon/ims-app-identity-main/ims-app-identity-main
+  ENV_NAME: ${{ inputs.env }}
+  APPLY: ${{ inputs.apply }}
+
+defaults:
+  run:
+    shell: bash   # runs as bash -eo pipefail: any failing command fails the stage
+
 jobs:
+  # ── 1 · Validate: the PEM file itself – no AWS ────────────────────────────────
   validate:
-    name: Validate truststore.pem
+    name: 🧪 Validate · ${{ github.event_name == 'pull_request' && 'pull request' || inputs.env }}
     runs-on: ubuntu-latest
+    outputs:
+      role_secret: ${{ steps.plan.outputs.role_secret }}
+      pem: ${{ steps.settings.outputs.pem }}
+      region: ${{ steps.settings.outputs.region }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -37,61 +86,261 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Determine changed environments
-        id: changed
+      - name: Pick environment and role
+        id: plan
         env:
-          DISPATCH_ENV: ${{ inputs.env }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manually triggered for environment: $DISPATCH_ENV"
-            echo "envs=$DISPATCH_ENV" >> "$GITHUB_OUTPUT"
-            exit 0
+          fail() { echo "::error title=Validate failed::$1"; exit 1; }
+          store="$BASE_DIR/truststore"
+          [ -d "$store" ] || fail "Folder $store not found."
+
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            envs="$ENV_NAME"
+            # Each environment's trust store lives in its network services account – the same
+            # role secrets the CloudFormation pipeline uses for NETWORK / PPE-NETWORK / TST-NETWORK.
+            case "$ENV_NAME" in
+              prd) alias=NETWORK;     secret=NETWORK_SERVICES_ROLE ;;
+              ppe) alias=PPE-NETWORK; secret=PPE_NETWORK_SERVICE_ROLE ;;
+              tst) alias=TST-NETWORK; secret=TST_NETWORK_SERVICE_ROLE ;;
+              *)   fail "No role for environment '$ENV_NAME' – add it to the list in this step." ;;
+            esac
+            echo "🔑 Environment $ENV_NAME → role alias $alias (secret $secret)"
+            { echo "role_secret=$secret"; echo "role_alias=$alias"; } >> "$GITHUB_OUTPUT"
+
+            # The plan, from truststore.json (the last step of this stage checks it properly)
+            cfg="$store/$ENV_NAME/truststore.json"
+            value() { jq -r --arg k "$1" '.[$k] // "?" | tostring' "$cfg" 2> /dev/null || echo "?"; }
+            if [ -f "$cfg" ]; then
+              account=$(value account_id); ts_name=$(value trust_store); region=$(value region)
+              bundle="\`s3://$(value bucket)/$(value key)\` ($region)"
+            else
+              account="?"; ts_name="? (no truststore.json)"; bundle="?"
+            fi
+            if [ "$APPLY" = yes ]; then
+              apply="🚀 yes – after Compare, uploads truststore.pem and updates the trust store (skipped when nothing changed)"
+            else
+              apply="✋ no – stops after Compare, nothing is uploaded"
+            fi
+            echo "☁️  Account     : $alias · $account"
+            echo "🔐 Trust store : $ts_name"
+            echo "🪣 Bundle      : ${bundle//\`/}"
+            echo "🚀 Apply       : $apply"
+            {
+              echo "### 🧭 Plan"
+              echo "| | |"
+              echo "|---|---|"
+              printf '| **Environment** | `%s` |\n' "$ENV_NAME"
+              printf '| **Account** | %s · `%s` |\n' "$alias" "$account"
+              printf '| **Trust store** | `%s` |\n' "$ts_name"
+              printf '| **Bundle in S3** | %s |\n' "$bundle"
+              printf '| **File** | `%s` |\n' "$store/$ENV_NAME/truststore.pem"
+              printf '| **Apply** | %s |\n' "$apply"
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Pull request: the environments whose truststore.pem or truststore.json it changes
+            envs=$(git diff --name-only "origin/$BASE_REF...HEAD" -- "$store/*/truststore.pem" "$store/*/truststore.json" |
+                     sed -E "s#^$store/([^/]+)/.*#\1#" | sort -u | tr '\n' ' ')
+            if [ -z "${envs// /}" ]; then
+              # Only the workflow or a script changed: check every environment
+              envs=$(find "$store" -mindepth 2 -maxdepth 2 -name truststore.pem |
+                       sed -E "s#^$store/([^/]+)/.*#\1#" | sort -u | tr '\n' ' ')
+              echo "ℹ️  No truststore file changed – checking every environment: $envs"
+            else
+              echo "📝 Environment(s) changed in this pull request: $envs"
+            fi
           fi
-
-          changed_files=$(git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...HEAD" -- 'truststore/*/truststore.pem')
-
-          if [ -z "$changed_files" ]; then
-            # PR touched the workflow or the validator script but no truststore.pem
-            # itself - fall back to validating every environment that currently has
-            # one, so a script fix still gets exercised against real data.
-            envs=$(find truststore -mindepth 2 -maxdepth 2 -name truststore.pem | sed -E 's#truststore/([^/]+)/truststore\.pem#\1#' | sort -u | tr '\n' ' ')
-            echo "No truststore.pem changes detected; falling back to all environments: $envs"
-            echo "envs=$envs" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          envs=$(echo "$changed_files" | sed -E 's#truststore/([^/]+)/truststore\.pem#\1#' | sort -u | tr '\n' ' ')
-          echo "Changed environment(s): $envs"
+          [ -n "${envs// /}" ] || fail "No truststore.pem found under $store."
           echo "envs=$envs" >> "$GITHUB_OUTPUT"
 
-      - name: Validate each changed truststore
-        if: steps.changed.outputs.envs != ''
+      - name: Validate truststore.pem
+        env:
+          ENVS: ${{ steps.plan.outputs.envs }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          status=0
+          tool="$BASE_DIR/scripts/truststore_update.py"
+          team="$BASE_DIR/scripts/validate-truststore.sh"
+          [ -f "$tool" ] || { echo "::error title=Validate failed::$tool not found – commit truststore_update.py next to validate-truststore.sh."; exit 1; }
           esc=$'\033'
-          echo "## Truststore validation results" >> "$GITHUB_STEP_SUMMARY"
-
-          for env in ${{ steps.changed.outputs.envs }}; do
-            echo "::group::Validating ${env} truststore"
-            if output=$(bash cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh "$env" 2>&1); then
-              env_status=0
-              label="PASS"
-            else
-              env_status=1
-              label="FAIL"
+          status=0
+          for env in $ENVS; do
+            pem="$BASE_DIR/truststore/$env/truststore.pem"
+            echo "═══════════════ $env ═══════════════"
+            if [ ! -f "$pem" ]; then
+              echo "::error title=Trust store $env::$pem not found."
+              status=1
+              continue
             fi
-            printf '%s\n' "$output"
-            echo "::endgroup::"
 
-            [ "$env_status" -ne 0 ] && status=1
+            # 1) validate-truststore.sh, as before
+            team_out=""
+            team_result="➖ not run (script not found)"
+            if [ -f "$team" ]; then
+              echo "::group::🧪 $env · validate-truststore.sh"
+              if team_out=$(bash "$team" "$env" 2>&1); then
+                team_result="✅ passed"
+              else
+                team_result="❌ failed"
+                status=1
+              fi
+              printf '%s\n' "$team_out"
+              echo "::endgroup::"
+              echo "validate-truststore.sh: $team_result"
+              if [ "$team_result" = "❌ failed" ]; then
+                echo "::error title=Trust store $env::validate-truststore.sh failed – its output is in the log and the run summary."
+              fi
+            fi
 
+            # 2) CloudFront's rules for a CA bundle; on a pull request also what the PR changes
+            echo "🧪 $env · CloudFront rules"
+            compare=()
+            if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+               git show "origin/$BASE_REF:$pem" > "$RUNNER_TEMP/$env-base.pem" 2> /dev/null; then
+              compare=(--compare-with "$RUNNER_TEMP/$env-base.pem" --compare-label "$BASE_REF")
+            fi
+            python3 "$tool" "$pem" --validate-only "${compare[@]}" --github || status=1
+
+            open=""
+            if [ "$team_result" = "❌ failed" ]; then open=" open"; fi
             {
-              echo ""
-              echo "### ${label}: ${env}"
+              echo "<details$open><summary>validate-truststore.sh · <code>$env</code>: $team_result</summary>"
+              echo
               echo '```text'
-              printf '%s\n' "$output" | sed "s/${esc}\[[0-9;]*m//g"
+              printf '%s\n' "$team_out" | sed "s/${esc}\[[0-9;]*m//g"
               echo '```'
+              echo "</details>"
+              echo
             } >> "$GITHUB_STEP_SUMMARY"
           done
-
           exit "$status"
+
+      - name: Check settings and role
+        id: settings
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ROLE_ARN: ${{ secrets[steps.plan.outputs.role_secret] }}
+          ROLE_SECRET: ${{ steps.plan.outputs.role_secret }}
+          ROLE_ALIAS: ${{ steps.plan.outputs.role_alias }}
+        run: |
+          fail() { echo "::error title=Settings::$1"; exit 1; }
+          dir="$BASE_DIR/truststore/$ENV_NAME"
+          pem="$dir/truststore.pem"
+          cfg="$dir/truststore.json"
+          [ -f "$cfg" ] ||
+            fail "$cfg not found. Create it next to truststore.pem with account_id, trust_store, bucket, key and region (see the top of this workflow)."
+          jq -e '(.account_id | tostring | test("^[0-9]{12}$"))
+                 and ([.trust_store, .bucket, .key, .region] | all(type == "string" and length > 0 and (startswith("<") | not)))' \
+            "$cfg" > /dev/null ||
+            fail "$cfg needs account_id (12 digits, in quotes), trust_store, bucket, key and region – fill in every value."
+          [ -n "$ROLE_ARN" ] || fail "The secret $ROLE_SECRET (role alias $ROLE_ALIAS) is empty or not set."
+          echo "✅ $cfg is complete and the role secret $ROLE_SECRET is set."
+          { echo "pem=$pem"; echo "region=$(jq -r .region "$cfg")"; } >> "$GITHUB_OUTPUT"
+
+  # ── 2 · Compare with S3: what the trust store's bucket has vs. truststore.pem ─
+  compare:
+    name: 🔍 Compare with S3${{ inputs.env && format(' · {0}', inputs.env) || '' }}
+    needs: validate
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      has_changes: ${{ steps.compare.outputs.has_changes }}
+    env:
+      PEM: ${{ needs.validate.outputs.pem }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install boto3
+        run: pip install --quiet boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.validate.outputs.role_secret] }}
+          role-session-name: truststore_compare
+          aws-region: ${{ needs.validate.outputs.region }}
+
+      - name: Compare truststore.pem with the bundle in S3
+        id: compare
+        run: python3 "$BASE_DIR/scripts/truststore_update.py" "$PEM" --diff-only --github
+
+      - name: What happens next
+        env:
+          HAS_CHANGES: ${{ steps.compare.outputs.has_changes }}
+        run: |
+          if [ "$HAS_CHANGES" != true ]; then
+            next="✅ Nothing to apply – the Apply stage is skipped."
+          elif [ "$APPLY" = yes ]; then
+            next="🚀 **Apply = yes** – the next stage uploads truststore.pem and updates the trust store."
+          else
+            next="✋ **Apply = no** – nothing was uploaded. To apply these changes, run this workflow again for $ENV_NAME with Apply = yes."
+            echo "::notice title=Not applied::Run the workflow again for $ENV_NAME with Apply = yes to upload truststore.pem and update the trust store."
+          fi
+          echo "${next//\*\*/}"
+          printf '\n%s\n' "$next" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 3 · Apply: only when Apply = yes and Compare found something to apply ─────
+  apply:
+    name: 🚀 Apply${{ inputs.env && format(' · {0}', inputs.env) || '' }}
+    needs: [validate, compare]
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.apply == 'yes' && needs.compare.result == 'success' && needs.compare.outputs.has_changes == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      PEM: ${{ needs.validate.outputs.pem }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      ARTIFACT: truststore-backup-${{ inputs.env }}-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install boto3
+        run: pip install --quiet boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.validate.outputs.role_secret] }}
+          role-session-name: truststore_apply
+          aws-region: ${{ needs.validate.outputs.region }}
+
+      # Compares once more, saves the current S3 file, uploads truststore.pem (and reads it
+      # back), points the trust store at the new S3 version and waits until it is active.
+      - name: Upload truststore.pem and update the trust store
+        run: python3 "$BASE_DIR/scripts/truststore_update.py" "$PEM" --yes --github --backup-dir "$RUNNER_TEMP/truststore-backup"
+
+      - name: Keep the previous S3 file
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ runner.temp }}/truststore-backup/
+          if-no-files-found: ignore
+
+      - name: Note the backup in the summary
+        if: always()
+        run: |
+          if compgen -G "$RUNNER_TEMP/truststore-backup/*.pem" > /dev/null; then
+            echo "📦 The previous S3 file is kept as the run artifact $ARTIFACT."
+            printf '\n📦 The previous S3 file is kept as the run artifact **%s** (download it from this run).\n' "$ARTIFACT" >> "$GITHUB_STEP_SUMMARY"
+          fi
