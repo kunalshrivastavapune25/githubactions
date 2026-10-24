@@ -176,16 +176,21 @@ jobs:
           template_file="${found[0]}"
 
           params_file="$dir/params.json"
-          [ -f "$params_file" ] || fail "params.json not found in $dir"
-          jq -e 'type == "array"' "$params_file" > /dev/null ||
-            fail "$params_file must be a JSON list of ParameterKey/ParameterValue objects."
+          if [ -f "$params_file" ]; then
+            jq -e 'type == "array"' "$params_file" > /dev/null ||
+              fail "$params_file must be a JSON list of ParameterKey/ParameterValue objects."
+            params_count=$(jq length "$params_file")
+            echo "📄 Parameters : $params_file ($params_count entries)"
+          else
+            params_count=0
+            echo "ℹ️ No params.json found in $dir; continuing without explicit parameter values."
+          fi
 
           size=$(stat --format=%s "$template_file")
           large=false
           if [ "$size" -gt 51200 ]; then large=true; fi
 
           echo "📄 Template   : $template_file ($size bytes)"
-          echo "📄 Parameters : $params_file ($(jq length "$params_file") entries)"
           if [ "$large" = true ]; then echo "📦 Over 51,200 bytes – the template will go through S3."; fi
           {
             echo "template_file=$template_file"
@@ -253,7 +258,11 @@ jobs:
             printf '| **Stack** | `%s` |\n' "$STACK_NAME"
             printf '| **Account** | %s · `%s` · %s |\n' "$ROLE_ALIAS" "$account" "$REGION"
             printf '| **Template** | `%s` (%s bytes, %s) |\n' "$TEMPLATE_FILE" "$SIZE" "$how"
-            printf '| **Parameters** | `%s` |\n' "$PARAMS_FILE"
+            if [ -f "$PARAMS_FILE" ]; then
+              printf '| **Parameters** | `%s` |\n' "$PARAMS_FILE"
+            else
+              printf '| **Parameters** | No params.json — use template defaults/current values |\n'
+            fi
             printf '| **Plan** | %s |\n' "$plan"
             printf '| **Deploy** | %s |\n' "$dep"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -413,10 +422,20 @@ jobs:
           aws cloudformation get-template-summary "${tpl[@]}" --output json > "$RUNNER_TEMP/template.json"
           echo "✔ Template OK – $(jq '.Parameters // [] | length' "$RUNNER_TEMP/template.json") parameter(s) declared"
 
-          # Parameters follow the same rules as `aws cloudformation deploy`:
-          #   • value from params.json when it's there
-          #   • not in params.json → existing stack keeps its current value, new stack uses the template default
-          #   • keys in params.json that the template doesn't declare are ignored (with a warning)
+          # params.json is optional. If absent, use an empty parameter list:
+          # existing stacks retain current parameter values; new stacks use template defaults.
+          if [ -f "$PARAMS_FILE" ]; then
+            jq -e 'type == "array"' "$PARAMS_FILE" > /dev/null || {
+              echo "::error title=Invalid params.json::$PARAMS_FILE must be a JSON array of ParameterKey/ParameterValue objects."
+              exit 1
+            }
+            GIVEN_PARAMS_FILE="$PARAMS_FILE"
+          else
+            echo '[]' > "$RUNNER_TEMP/given-params.json"
+            GIVEN_PARAMS_FILE="$RUNNER_TEMP/given-params.json"
+            echo "ℹ️ No params.json found; using no explicit parameter overrides."
+          fi
+
           if [ "$MODE" = update ]; then
             aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
               --query 'Stacks[0].Parameters[].ParameterKey' --output json > "$RUNNER_TEMP/current.json"
@@ -433,7 +452,7 @@ jobs:
                   elif ($current | index($k)) != null then
                     {ParameterKey: $k, UsePreviousValue: true}
                   else empty end ]
-          ' "$PARAMS_FILE" > "$RUNNER_TEMP/params.json"
+          ' "$GIVEN_PARAMS_FILE" > "$RUNNER_TEMP/params.json"
 
           # NoEcho parameter values are masked everywhere in this log
           jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
@@ -445,7 +464,7 @@ jobs:
           jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
             (($tpl[0].Parameters // []) | map(.ParameterKey)) as $declared
             | .[].ParameterKey | select(. as $k | $declared | index($k) == null)
-          ' "$PARAMS_FILE" | while read -r key; do
+          ' "$GIVEN_PARAMS_FILE" | while read -r key; do
             echo "::warning title=Unused parameter::'$key' is in params.json but not in the template – ignored"
           done
 
