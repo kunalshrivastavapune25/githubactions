@@ -1,0 +1,976 @@
+name: WS2 - DNS Records Export (batch)
+on:
+  workflow_dispatch:
+    inputs:
+      account:
+        description: 'Target account (network-prod, sandbox, etc.)'
+        required: true
+        type: string
+      stack_id:
+        description: 'dns-records-* stack ID, a zone name, or the CFN stack that created the zone (any naming) - or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'
+        required: false
+        type: string
+      hosted_zone_id:
+        description: 'Hosted zone ID (e.g., Z060943926KMOQ012KNSW) - auto-derives stack ID, or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'
+        required: false
+        type: string
+
+jobs:
+  validate-account:
+    name: Validate account exists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Verify account in registry
+        env:
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          echo "[INFO] Validating account: $ACCOUNT"
+
+          # Check if account exists in _accounts-registry.yaml
+          if ! grep -q "^  $ACCOUNT:" config/_accounts-registry.yaml; then
+            echo ""
+            echo "[ERROR] Account not found: $ACCOUNT"
+            echo ""
+            echo "Valid accounts are:"
+            grep "^  [a-z]" config/_accounts-registry.yaml | sed 's/^  /  - /' | sed 's/:$//'
+            echo ""
+            echo "Please use a valid account name and try again."
+            exit 1
+          fi
+
+          # Extract account details
+          ENVIRONMENT=$(grep -A 5 "^  $ACCOUNT:" config/_accounts-registry.yaml | grep "environment:" | awk '{print $2}')
+          OU=$(grep -A 5 "^  $ACCOUNT:" config/_accounts-registry.yaml | grep "ou:" | awk '{print $2}')
+
+          echo "[SUCCESS] Account validated"
+          echo "  Account: $ACCOUNT"
+          echo "  Environment: $ENVIRONMENT"
+          echo "  OU: $OU"
+
+  validate-inputs:
+    name: Resolve filter logic
+    runs-on: ubuntu-latest
+    needs: validate-account
+    permissions:
+      id-token: write
+    outputs:
+      filter: ${{ steps.resolve.outputs.filter }}
+      mode: ${{ steps.resolve.outputs.mode }}
+    steps:
+      - name: "Look up deploy role ARN"
+        id: role
+        if: inputs.hosted_zone_id != ''
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          set -eo pipefail
+          ROLE_ARN=$(echo "${ARNS_JSON}" | jq -r --arg a "${ACCOUNT}" '.[$a] // ""' 2>/dev/null || true)
+          if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+            echo "[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}"; exit 1
+          fi
+          echo "::add-mask::${ROLE_ARN}"
+          echo "role_arn=${ROLE_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC, for hosted_zone_id lookup)
+        if: inputs.hosted_zone_id != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.role_arn }}
+          aws-region: eu-west-1
+
+      - name: Resolve filter (specific > hosted_zone_id > all)
+        id: resolve
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          SPECIFIC: ${{ inputs.stack_id }}
+          ZONE_ID: ${{ inputs.hosted_zone_id }}
+        run: |
+          # Priority: stack_id > hosted_zone_id > all (neither given = export every zone)
+          #
+          # If BOTH stack_id and hosted_zone_id are given, they must refer to the
+          # SAME zone. We resolve hosted_zone_id -> zone_name -> derived stack_id and
+          # compare it against the supplied stack_id:
+          #   - MATCH    -> proceed (this is a valid double-confirmation input, not an error)
+          #   - MISMATCH -> reject with a clear error naming both values. They could be
+          #                 completely different zones, and silently picking one would
+          #                 be dangerous.
+
+          # Trim stray leading/trailing whitespace -- a space pasted into the GitHub
+          # Actions form (e.g. " inf-sbx-sbx-phz-ws2newzone-com") fails CloudFormation's
+          # stack-name regex outright and also breaks every exact-match comparison below,
+          # producing a confusing "not found" even though the value looks right.
+          SPECIFIC="$(echo -n "$SPECIFIC" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          ZONE_ID="$(echo -n "$ZONE_ID" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+          if [[ -n "$SPECIFIC" ]] && [[ -n "$ZONE_ID" ]]; then
+            echo "[INFO] Both stack_id and hosted_zone_id provided -- verifying they refer to the same zone..."
+            ZONE_ID_NORMALIZED=$(echo "$ZONE_ID" | sed 's|^/hostedzone/||')
+
+            if aws route53 get-hosted-zone --id "$ZONE_ID_NORMALIZED" \
+              --query 'HostedZone.Name' --output text > /tmp/zone_name.txt 2>/dev/null; then
+              ZONE_NAME=$(cat /tmp/zone_name.txt)
+              DERIVED_STACK_ID="dns-records-$(echo "$ZONE_NAME" | sed 's/\.$//' | sed 's/\./-/g')"
+
+              if [[ "$DERIVED_STACK_ID" == "$SPECIFIC" ]]; then
+                echo "[SUCCESS] stack_id and hosted_zone_id both refer to the SAME zone ($ZONE_NAME) -- proceeding."
+                echo "mode=specific" >> $GITHUB_OUTPUT
+                echo "filter=$SPECIFIC" >> $GITHUB_OUTPUT
+              else
+                echo ""
+                echo "[ERROR] CONFLICTING INPUTS - stack_id and hosted_zone_id refer to DIFFERENT zones!"
+                echo ""
+                echo "  stack_id you provided:       $SPECIFIC"
+                echo "  hosted_zone_id you provided: $ZONE_ID"
+                echo "    -> resolves to zone:       $ZONE_NAME"
+                echo "    -> which derives stack_id: $DERIVED_STACK_ID"
+                echo ""
+                echo "These do NOT match -- provide only ONE, or make sure both point to the same zone."
+                echo ""
+                exit 1
+              fi
+            else
+              echo ""
+              echo "[ERROR] Could not resolve hosted_zone_id: $ZONE_ID (needed to verify it matches stack_id: $SPECIFIC)"
+              echo ""
+              echo "Possible causes:"
+              echo "  - Zone ID doesn't exist in this AWS account"
+              echo "  - Zone is in a different AWS account"
+              echo "  - OIDC role is missing Route53:GetHostedZone permission"
+              echo ""
+              exit 1
+            fi
+
+          elif [[ -n "$SPECIFIC" ]]; then
+            echo "mode=specific" >> $GITHUB_OUTPUT
+            echo "filter=$SPECIFIC" >> $GITHUB_OUTPUT
+            echo "[SUCCESS] Using SPECIFIC mode: $SPECIFIC"
+
+          elif [[ -n "$ZONE_ID" ]]; then
+            # Resolve hosted_zone_id to stack_id via Route53 lookup
+            echo "[INFO] Resolving hosted zone ID to stack ID..."
+
+            # Normalize the zone ID (remove /hostedzone/ prefix if present)
+            ZONE_ID_NORMALIZED=$(echo "$ZONE_ID" | sed 's|^/hostedzone/||')
+
+            # Query Route53 to get the zone name (check exit code, not output)
+            if aws route53 get-hosted-zone --id "$ZONE_ID_NORMALIZED" \
+              --query 'HostedZone.Name' --output text > /tmp/zone_name.txt 2>/dev/null; then
+              ZONE_NAME=$(cat /tmp/zone_name.txt)
+
+              # Derive stack_id from zone name: zone.name. -> dns-records-zone-name
+              # Remove trailing dot, convert dots to dashes, prepend prefix
+              STACK_ID="dns-records-$(echo "$ZONE_NAME" | sed 's/\.$//' | sed 's/\./-/g')"
+
+              echo "mode=specific" >> $GITHUB_OUTPUT
+              echo "filter=$STACK_ID" >> $GITHUB_OUTPUT
+              echo "[SUCCESS] Using HOSTED_ZONE_ID mode: $ZONE_ID -> $ZONE_NAME -> $STACK_ID"
+            else
+              # AWS API call failed - provide friendly error message
+              echo ""
+              echo "[ERROR] Could not resolve hosted zone ID: $ZONE_ID"
+              echo ""
+              echo "Possible causes:"
+              echo "  - Zone ID doesn't exist in this AWS account"
+              echo "  - Zone is in a different AWS account"
+              echo "  - OIDC role is missing Route53:GetHostedZone permission"
+              echo ""
+              echo "Debug steps:"
+              echo "  1. Verify zone exists: aws route53 list-hosted-zones"
+              echo "  2. Check zone ID format: should be Z followed by alphanumerics"
+              echo "  3. Try again with a valid zone ID from your account"
+              echo ""
+              exit 1
+            fi
+
+          else
+            # Neither stack_id nor hosted_zone_id given -- this means "export EVERY
+            # zone in the account". That's a legitimate use case (e.g. periodic backup).
+            # Non-sandbox accounts require gatekeeper approval further down the
+            # pipeline (see the gate-approval job) before this actually runs; sandbox
+            # is the canary tier and proceeds automatically.
+            echo "mode=all" >> $GITHUB_OUTPUT
+            echo "filter=dns-records-*" >> $GITHUB_OUTPUT
+            echo "[SUCCESS] Using ALL mode: exporting all dns-records-* zones in '$ACCOUNT'"
+          fi
+
+  list-zones:
+    name: "List zones matching filter"
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    permissions:
+      # An explicit permissions: block REPLACES the default set entirely for this
+      # job -- it does not merge with it. contents: read must be listed explicitly
+      # or actions/checkout has no permission to fetch the repo at all (GitHub then
+      # reports a misleading "Repository not found" for a private repo, rather than
+      # a clearer permissions error, to avoid revealing the repo's existence to a
+      # token that can't read it).
+      contents: read
+      id-token: write
+    outputs:
+      count: ${{ steps.list_zones.outputs.count }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: "Look up deploy role ARN"
+        id: role
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          set -eo pipefail
+          ROLE_ARN=$(echo "${ARNS_JSON}" | jq -r --arg a "${ACCOUNT}" '.[$a] // ""' 2>/dev/null || true)
+          if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+            echo "[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}"; exit 1
+          fi
+          echo "::add-mask::${ROLE_ARN}"
+          echo "role_arn=${ROLE_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.role_arn }}
+          aws-region: eu-west-1
+
+      - name: List zones matching filter
+        id: list_zones
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          FILTER: ${{ needs.validate-inputs.outputs.filter }}
+          MODE: ${{ needs.validate-inputs.outputs.mode }}
+        run: |
+          # Get all hosted zones from Route53 (AWS CLI v2 auto-paginates list-hosted-zones,
+          # so this returns every zone in the account -- public and private -- regardless
+          # of how many there are; no manual pagination needed). We pull Id and the
+          # PrivateZone flag too, not just Name, so split-horizon pairs (same name, one
+          # public + one private zone) can be detected and reported below.
+          ZONES_JSON=$(aws route53 list-hosted-zones \
+            --query 'HostedZones[*].{Id:Id,Name:Name,Private:Config.PrivateZone}' \
+            --output json)
+
+          # Build stack_id -> zone_name in the FORWARD direction only (dots -> dashes is
+          # lossless). We never reverse-derive a zone name from a stack_id: that direction
+          # is ambiguous for any zone with more than one dot (a subdomain zone like
+          # shop.tesco.com, or a private zone like internal.prod.tesco.com) because a
+          # hyphen in the derived stack_id could be a literal hyphen in a label or a
+          # stand-in for a dot -- there is no way to tell them apart after the fact.
+          # That ambiguity was the root cause of legitimate zones being reported as
+          # "not found" / skipped: carrying the real zone name forward from Route53
+          # avoids the reverse conversion entirely.
+          declare -A ZONE_MAP
+          declare -A ZONE_ID_MAP
+          declare -A ZONE_NAME_COUNT
+          declare -A ZONE_NAME_DETAILS
+          declare -A ZONE_ID_TO_STACK
+          declare -A ZONE_IS_PRIVATE
+          declare -A ZONE_NAME_BY_ID
+          ZONE_IDS_ORDERED=()
+          TOTAL_IN_ROUTE53=0
+
+          # Pass 1: read every zone once and count how many zones share each name.
+          # We need the full count before deriving any stack_id (pass 2 below) --
+          # a name that occurs exactly once keeps the plain dns-records-<name> id
+          # (unchanged, backward compatible with every zone already exported this
+          # way); a name shared by more than one zone (a split-horizon pair: one
+          # public + one private zone, or rarely more) needs a disambiguating
+          # suffix so EVERY zone gets its own config file, not just one per name.
+          while IFS=$'\t' read -r ZID ZNAME ZPRIV; do
+            [[ -z "$ZNAME" ]] && continue
+            ZID_BARE="${ZID#/hostedzone/}"
+            ZONE_NAME_COUNT["$ZNAME"]=$(( ${ZONE_NAME_COUNT["$ZNAME"]:-0} + 1 ))
+            TYPE="public"; [[ "$ZPRIV" == "true" ]] && TYPE="private"
+            ZONE_NAME_DETAILS["$ZNAME"]="${ZONE_NAME_DETAILS[$ZNAME]:-}${ZID_BARE} (${TYPE})"$'\n'
+            ZONE_IS_PRIVATE["$ZID_BARE"]="$ZPRIV"
+            ZONE_NAME_BY_ID["$ZID_BARE"]="$ZNAME"
+            ZONE_IDS_ORDERED+=("$ZID_BARE")
+            ((++TOTAL_IN_ROUTE53))
+          done < <(echo "$ZONES_JSON" | jq -r '.[] | [.Id, .Name, .Private] | @tsv')
+
+          echo "[INFO] Total zones found in Route53: $TOTAL_IN_ROUTE53"
+          echo ""
+
+          # Split-horizon reporting: a name shared by more than one zone used to mean
+          # only ONE of them could be auto-selected in "all" mode (both derived to the
+          # identical stack_id, so the second export would silently overwrite the
+          # first's config file) -- a genuine gap for a "back up everything" export.
+          # Pass 2 below fixes this by giving each zone in a split-horizon group its
+          # own -public/-private suffixed stack_id, so every zone gets exported, not
+          # just one per name. This block is now purely informational.
+          DUPLICATE_COUNT=0
+          for ZNAME in "${!ZONE_NAME_COUNT[@]}"; do
+            [[ ${ZONE_NAME_COUNT[$ZNAME]} -gt 1 ]] && ((++DUPLICATE_COUNT))
+          done
+          if [[ $DUPLICATE_COUNT -gt 0 ]]; then
+            echo "[INFO] $DUPLICATE_COUNT zone name(s) are split-horizon (same name, multiple zones)."
+            echo "       Each one still gets its own config file -- disambiguated below with"
+            echo "       a -public/-private suffix -- so 'all' mode exports every one of them."
+            echo ""
+            for ZNAME in $(printf '%s\n' "${!ZONE_NAME_COUNT[@]}" | sort); do
+              if [[ ${ZONE_NAME_COUNT[$ZNAME]} -gt 1 ]]; then
+                echo "  [SPLIT-HORIZON] $ZNAME (${ZONE_NAME_COUNT[$ZNAME]} zones):"
+                echo "${ZONE_NAME_DETAILS[$ZNAME]}" | sed '/^$/d' | sed 's/^/      - /'
+              fi
+            done
+            echo ""
+          fi
+
+          # Pass 2: derive each zone's stack_id, now that ZONE_NAME_COUNT is complete.
+          for ZID_BARE in "${ZONE_IDS_ORDERED[@]}"; do
+            ZNAME="${ZONE_NAME_BY_ID[$ZID_BARE]}"
+            BASE_ID="dns-records-$(echo "$ZNAME" | sed 's/\.$//' | sed 's/\./-/g')"
+            if [[ ${ZONE_NAME_COUNT[$ZNAME]} -gt 1 ]]; then
+              SUFFIX="-public"; [[ "${ZONE_IS_PRIVATE[$ZID_BARE]}" == "true" ]] && SUFFIX="-private"
+              STACK_ID="${BASE_ID}${SUFFIX}"
+              if [[ -n "${ZONE_MAP[$STACK_ID]:-}" ]]; then
+                # Still colliding after the -public/-private suffix -- e.g. two
+                # private zones sharing a name across different VPCs. Last-resort
+                # tie-break on the zone id itself so no zone is ever silently
+                # dropped, even in this rare case.
+                STACK_ID="${STACK_ID}-$(echo "$ZID_BARE" | tr '[:upper:]' '[:lower:]' | tail -c 7)"
+              fi
+            else
+              STACK_ID="$BASE_ID"
+            fi
+            ZONE_MAP["$STACK_ID"]="$ZNAME"
+            ZONE_ID_MAP["$STACK_ID"]="$ZID_BARE"
+            # Maps the bare Route53 zone ID (no "/hostedzone/" prefix) back to its
+            # derived stack_id, so a real CloudFormation stack's HostedZoneId output
+            # can be resolved to a zone below regardless of how that stack names
+            # itself (e.g. inf-sbx-sbx-phz-ws2newzone-com, not just dns-records-*).
+            ZONE_ID_TO_STACK["$ZID_BARE"]="$STACK_ID"
+          done
+
+          MATCHED_STACK_IDS=()
+
+          if [[ "$MODE" == "specific" ]]; then
+            # Compare the user-provided stack_id directly against the forward-derived map
+            # keys -- no reverse sed, so multi-label zone names resolve correctly.
+            if [[ -n "${ZONE_MAP[$FILTER]:-}" ]]; then
+              MATCHED_STACK_IDS=("$FILTER")
+              echo "  [MATCH] $FILTER (zone: ${ZONE_MAP[$FILTER]})"
+            else
+              # Not a recognized dns-records-* stack_id -- expected for a zone that
+              # wasn't created with our naming convention (manually created, or via
+              # a different CFN stack/stack set). Fall back to matching the raw
+              # zone NAME directly (case-insensitive, trailing dot optional)
+              # against every real zone in the account, so any zone can be
+              # referenced by something the caller actually has on hand, not just
+              # our internal derived identifier.
+              NORMALIZED_FILTER=$(echo "$FILTER" | tr '[:upper:]' '[:lower:]')
+              [[ "$NORMALIZED_FILTER" != *. ]] && NORMALIZED_FILTER="${NORMALIZED_FILTER}."
+              # Bash associative-array key order is unspecified, so if a name is
+              # split-horizon (matches BOTH a -public and a -private entry), a plain
+              # "first match wins" loop would non-deterministically pick either one.
+              # Prefer the public/unsuffixed entry every time (matches the documented
+              # safety default: a name alone always resolves to the public zone; a
+              # private zone must be targeted explicitly via hosted_zone_id or its
+              # own -private stack_id) and only fall back to a private match if that
+              # is the ONLY zone with this name.
+              FOUND_BY_NAME=""
+              FOUND_BY_NAME_PRIVATE=""
+              for SID in "${!ZONE_MAP[@]}"; do
+                ZNAME_LOWER=$(echo "${ZONE_MAP[$SID]}" | tr '[:upper:]' '[:lower:]')
+                if [[ "$ZNAME_LOWER" == "$NORMALIZED_FILTER" ]]; then
+                  if [[ "$SID" == *-private* ]]; then
+                    FOUND_BY_NAME_PRIVATE="$SID"
+                  else
+                    FOUND_BY_NAME="$SID"
+                    break
+                  fi
+                fi
+              done
+              [[ -z "$FOUND_BY_NAME" ]] && FOUND_BY_NAME="$FOUND_BY_NAME_PRIVATE"
+
+              if [[ -n "$FOUND_BY_NAME" ]]; then
+                MATCHED_STACK_IDS=("$FOUND_BY_NAME")
+                echo "  [MATCH BY ZONE NAME] $FILTER -> $FOUND_BY_NAME (zone: ${ZONE_MAP[$FOUND_BY_NAME]})"
+                if [[ ${ZONE_NAME_COUNT[${ZONE_MAP[$FOUND_BY_NAME]}]} -gt 1 && "$FOUND_BY_NAME" != *-private* ]]; then
+                  echo "  [INFO] This name is split-horizon; a private zone with the same name also"
+                  echo "         exists -- see the [SPLIT-HORIZON] list above for its stack_id/hosted_zone_id."
+                fi
+              else
+                # Last resort: treat $FILTER as the name of a real CloudFormation
+                # stack -- the stack that CREATED the hosted zone, via
+                # public-hosted-zone, private-hosted-zone, phz-ram-share, a manual
+                # deploy, or WS3 import. Doesn't matter which: every zone-creation
+                # module in this repo publishes an Output literally named
+                # HostedZoneId (see modules/networking/public-hosted-zone and
+                # private-hosted-zone template.yaml), so this resolves the zone
+                # regardless of how it came to exist, not just zones that follow
+                # this pipeline's own dns-records-* naming.
+                FOUND_BY_CFN_STACK=""
+                CFN_DESCRIBE_ERR=""
+                CFN_ZONE_ID=$(aws cloudformation describe-stacks --stack-name "$FILTER" \
+                  --query "Stacks[0].Outputs[?OutputKey=='HostedZoneId'].OutputValue | [0]" \
+                  --output text 2>/tmp/cfn_describe_err.txt) || \
+                  CFN_DESCRIBE_ERR=$(cat /tmp/cfn_describe_err.txt 2>/dev/null)
+
+                if [[ -n "$CFN_ZONE_ID" && "$CFN_ZONE_ID" != "None" ]]; then
+                  CFN_ZONE_ID_BARE="${CFN_ZONE_ID#/hostedzone/}"
+                  FOUND_BY_CFN_STACK="${ZONE_ID_TO_STACK[$CFN_ZONE_ID_BARE]:-}"
+                  if [[ -z "$FOUND_BY_CFN_STACK" ]]; then
+                    CFN_DESCRIBE_ERR="Stack '$FILTER' has HostedZoneId output '$CFN_ZONE_ID', but no Route53 zone with that ID exists in account '$ACCOUNT' (wrong account/region, or the zone was deleted since the stack was created)."
+                  fi
+                fi
+
+                if [[ -n "$FOUND_BY_CFN_STACK" ]]; then
+                  MATCHED_STACK_IDS=("$FOUND_BY_CFN_STACK")
+                  echo "  [MATCH BY CFN STACK] $FILTER -> HostedZoneId output ($CFN_ZONE_ID) -> $FOUND_BY_CFN_STACK (zone: ${ZONE_MAP[$FOUND_BY_CFN_STACK]})"
+                else
+                  echo ""
+                  echo "[ERROR] Stack ID not found: $FILTER"
+                  echo ""
+                  if [[ -n "$CFN_DESCRIBE_ERR" ]]; then
+                    echo "CloudFormation lookup for '$FILTER' as a stack name failed:"
+                    echo "  $CFN_DESCRIBE_ERR"
+                    echo ""
+                  fi
+                  echo "'$FILTER' does not match a dns-records-* stack ID, no zone in"
+                  echo "'$ACCOUNT' has this as its actual name, and it is not a"
+                  echo "CloudFormation stack with a HostedZoneId output either."
+                  echo ""
+                  echo "Available zones in $ACCOUNT:"
+                  for SID in $(printf '%s\n' "${!ZONE_MAP[@]}" | sort); do
+                    echo "  - $SID (zone: ${ZONE_MAP[$SID]})"
+                  done
+                  echo ""
+                  echo "You can provide ANY of:"
+                  echo "  - the stack_id shown above (e.g., dns-records-bbuk-customer-net)"
+                  echo "  - the zone's real name directly (e.g., bbuk-customer.net)"
+                  echo "  - the real Route53 hosted_zone_id"
+                  echo "  - the name of the CloudFormation stack that created the zone"
+                  echo "    (e.g., inf-sbx-sbx-phz-ws2newzone-com), as long as it has an"
+                  echo "    Output named HostedZoneId"
+                  echo ""
+                  exit 1
+                fi
+              fi
+            fi
+
+          else
+            # All mode: include every zone in the account (no filtering)
+            for SID in $(printf '%s\n' "${!ZONE_MAP[@]}" | sort); do
+              MATCHED_STACK_IDS+=("$SID")
+              echo "  [INCLUDE] $SID (zone: ${ZONE_MAP[$SID]})"
+            done
+          fi
+
+          if [[ ${#MATCHED_STACK_IDS[@]} -eq 0 ]]; then
+            echo ""
+            echo "[ERROR] No zones found matching filter '$FILTER' in account '$ACCOUNT'"
+            echo ""
+            echo "Available zones in $ACCOUNT:"
+            for SID in $(printf '%s\n' "${!ZONE_MAP[@]}" | sort); do
+              echo "  - $SID (zone: ${ZONE_MAP[$SID]})"
+            done
+            echo ""
+            exit 1
+          fi
+
+          # Carry {stack_id, zone_name, zone_id} pairs forward as JSON so the export step
+          # uses the REAL zone name AND the exact zone id from Route53 -- it never
+          # reconstructs the name from the stack_id, and never re-resolves the id from
+          # the name either. That second part matters specifically for split-horizon
+          # zones: dns_records_export.py's own name-based resolver prefers the PUBLIC
+          # zone whenever a name matches more than one zone, so a private-zone export
+          # that only passed --zone-name would silently fetch the PUBLIC zone's records
+          # instead. Passing the resolved zone_id through removes that ambiguity entirely.
+          ZONE_PAIRS="[]"
+          for SID in "${MATCHED_STACK_IDS[@]}"; do
+            ZONE_PAIRS=$(echo "$ZONE_PAIRS" | jq --arg sid "$SID" --arg zn "${ZONE_MAP[$SID]}" --arg zid "${ZONE_ID_MAP[$SID]}" '. + [{"stack_id":$sid,"zone_name":$zn,"zone_id":$zid}]')
+          done
+
+          # Written to a file and handed to the export job as a build artifact, NOT a
+          # job output. A job output is a single string squeezed through the run's
+          # workflow-command context, and it has proven unreliable for this payload:
+          # the export job would see an empty ZONES_JSON even when this step matched
+          # real zones. An artifact is a plain file hand-off (the same mechanism
+          # already used for the plan-file in _20-reusable-deploy.yml) and doesn't
+          # depend on needs.<job>.outputs.<name> propagation at all.
+          echo "$ZONE_PAIRS" | jq -c '.' > /tmp/zone-list.json
+          echo "count=${#MATCHED_STACK_IDS[@]}" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "=========================================================="
+          echo "Zone Resolution Summary"
+          echo "=========================================================="
+          echo "Mode: $MODE"
+          echo "Total zones in Route53: $TOTAL_IN_ROUTE53"
+          echo "Zones selected for export: ${#MATCHED_STACK_IDS[@]}"
+          if [[ $DUPLICATE_COUNT -gt 0 ]]; then
+            echo "Split-horizon names (each zone exported separately, -public/-private suffix): $DUPLICATE_COUNT"
+          fi
+          echo ""
+          echo "Selected zones:"
+          for SID in "${MATCHED_STACK_IDS[@]}"; do
+            echo "  - $SID (zone: ${ZONE_MAP[$SID]})"
+          done
+
+      - name: Upload zone list artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zone-list-${{ inputs.account }}-${{ github.run_id }}
+          path: /tmp/zone-list.json
+          retention-days: 1
+
+  gate-approval:
+    name: "Gatekeeper Approval (all-zones export)"
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, list-zones]
+    # Only "export every zone" needs a gate -- exporting one specific zone (stack_id
+    # or hosted_zone_id) is always an unambiguous, bounded action and never needs one.
+    # Sandbox is the canary tier -> auto (matches apply.yml / teardown.yml elsewhere
+    # in this estate); every other account routes through the same production gate.
+    if: ${{ needs.validate-inputs.outputs.mode == 'all' && inputs.account != 'sandbox' }}
+    environment: production
+    steps:
+      - name: "Approval checkpoint"
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          COUNT: ${{ needs.list-zones.outputs.count }}
+        run: |
+          echo "=========================================================="
+          echo "GATEKEEPER APPROVAL CHECKPOINT -- Export ALL zones"
+          echo "=========================================================="
+          echo ""
+          echo "Account: $ACCOUNT"
+          echo "Zones to export: $COUNT"
+          echo ""
+          echo "This will export EVERY public/private hosted zone's DNS records in"
+          echo "'$ACCOUNT' and open a PR with the results. Review the full zone list"
+          echo "in the 'List zones matching filter' job's log above before approving."
+          echo ""
+          echo "=========================================================="
+
+  export:
+    name: Export live records -> config files
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, list-zones, gate-approval]
+    # gate-approval only runs for "all zones on a non-sandbox account" (see its own
+    # if: above); every other case skips it entirely. This condition lets export
+    # proceed whenever gate-approval was either approved OR correctly skipped --
+    # without it, a skipped (not "successful") dependency would block this job by
+    # GitHub Actions' default needs: behavior.
+    if: |
+      always() &&
+      needs.validate-inputs.result == 'success' &&
+      needs.list-zones.result == 'success' &&
+      (needs.gate-approval.result == 'success' || needs.gate-approval.result == 'skipped')
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -q boto3
+
+      - name: "Look up deploy role ARN"
+        id: role
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          set -eo pipefail
+          ROLE_ARN=$(echo "${ARNS_JSON}" | jq -r --arg a "${ACCOUNT}" '.[$a] // ""' 2>/dev/null || true)
+          if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+            echo "[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}"; exit 1
+          fi
+          echo "::add-mask::${ROLE_ARN}"
+          echo "role_arn=${ROLE_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.role_arn }}
+          aws-region: eu-west-1
+
+      - name: Verify AWS access for account
+        run: |
+          echo "[INFO] Verifying AWS access for account: ${{ inputs.account }}"
+
+          # Try to call AWS to verify credentials work
+          if ! aws sts get-caller-identity >/dev/null 2>&1; then
+            echo "[ERROR] Failed to authenticate to AWS account: ${{ inputs.account }}"
+            echo ""
+            echo "Possible causes:"
+            echo "  1. Account name '${{ inputs.account }}' is not in DEPLOY_ROLE_ARNS_JSON secret"
+            echo "  2. OIDC trust relationship not configured for this account"
+            echo "  3. IAM role missing required permissions"
+            echo ""
+            exit 1
+          fi
+
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "[SUCCESS] AWS access verified for account: ${{ inputs.account }} (ID: $ACCOUNT_ID)"
+
+      - name: Download zone list artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zone-list-${{ inputs.account }}-${{ github.run_id }}
+          path: /tmp
+
+      - name: Export records for each zone
+        id: exports
+        env:
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          # Read from the artifact file the list-zones job uploaded, not a job
+          # output -- see the comment next to where it's written in the
+          # "List zones matching filter" step for why.
+          ZONES_JSON=$(cat /tmp/zone-list.json)
+          if ! echo "$ZONES_JSON" | jq -e 'type == "array" and length > 0' > /dev/null 2>&1; then
+            echo "[ERROR] Zone list artifact is missing, empty, or not a JSON array: $ZONES_JSON"
+            exit 1
+          fi
+
+          mkdir -p config/accounts/$ACCOUNT/networking
+
+          EXPORT_COUNT=0
+          WARN_COUNT=0
+          FAIL_COUNT=0
+          EXPORTED_FILES=""
+          WARNED_ZONES=""
+          FAILED_ZONES=""
+
+          echo "[INFO] Starting export of zones..."
+          echo ""
+
+          while IFS=$'\t' read -r STACK_ID ZONE_NAME ZONE_ID; do
+            [[ -z "$STACK_ID" ]] && continue
+            CONFIG_PATH="config/accounts/$ACCOUNT/networking/${STACK_ID}.json"
+
+            echo "======================================================"
+            echo "Exporting: $STACK_ID"
+            echo "Zone name: $ZONE_NAME"
+            echo "Zone id:   $ZONE_ID"
+            echo "======================================================"
+
+            # --hosted-zone-id is passed explicitly (not just --zone-name) so
+            # dns_records_export.py fetches EXACTLY the zone list-zones resolved --
+            # its own name-based resolver prefers the public zone whenever a name
+            # matches more than one zone, which would silently export the wrong
+            # zone's records for the private half of a split-horizon pair.
+            # `|| EXPORT_EXIT_CODE=$?` keeps a failing export from aborting the step under
+            # `bash -e` before its output is printed (the real error was being swallowed).
+            EXPORT_EXIT_CODE=0
+            EXPORT_OUTPUT=$(python3 pipeline/dns_records_export.py \
+              --account "$ACCOUNT" \
+              --stack-id "$STACK_ID" \
+              --zone-name "$ZONE_NAME" \
+              --hosted-zone-id "$ZONE_ID" 2>&1) || EXPORT_EXIT_CODE=$?
+
+            # Print the output
+            echo "$EXPORT_OUTPUT"
+
+            # Check result
+            if [[ $EXPORT_EXIT_CODE -eq 0 ]]; then
+              if [[ -f "$CONFIG_PATH" ]]; then
+                ((++EXPORT_COUNT))
+                EXPORTED_FILES="$EXPORTED_FILES$CONFIG_PATH"$'\n'
+                echo ""
+                echo "[SUCCESS] $STACK_ID"
+              else
+                # Script exited 0 but no file created = soft warning (zone not found)
+                ((++WARN_COUNT))
+                SKIP_REASON=$(echo "$EXPORT_OUTPUT" | grep -i "WARN\|SKIP" | head -1)
+                WARNED_ZONES="$WARNED_ZONES  - $STACK_ID"$'\n'"    Reason: ${SKIP_REASON:-Zone not found or inaccessible}"$'\n'
+                echo ""
+                echo "[SKIPPED] $STACK_ID"
+              fi
+            else
+              ((++FAIL_COUNT))
+              FAIL_REASON=$(echo "$EXPORT_OUTPUT" | grep -i "error\|fail" | head -1)
+              FAILED_ZONES="$FAILED_ZONES  - $STACK_ID"$'\n'"    Reason: ${FAIL_REASON:-See logs above}"$'\n'
+              echo ""
+              echo "[FAILED] $STACK_ID (exit code: $EXPORT_EXIT_CODE)"
+            fi
+            echo ""
+          done < <(echo "$ZONES_JSON" | jq -r '.[] | [.stack_id, .zone_name, .zone_id] | @tsv')
+
+          echo ""
+          echo "=============================================================="
+          echo "EXPORT RESULTS MATRIX"
+          echo "=============================================================="
+          TOTAL=$((EXPORT_COUNT + WARN_COUNT + FAIL_COUNT))
+
+          # Print as table
+          printf "%-50s %s\n" "Status" "Count"
+          printf "%-50s %s\n" "----" "----"
+          printf "[OK] Successfully exported" "$EXPORT_COUNT\n"
+          printf "[SKIP] Skipped (zone not found/inaccessible)" "$WARN_COUNT\n"
+          printf "[FAIL] Failed (unexpected errors)" "$FAIL_COUNT\n"
+          printf "%-50s %s\n" "----" "----"
+          printf "Total zones attempted" "$TOTAL\n"
+          echo ""
+
+          # Verification check
+          if [[ $TOTAL -eq 0 ]]; then
+            echo "[ERROR] No zones were processed!"
+            exit 1
+          fi
+
+          if [[ $EXPORT_COUNT -eq 0 ]]; then
+            echo "[ERROR] No zones were successfully exported"
+            if [[ $WARN_COUNT -gt 0 ]]; then
+              echo ""
+              echo "[WARN] $WARN_COUNT skipped zone(s):"
+              echo -e "$WARNED_ZONES"
+            fi
+            exit 1
+          fi
+
+          echo "[OK] EXPORT SUCCESSFUL"
+          echo ""
+          echo "Exported zones ($EXPORT_COUNT):"
+          echo "$EXPORTED_FILES" | grep -v '^$' | sed 's/^/  /'
+          echo ""
+
+          if [[ $WARN_COUNT -gt 0 ]]; then
+            echo "[SKIP] Skipped zones ($WARN_COUNT) - could not export:"
+            echo -e "$WARNED_ZONES"
+          fi
+
+          if [[ $FAIL_COUNT -gt 0 ]]; then
+            echo "[FAIL] Failed zones ($FAIL_COUNT) - unexpected errors:"
+            echo -e "$FAILED_ZONES"
+          fi
+
+          echo ""
+          echo "=============================================================="
+          echo "Summary for downstream jobs"
+          echo "=============================================================="
+          echo "exported_count=$EXPORT_COUNT" >> $GITHUB_OUTPUT
+          echo "warn_count=$WARN_COUNT" >> $GITHUB_OUTPUT
+          echo "fail_count=$FAIL_COUNT" >> $GITHUB_OUTPUT
+          echo "exported_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$EXPORTED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Summary for workflow output
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo "EXPORT RESULTS MATRIX" >> $GITHUB_OUTPUT
+          echo "=====================" >> $GITHUB_OUTPUT
+          echo "[OK] Exported: $EXPORT_COUNT zone(s)" >> $GITHUB_OUTPUT
+          echo "[SKIP] Skipped: $WARN_COUNT zone(s)" >> $GITHUB_OUTPUT
+          echo "[FAIL] Failed: $FAIL_COUNT zone(s)" >> $GITHUB_OUTPUT
+          echo "Total: $TOTAL zone(s) attempted" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          if [[ $WARN_COUNT -gt 0 ]]; then
+            echo "SKIPPED ZONES (not exported):" >> $GITHUB_OUTPUT
+            echo -e "$WARNED_ZONES" >> $GITHUB_OUTPUT
+          fi
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts (Option A - download)
+        if: success() && steps.exports.outputs.exported_count > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: dns-records-${{ inputs.account }}-${{ github.run_id }}
+          path: config/accounts/${{ inputs.account }}/networking/dns-records-*.json
+          retention-days: 30
+
+      - name: Commit to feature branch (Option B - git review)
+        if: success() && steps.exports.outputs.exported_count > 0
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          MODE: ${{ needs.validate-inputs.outputs.mode }}
+          FILTER: ${{ needs.validate-inputs.outputs.filter }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure git for commit
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          # Stage exported files by iterating through the exported files list (not glob pattern)
+          # This avoids bash glob expansion issues in GitHub Actions runners
+          echo "[INFO] Staging exported files..."
+          EXPORT_FILES=$(echo "${{ steps.exports.outputs.exported_files }}" | grep -v '^$')
+          STAGED_COUNT=0
+
+          while IFS= read -r FILE; do
+            if [[ -z "$FILE" ]]; then continue; fi
+            if [[ -f "$FILE" ]]; then
+              echo "  [OK] Staging: $FILE"
+              git add "$FILE"
+              ((++STAGED_COUNT))
+            else
+              echo "  [WARN] File not found: $FILE"
+            fi
+          done <<< "$EXPORT_FILES"
+
+          echo "[INFO] Staged $STAGED_COUNT file(s)"
+
+          # Verify files were staged
+          STAGED_FILES=$(git diff --cached --name-only)
+          if [[ -z "$STAGED_FILES" ]]; then
+            echo "[WARN] No files staged after processing exported_files list"
+          else
+            echo "[INFO] Successfully staged files:"
+            echo "$STAGED_FILES" | sed 's/^/  /'
+          fi
+
+          # Generate timestamp for unique branch naming (prevents conflicts)
+          # Format: YYYYMMDD-HHMMSS (e.g., 20260728-143022)
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+          # Determine branch name based on mode (each run gets unique timestamp)
+          case "$MODE" in
+            specific)
+              # Extract zone name from filter (dns-records-ZONE-NAME -> ZONE-NAME)
+              ACTIVITY=$(echo "$FILTER" | sed 's/^dns-records-//')
+              BRANCH_NAME="feat/export-zone-${ACTIVITY}-${ACCOUNT}-${TIMESTAMP}"
+              ;;
+            all)
+              BRANCH_NAME="feat/export-all-zones-${ACCOUNT}-${TIMESTAMP}"
+              ;;
+            *)
+              BRANCH_NAME="feat/export-dns-records-${ACCOUNT}-${TIMESTAMP}"
+              ;;
+          esac
+
+          # Create new branch (always unique due to timestamp - no conflicts possible)
+          echo "[INFO] Creating new branch: $BRANCH_NAME"
+          git checkout -b "$BRANCH_NAME"
+
+          # Always create a commit (even if empty) for IaC workflow
+          # This ensures the PR is created for developer review and modification
+          MSG="WS2: Export DNS records from Route53 for $ACCOUNT ($MODE mode)"
+          MSG="$MSG"$'\n'"Exported for review and modification. Edit config as needed, then merge to deploy."
+          MSG="$MSG"$'\n'"Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Check if there are staged changes
+          if git diff --cached --name-only | grep -q .; then
+            # Changes exist - commit normally
+            git commit -m "$MSG"
+            echo "[SUCCESS] Exported config files with changes"
+          else
+            # No changes - create empty commit so PR can be created
+            git commit --allow-empty -m "$MSG"
+            echo "[INFO] Exported config (no changes from live). Developer can override in PR."
+          fi
+
+          # Push the branch (always push, even if empty - clean push, no conflicts)
+          git push origin "$BRANCH_NAME" -u
+
+          echo ""
+          echo "[SUCCESS] Feature branch created: $BRANCH_NAME"
+          echo "[INFO] Creating pull request automatically..."
+
+          # Create PR automatically
+          echo "[INFO] Creating pull request from branch..."
+
+          # List every exported zone file with a direct link to view/edit it on this
+          # branch -- including files with no diff against main. "Files changed" in
+          # the PR only ever shows files that differ from main (that's inherent to
+          # how a diff works, no workflow can change it), so an unchanged zone would
+          # otherwise be invisible in the PR itself. This list makes every exported
+          # zone reachable directly from the PR body, changed or not.
+          BODY="Exported from Route53. Review, edit as needed, then merge."
+          BODY="$BODY"$'\n\n'"### Zones exported in this run"
+          BODY="$BODY"$'\n'"(Files changed above only shows zones that differ from main. All exported"
+          BODY="$BODY"$'\n'"zones are listed here and are on this branch, whether or not they changed.)"
+          BODY="$BODY"$'\n'
+          while IFS= read -r FILE; do
+            [[ -z "$FILE" ]] && continue
+            BODY="$BODY"$'\n'"- [$FILE](${{ github.server_url }}/${{ github.repository }}/blob/$BRANCH_NAME/$FILE)"
+          done <<< "$EXPORT_FILES"
+
+          PR_ERR=$(gh pr create --base main --head "$BRANCH_NAME" \
+            --title "WS2: Export DNS records for $ACCOUNT ($MODE mode)" \
+            --body "$BODY" \
+            --no-maintainer-edit 2>&1) && \
+            echo "[SUCCESS] PR created: ${{ github.server_url }}/${{ github.repository }}/pull/new/$BRANCH_NAME" || \
+            { echo "[WARN] Could not auto-create PR: $PR_ERR"; \
+              echo "[WARN] Create manually: ${{ github.server_url }}/${{ github.repository }}/pull/new/$BRANCH_NAME"; }
+
+      - name: Summary - Export Complete
+        if: success() && steps.exports.outputs.exported_count > 0
+        run: |
+          echo "## Export Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Account:** \`${{ inputs.account }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Zones Exported:** ${{ steps.exports.outputs.exported_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Files Ready" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.exports.outputs.exported_files }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Record Export Behavior" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Record Type | Action | Reason |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| A, AAAA, CNAME, MX, TXT, etc. | [EXPORTED] | User-managed records handled by dns-records module |" >> $GITHUB_STEP_SUMMARY
+          echo "| SOA | [SKIPPED] | Route53 manages automatically |" >> $GITHUB_STEP_SUMMARY
+          echo "| Apex NS | [SKIPPED] | Route53 manages zone delegation automatically |" >> $GITHUB_STEP_SUMMARY
+          echo "| Subdomain NS | [EXPORTED] | User might need to delegate subdomains |" >> $GITHUB_STEP_SUMMARY
+          echo "| ALIAS (A, AAAA to AWS resources) | [SKIPPED] | Not supported by dns-records module (use CloudFormation AliasTarget) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Access Options" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Option A: Download from Artifacts (quick review)**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Click 'Artifacts' in the workflow run summary" >> $GITHUB_STEP_SUMMARY
+          echo "2. Download \`dns-records-${{ inputs.account }}-*\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Extract and review JSON files locally" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Option B: Create PR from feature branch (automated git flow)**" >> $GITHUB_STEP_SUMMARY
+          echo "1. A unique feature branch has been created with timestamp (prevents conflicts)" >> $GITHUB_STEP_SUMMARY
+          echo "   Branch format: \`feat/export-{activity}-{account}-{YYYYMMDD-HHMMSS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Pull latest: \`git pull origin\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Fetch and checkout the new branch: \`git checkout feat/export-...\`" >> $GITHUB_STEP_SUMMARY
+          echo "4. Review exported JSON files" >> $GITHUB_STEP_SUMMARY
+          echo "5. Edit as needed (add/modify/delete records)" >> $GITHUB_STEP_SUMMARY
+          echo "6. Create PR (or push additional commits if needed)" >> $GITHUB_STEP_SUMMARY
+          echo "7. After merge, deploy via \`ws2-dns-records-apply\` workflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next: Choose Your Deployment Pipeline" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**To MODIFY existing records in those zones:**" >> $GITHUB_STEP_SUMMARY
+          echo "Use workflow: \`WS2 -- DNS Records Apply (Gated / Audited)\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**To ADD new hosted zones (not in this export):**" >> $GITHUB_STEP_SUMMARY
+          echo "Raise PR and deploy via: \`20-deploy-stack.yml\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Runbook:** docs/runbooks/WS2-HOSTED-ZONE-MODIFICATIONS.md" >> $GITHUB_STEP_SUMMARY
+
+      - name: Partial/Failed summary
+        if: failure()
+        run: |
+          echo "## Export Failed [FAILED]" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No zones were successfully exported. Check logs below for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Common causes:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Input validation issues:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Invalid \`stack_id\` format (must match: \`dns-records-zone-name\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- Invalid \`hosted_zone_id\` format (e.g., Z08998782FI5BBSFIPXDZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Zone resolution issues:**" >> $GITHUB_STEP_SUMMARY
+          echo "- No zones found matching your filter/zone-id" >> $GITHUB_STEP_SUMMARY
+          echo "- Zone is in a different AWS account" >> $GITHUB_STEP_SUMMARY
+          echo "- Private zone not in the specified VPC region" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Permission issues:**" >> $GITHUB_STEP_SUMMARY
+          echo "- OIDC role missing Route53 permissions" >> $GITHUB_STEP_SUMMARY
+          echo "- Account not configured in \`DEPLOY_ROLE_ARNS_JSON\` secret" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Debug steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check the **Resolve filter** and **Export records** logs above" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify zone exists: \`aws route53 list-hosted-zones\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Try the export locally: \`python3 pipeline/dns_records_export.py --account sandbox --hosted-zone-id Z0123...\`" >> $GITHUB_STEP_SUMMARY

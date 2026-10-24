@@ -1,0 +1,213 @@
+name: Old Pipeline for Firewall Standard Change
+
+on:
+  workflow_dispatch:
+    inputs:
+      folderPath:
+        description: "Path under cloudformation/ (e.g. 'vpc' or 'network/peering')"
+        required: true
+      stackName:
+        description: "Name of CloudFormation stack to deploy"
+        required: true
+      roleAlias:
+          description: "Alias for the IAM role to assume (e.g. NETWORK, DIRECTORY)"
+          required: true
+      AWS_REGION:
+        description: "AWS Region for deployment"
+        required: false
+        default: 'eu-west-1'
+      
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      BUCKET_NAME: ss-cfts3
+      # AWS_REGION: eu-west-1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Set role ARN from alias
+        id: setrole
+        run: |
+          alias="${{ github.event.inputs.roleAlias }}"
+          case "$alias" in
+            NETWORK) arn="${{ secrets.NETWORK_SERVICES_ROLE }}" ;;
+            DIRECTORY) arn="${{ secrets.DIRECTORY_SERVICES_ROLE }}" ;;
+            SECURITY) arn="${{ secrets.SECURITY_INFRA_ROLE }}" ;;
+            SHAREDSERVICES) arn="${{ secrets.SHAREDSERVICES_ROLE }}" ;;
+            MANAGEMENT) arn="${{ secrets.MGMT_ROLE }}" ;;
+            LOGARCHIVE) arn="${{ secrets.LOGARCHIVE_ROLE }}" ;;
+            COREAUDIT) arn="${{ secrets.COREAUDIT_ROLE }}" ;;
+            MONITORING) arn="${{ secrets.MONITORING_ROLE }}" ;;
+            DIRECTORY-DEV) arn="${{ secrets.DIRECTORY_SERVICES_DEV_ROLE }}" ;;
+            DIRECTORY-PPE) arn="${{ secrets.DIRECTORY_SERVICES_PPE_ROLE }}" ;;
+            MONITORING-PPE) arn="${{ secrets.PPE_MONITORING_SERVICE_ROLE }}" ;;
+            SHAREDSERVICES-DEV) arn="${{ secrets.DEV_SHAREDSERVICES_ROLE }}" ;;
+            SHAREDSERVICES-PPE) arn="${{ secrets.PPE_SHARED_SERVICE_ROLE }}" ;;
+            SANDBOX) arn="${{ secrets.SANDBOX_ROLE }}" ;;
+            TST-NETWORK) arn="${{ secrets.TST_NETWORK_SERVICE_ROLE }}" ;;
+            PPE-NETWORK) arn="${{secrets.PPE_NETWORK_SERVICE_ROLE }}" ;;
+            BACKUP) arn="${{ secrets.BACKUP_ROLE }}" ;;
+            CRV) arn="${{ secrets.CRV_ROLE }}" ;;
+            
+            # Add more mappings here            
+            *)
+              echo "No secret found for alias $alias" >&2
+              exit 1
+              ;;
+          esac
+          echo "arn=$arn" >> $GITHUB_OUTPUT
+
+      - name: Find template and params
+        id: find_files
+        run: |
+          base_dir="cloudformation"
+          folder="${{ github.event.inputs.folderPath }}"
+          full_path="${base_dir}/${folder}"
+          template_file=$(find "$full_path" -type f \( -iname "*-template.yaml" -o -iname "*-template.yml" \) | head -n 1)
+          params_file="${full_path}/params.json"
+          if [[ -z "$template_file" ]]; then
+            echo "No template matching '*-template.y[a]ml' found in $full_path"
+            exit 1
+          fi
+          if [[ ! -f "$params_file" ]]; then
+            echo "params.json not found in $full_path"
+            exit 1
+          fi
+          echo "template_file=$template_file" >> $GITHUB_OUTPUT
+          echo "params_file=$params_file" >> $GITHUB_OUTPUT
+
+      - name: Check template size
+        id: size
+        run: |
+          size=$(stat --format=%s "${{ steps.find_files.outputs.template_file }}")
+          echo "Template size: $size"
+          if [ "$size" -gt 51200 ]; then
+            echo "large=true" >> $GITHUB_OUTPUT
+          else
+            echo "large=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate S3 object key
+        id: s3key
+        run: |
+          # Use a unique key per deployment, e.g. stackName-timestamp.yaml
+          key="${{ github.event.inputs.stackName }}-$(date +%s).yaml"
+          echo "key=$key" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials for S3 upload
+        if: steps.size.outputs.large == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}
+          role-session-name: s3_upload
+          aws-region: ${{ github.event.inputs.AWS_REGION }}
+
+      - name: Generate pre-signed PUT/GET URLs and upload template
+        if: steps.size.outputs.large == 'true'
+        id: presign_upload
+        run: |
+          pip install boto3
+          urls=$(python cloudformation/production/shared_services/Github_s3/presign.py "${{ steps.s3key.outputs.key }}")
+          put_url=$(echo "$urls" | grep '^put_url=' | cut -d'=' -f2-)
+          get_url=$(echo "$urls" | grep '^get_url=' | cut -d'=' -f2-)
+          echo "Pre-signed PUT URL: $put_url"
+          echo "Pre-signed GET URL: $get_url"
+          curl -v -X PUT -T "${{ steps.find_files.outputs.template_file }}" "$put_url"
+          echo "put_url=$put_url" >> $GITHUB_OUTPUT
+          echo "get_url=$get_url" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials for deployment
+        # if: steps.size.outputs.large == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.setrole.outputs.arn }}
+          role-session-name: cft_deployment
+          aws-region: ${{ github.event.inputs.AWS_REGION }}
+
+      - name: Deploy stack (large template)
+        if: steps.size.outputs.large == 'true'
+        run: |
+          set -e
+          template_url="${{ steps.presign_upload.outputs.get_url }}"
+          echo "Deploying stack with template URL: $template_url"
+          stack_name="${{ github.event.inputs.stackName }}"
+          params_file="${{ steps.find_files.outputs.params_file }}"
+          param_args=$(jq -r '.[] | "ParameterKey=\(.ParameterKey),ParameterValue=\(.ParameterValue)"' "$params_file" | xargs -I {} echo {})
+          echo $param_args
+          # Check if stack exists
+          if aws cloudformation describe-stacks --stack-name "$stack_name" > /dev/null 2>&1; then
+            echo "Updating stack..."
+            aws cloudformation update-stack \
+              --stack-name "$stack_name" \
+              --template-url "$template_url" \
+              --parameters $param_args \
+              --capabilities CAPABILITY_NAMED_IAM
+            wait_cmd="aws cloudformation wait stack-update-complete --stack-name $stack_name"
+          else
+            echo "Creating stack..."
+            aws cloudformation create-stack \
+              --stack-name "$stack_name" \
+              --template-url "$template_url" \
+              --parameters $param_args \
+              --capabilities CAPABILITY_NAMED_IAM
+            wait_cmd="aws cloudformation wait stack-create-complete --stack-name $stack_name"
+          fi
+          # Wait for stack operation to complete
+          if ! eval "$wait_cmd"; then
+            echo " Stack deployment failed. Fetching failure reason..."
+            aws cloudformation describe-stack-events \
+              --stack-name "$stack_name" \
+              --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId, ResourceStatusReason]" \
+              --output table || echo " Failed to fetch stack events"
+            exit 1
+          fi
+
+      - name: Deploy stack (small template)
+        if: steps.size.outputs.large == 'false'
+        run: |
+          template_file="${{ steps.find_files.outputs.template_file }}"
+          echo "Deploying stack with template file: $template_file"
+          aws cloudformation deploy \
+            --stack-name "${{ github.event.inputs.stackName }}" \
+            --template-file "$template_file" \
+            --parameter-overrides $(jq -r '.[] | "\(.ParameterKey)=\(.ParameterValue)"' "${{ steps.find_files.outputs.params_file }}") \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo " Stack deployment failed. Fetching failure reason..."
+            aws cloudformation describe-stack-events \
+              --stack-name "${{ github.event.inputs.stackName }}" \
+              --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId, ResourceStatusReason]" \
+              --output table || echo " Failed to fetch stack events"
+            exit $exit_code
+          fi
+
+      - name: Extract CloudFormation outputs
+        id: get_outputs
+        run: |
+          stack_name="${{ github.event.inputs.stackName }}"
+          outputs_json=$(aws cloudformation describe-stacks \
+            --stack-name "$stack_name" \
+            --query "Stacks[0].Outputs" \
+            --output json)
+          echo "$outputs_json" | jq
+          for row in $(echo "$outputs_json" | jq -r '.[] | @base64'); do
+            _jq() { echo "${row}" | base64 --decode | jq -r "${1}"; }
+            key=$(_jq '.OutputKey')
+            value=$(_jq '.OutputValue')
+            echo " $key = $value"
+            echo "${key}=${value}" >> $GITHUB_OUTPUT
+          done

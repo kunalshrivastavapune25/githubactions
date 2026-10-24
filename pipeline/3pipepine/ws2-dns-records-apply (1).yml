@@ -1,0 +1,505 @@
+name: "WS2 -- DNS Records Apply (Gated / Audited)"
+
+# =============================================================================
+# PURPOSE
+# -------
+# WS2 scenarios 1-3 (add / modify / delete DNS records) via Route53 change-batch
+# (Option B). Diffs the desired Layer 4 config against the LIVE zone and applies
+# the delta: UPSERT for add/modify, DELETE (opt-in) for records removed from config.
+#
+# GOVERNANCE
+# ----------
+#   - ALWAYS previews first: the change summary (every UPSERT + DELETE) is printed
+#     and written to the run summary BEFORE anything executes.
+#   - Gatekeeper approval is REQUIRED for non-sandbox accounts (ppe/prod/etc.) via
+#     the `gate-dns-records` environment. Sandbox is the canary tier -> auto, no gate.
+#   - DELETES are opt-in (with_deletes=false by default). Nothing is dropped unless a
+#     human both sets with_deletes=true AND approves the .
+#   - dry_run defaults to true: a plain dispatch only previews.
+#
+# All inputs are passed via env: (never interpolated into run scripts) to avoid
+# script injection.
+#
+# TRIGGER: manual dispatch only.
+# See: docs/runbooks/WS2-HOSTED-ZONE-MODIFICATIONS.md
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      account:
+        description: "Account that owns the zone (sandbox = auto-approve canary; others = approval required for safety)"
+        required: true
+        default: "network-prod"
+      stack_id:
+        description: "REQUIRED (or hosted_zone_id): dns-records-* stack ID, a zone name, or the CFN stack that created the zone (any naming)"
+        required: false
+      hosted_zone_id:
+        description: "REQUIRED (or stack_id): Route53 zone ID (e.g. Z060943926KMOQ012KNSW)"
+        required: false
+      execute_changes:
+        description: "Apply changes to Route53 - LEAVE UNCHECKED for preview only (default); CHECK to actually apply"
+        required: false
+        type: boolean
+        default: false
+      with_deletes:
+        description: "Allow record deletion - LEAVE UNCHECKED to only add/modify; CHECK to also delete"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+
+  # ===========================================================================
+  # JOB: validate-account -- Verify account exists and resolve filter logic
+  # ===========================================================================
+  validate-account:
+    name: Validate account and resolve filter
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      stack_ids: ${{ steps.resolve.outputs.stack_ids }}
+      count: ${{ steps.resolve.outputs.count }}
+      mode: ${{ steps.resolve.outputs.mode }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Verify account in registry
+        env:
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          echo "[INFO] Validating account: $ACCOUNT"
+          if ! grep -q "^  $ACCOUNT:" config/_accounts-registry.yaml; then
+            echo ""
+            echo "[ERROR] Account not found: $ACCOUNT"
+            echo ""
+            echo "Valid accounts are:"
+            grep "^  [a-z]" config/_accounts-registry.yaml | sed 's/^  /  - /' | sed 's/:$//'
+            echo ""
+            exit 1
+          fi
+          echo "[SUCCESS] Account validated: $ACCOUNT"
+
+      - name: "Look up deploy role ARN"
+        id: role
+        if: inputs.stack_id != '' || inputs.hosted_zone_id != ''
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          set -eo pipefail
+          ROLE_ARN=$(echo "${ARNS_JSON}" | jq -r --arg a "${ACCOUNT}" '.[$a] // ""' 2>/dev/null || true)
+          if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+            echo "[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}"; exit 1
+          fi
+          echo "::add-mask::${ROLE_ARN}"
+          echo "role_arn=${ROLE_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (for stack_id/hosted_zone_id resolution)
+        if: inputs.stack_id != '' || inputs.hosted_zone_id != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.role_arn }}
+          aws-region: eu-west-1
+
+      - name: Validate and resolve zone input
+        id: resolve
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          SPECIFIC: ${{ inputs.stack_id }}
+          ZONE_ID: ${{ inputs.hosted_zone_id }}
+        run: |
+          echo "=========================================================="
+          echo "REQUIRED INPUT VALIDATION"
+          echo "=========================================================="
+          echo ""
+          echo "Account: $ACCOUNT"
+          if [[ -n "$SPECIFIC" ]]; then
+            echo "Stack ID provided: YES: $SPECIFIC"
+          else
+            echo "Stack ID provided: NO"
+          fi
+          if [[ -n "$ZONE_ID" ]]; then
+            echo "Hosted Zone ID provided: YES: $ZONE_ID"
+          else
+            echo "Hosted Zone ID provided: NO"
+          fi
+          echo ""
+
+          # CRITICAL: Require stack_id OR hosted_zone_id (not both optional, not both required)
+          if [[ -z "$SPECIFIC" ]] && [[ -z "$ZONE_ID" ]]; then
+            echo "[ERROR] MISSING REQUIRED INPUT"
+            echo ""
+            echo "For account '$ACCOUNT', you must provide ONE of:"
+            echo "  - Stack ID (e.g., dns-records-bbuk-customer-net)"
+            echo "  - Hosted Zone ID (e.g., Z060943926KMOQ012KNSW)"
+            echo ""
+            echo "Why? To prevent accidental mass changes to all zones in an account."
+            echo "You must explicitly specify which zone to apply changes to."
+            echo ""
+            exit 1
+          fi
+
+          STACK_IDS=()
+          MODE=""
+
+          # If a stack_id was given (alone or alongside hosted_zone_id), resolve it
+          # against the account's live Route53 zones -- accepts a dns-records-* stack
+          # ID, the zone's real name, or the name of the CloudFormation stack that
+          # created the zone (any naming: public-hosted-zone, private-hosted-zone,
+          # phz-ram-share, manual, or WS3 import), mirroring the export workflow's
+          # resolution so both tools accept the same inputs. Normalizes $SPECIFIC to
+          # the canonical dns-records-* form before the mode branches below, so the
+          # stack_id+hosted_zone_id comparison works regardless of which form the
+          # caller typed.
+          if [[ -n "$SPECIFIC" ]]; then
+            echo "[INFO] Resolving stack_id '$SPECIFIC' against live zones in '$ACCOUNT'..."
+            ZONES_JSON=$(aws route53 list-hosted-zones --query 'HostedZones[*].{Id:Id,Name:Name}' --output json)
+
+            declare -A ZONE_MAP
+            declare -A ZONE_ID_TO_STACK
+            while IFS=$'\t' read -r ZID ZNAME; do
+              [[ -z "$ZNAME" ]] && continue
+              SID="dns-records-$(echo "$ZNAME" | sed 's/\.$//' | sed 's/\./-/g')"
+              ZONE_MAP["$SID"]="$ZNAME"
+              ZONE_ID_TO_STACK["${ZID#/hostedzone/}"]="$SID"
+            done < <(echo "$ZONES_JSON" | jq -r '.[] | [.Id, .Name] | @tsv')
+
+            RESOLVED_STACK_ID=""
+            RESOLVED_ZONE_NAME=""
+
+            if [[ -n "${ZONE_MAP[$SPECIFIC]:-}" ]]; then
+              RESOLVED_STACK_ID="$SPECIFIC"
+              RESOLVED_ZONE_NAME="${ZONE_MAP[$SPECIFIC]}"
+              echo "  [MATCH] $SPECIFIC (zone: $RESOLVED_ZONE_NAME)"
+            else
+              NORMALIZED=$(echo "$SPECIFIC" | tr '[:upper:]' '[:lower:]')
+              [[ "$NORMALIZED" != *. ]] && NORMALIZED="${NORMALIZED}."
+              for SID in "${!ZONE_MAP[@]}"; do
+                ZNAME_LOWER=$(echo "${ZONE_MAP[$SID]}" | tr '[:upper:]' '[:lower:]')
+                if [[ "$ZNAME_LOWER" == "$NORMALIZED" ]]; then
+                  RESOLVED_STACK_ID="$SID"
+                  RESOLVED_ZONE_NAME="${ZONE_MAP[$SID]}"
+                  break
+                fi
+              done
+
+              if [[ -n "$RESOLVED_STACK_ID" ]]; then
+                echo "  [MATCH BY ZONE NAME] $SPECIFIC -> $RESOLVED_STACK_ID (zone: $RESOLVED_ZONE_NAME)"
+              else
+                CFN_DESCRIBE_ERR=""
+                CFN_ZONE_ID=$(aws cloudformation describe-stacks --stack-name "$SPECIFIC" \
+                  --query "Stacks[0].Outputs[?OutputKey=='HostedZoneId'].OutputValue | [0]" \
+                  --output text 2>/tmp/cfn_describe_err.txt) || \
+                  CFN_DESCRIBE_ERR=$(cat /tmp/cfn_describe_err.txt 2>/dev/null)
+
+                if [[ -n "$CFN_ZONE_ID" && "$CFN_ZONE_ID" != "None" ]]; then
+                  CFN_ZONE_ID_BARE="${CFN_ZONE_ID#/hostedzone/}"
+                  RESOLVED_STACK_ID="${ZONE_ID_TO_STACK[$CFN_ZONE_ID_BARE]:-}"
+                  [[ -n "$RESOLVED_STACK_ID" ]] && RESOLVED_ZONE_NAME="${ZONE_MAP[$RESOLVED_STACK_ID]}"
+                fi
+
+                if [[ -n "$RESOLVED_STACK_ID" ]]; then
+                  echo "  [MATCH BY CFN STACK] $SPECIFIC -> HostedZoneId output ($CFN_ZONE_ID) -> $RESOLVED_STACK_ID (zone: $RESOLVED_ZONE_NAME)"
+                else
+                  echo ""
+                  echo "[ERROR] Stack ID not found: $SPECIFIC"
+                  echo ""
+                  if [[ -n "$CFN_DESCRIBE_ERR" ]]; then
+                    echo "CloudFormation lookup for '$SPECIFIC' as a stack name failed:"
+                    echo "  $CFN_DESCRIBE_ERR"
+                    echo ""
+                  fi
+                  echo "'$SPECIFIC' does not match a dns-records-* stack ID, no zone in"
+                  echo "'$ACCOUNT' has this as its actual name, and it is not a"
+                  echo "CloudFormation stack with a HostedZoneId output either."
+                  echo ""
+                  echo "Available zones in $ACCOUNT:"
+                  for SID in $(printf '%s\n' "${!ZONE_MAP[@]}" | sort); do
+                    echo "  - $SID (zone: ${ZONE_MAP[$SID]})"
+                  done
+                  echo ""
+                  echo "You can provide ANY of:"
+                  echo "  - the stack_id shown above (e.g., dns-records-bbuk-customer-net)"
+                  echo "  - the zone's real name directly (e.g., bbuk-customer.net)"
+                  echo "  - the real Route53 hosted_zone_id"
+                  echo "  - the name of the CloudFormation stack that created the zone,"
+                  echo "    as long as it has an Output named HostedZoneId"
+                  echo ""
+                  exit 1
+                fi
+              fi
+            fi
+
+            SPECIFIC="$RESOLVED_STACK_ID"  # normalize for the branches below
+          fi
+
+          if [[ -n "$SPECIFIC" ]] && [[ -n "$ZONE_ID" ]]; then
+            # Both given -- they must refer to the SAME zone. Resolve hosted_zone_id
+            # and compare its derived stack_id against the supplied stack_id:
+            #   MATCH    -> proceed (valid double-confirmation, not an error)
+            #   MISMATCH -> reject with a clear error naming both values -- they could
+            #               be completely different zones, and silently picking one
+            #               would be dangerous.
+            echo "[INFO] Both stack_id and hosted_zone_id provided -- verifying they refer to the same zone..."
+            ZONE_ID_NORMALIZED=$(echo "$ZONE_ID" | sed 's|^/hostedzone/||')
+
+            if aws route53 get-hosted-zone --id "$ZONE_ID_NORMALIZED" \
+              --query 'HostedZone.Name' --output text > /tmp/zone_name.txt 2>/dev/null; then
+              ZONE_NAME=$(cat /tmp/zone_name.txt)
+              DERIVED_STACK_ID="dns-records-$(echo "$ZONE_NAME" | sed 's/\.$//' | sed 's/\./-/g')"
+
+              if [[ "$DERIVED_STACK_ID" == "$SPECIFIC" ]]; then
+                STACK_IDS=("$SPECIFIC")
+                MODE="stack_id+hosted_zone_id"
+                echo "[SUCCESS] stack_id and hosted_zone_id both refer to the SAME zone ($ZONE_NAME) -- proceeding."
+              else
+                echo ""
+                echo "[ERROR] CONFLICTING INPUTS - stack_id and hosted_zone_id refer to DIFFERENT zones!"
+                echo ""
+                echo "  stack_id you provided:       $SPECIFIC"
+                echo "  hosted_zone_id you provided: $ZONE_ID"
+                echo "    -> resolves to zone:       $ZONE_NAME"
+                echo "    -> which derives stack_id: $DERIVED_STACK_ID"
+                echo ""
+                echo "These do NOT match -- provide only ONE, or make sure both point to the same zone."
+                echo ""
+                exit 1
+              fi
+            else
+              echo ""
+              echo "[ERROR] Could not resolve hosted_zone_id: $ZONE_ID (needed to verify it matches stack_id: $SPECIFIC)"
+              echo ""
+              echo "Possible causes:"
+              echo "  1. Zone ID doesn't exist in this AWS account"
+              echo "  2. Zone is in a different AWS account"
+              echo "  3. OIDC role is missing Route53:GetHostedZone permission"
+              echo ""
+              exit 1
+            fi
+
+          elif [[ -n "$SPECIFIC" ]]; then
+            # Specific mode: use provided stack_id directly
+            STACK_IDS=("$SPECIFIC")
+            MODE="stack_id"
+            echo "[OK] Using STACK_ID mode: $SPECIFIC"
+
+          elif [[ -n "$ZONE_ID" ]]; then
+            # Hosted zone ID mode: query Route53 to get zone name, derive stack_id
+            echo "[INFO] Resolving hosted zone ID to stack ID..."
+            ZONE_ID_NORMALIZED=$(echo "$ZONE_ID" | sed 's|^/hostedzone/||')
+
+            if aws route53 get-hosted-zone --id "$ZONE_ID_NORMALIZED" \
+              --query 'HostedZone.Name' --output text > /tmp/zone_name.txt 2>/dev/null; then
+              ZONE_NAME=$(cat /tmp/zone_name.txt)
+              DERIVED_STACK_ID="dns-records-$(echo "$ZONE_NAME" | sed 's/\.$//' | sed 's/\./-/g')"
+              STACK_IDS=("$DERIVED_STACK_ID")
+              MODE="hosted_zone_id"
+              echo "[OK] Using HOSTED_ZONE_ID mode:"
+              echo "     Zone ID: $ZONE_ID"
+              echo "     Zone Name: $ZONE_NAME"
+              echo "     Stack ID: $DERIVED_STACK_ID"
+            else
+              echo ""
+              echo "[ERROR] Could not resolve hosted zone ID: $ZONE_ID"
+              echo ""
+              echo "Possible causes:"
+              echo "  1. Zone ID doesn't exist in this AWS account"
+              echo "  2. Zone is in a different AWS account"
+              echo "  3. OIDC role is missing Route53:GetHostedZone permission"
+              echo ""
+              exit 1
+            fi
+          fi
+
+          if [[ ${#STACK_IDS[@]} -eq 0 ]]; then
+            echo "[ERROR] Failed to resolve stack ID"
+            exit 1
+          fi
+
+          # Output as JSON array for matrix
+          echo ""
+          echo "[OK] Validation passed"
+          echo "stack_ids=$(printf '%s\n' "${STACK_IDS[@]}" | jq -R -s -c 'split("\n")[:-1]')" >> $GITHUB_OUTPUT
+          echo "count=${#STACK_IDS[@]}" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
+
+  # ===========================================================================
+  # JOB: preview  -- always runs. Prints the full change summary for audit.
+  #                  Matrix: one preview per resolved stack_id.
+  # ===========================================================================
+  preview:
+    name: "Preview change summary"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: validate-account
+    strategy:
+      matrix:
+        stack_id: ${{ fromJson(needs.validate-account.outputs.stack_ids) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Set up Python + boto3"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install boto3 --quiet
+
+      - name: "Look up deploy role ARN"
+        id: role
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          set -eo pipefail
+          ROLE_ARN=$(echo "${ARNS_JSON}" | jq -r --arg a "${ACCOUNT}" '.[$a] // ""' 2>/dev/null || true)
+          if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+            echo "[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}"; exit 1
+          fi
+          echo "::add-mask::${ROLE_ARN}"
+          echo "role_arn=${ROLE_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: "Configure AWS credentials (OIDC)"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Preview (dry-run diff)"
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          STACK_ID: ${{ matrix.stack_id }}
+          WITH_DELETES: ${{ inputs.with_deletes }}
+          DRY_RUN: ${{ inputs.execute_changes }}
+          ACTOR: ${{ github.actor }}
+          JOB_INDEX: ${{ strategy.job-index }}
+          JOB_TOTAL: ${{ strategy.job-total }}
+        run: |
+          set -eo pipefail
+
+          # Build command flags from boolean inputs
+          DEL_FLAG=""
+          if [[ "$WITH_DELETES" == "true" ]]; then
+            DEL_FLAG="--with-deletes"
+          fi
+
+          # Always run preview (even if dry_run=false, preview runs first)
+          OUT=$(python3 pipeline/dns_records_apply.py \
+                  --account "$ACCOUNT" --stack-id "$STACK_ID" $DEL_FLAG 2>&1) || { echo "$OUT"; exit 1; }
+          echo "$OUT"
+
+          JOB_NUM=$((JOB_INDEX + 1))
+          {
+            echo "## WS2 DNS Records -- PREVIEW [${{ matrix.stack_id }}]"
+            echo ""
+            echo "- Triggered by: \`${ACTOR}\`"
+            echo "- Account: \`${ACCOUNT}\`"
+            echo "- Stack: \`${STACK_ID}\`"
+            echo "- Delete records: \`${WITH_DELETES}\`"
+            echo "- Execute changes: \`${DRY_RUN}\`"
+            echo "- Matrix: \`${JOB_NUM}/${JOB_TOTAL}\`"
+            echo ""
+            echo '```'
+            echo "$OUT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # JOB: gate-approval  -- Explicit gatekeeper approval stage (Stage 3)
+  # Only runs for non-sandbox accounts. Sandbox auto-approves (canary tier).
+  # This is a distinct, separate approval checkpoint before apply execution.
+  # ===========================================================================
+
+  # ===========================================================================
+  # JOB: apply  -- Executes DNS record changes (Stage 4)
+  # Only runs after all gates pass: validation, preview, AND gatekeeper approval.
+  # Matrix: one apply per resolved stack_id.
+  # ===========================================================================
+  apply:
+    name: "Apply change batch"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [validate-account, preview]
+    if: ${{ inputs.execute_changes == true }}
+    strategy:
+      matrix:
+        stack_id: ${{ fromJson(needs.validate-account.outputs.stack_ids) }}
+      fail-fast: false
+    # No environment: here -- gate-approval (above) already gates on the exact same
+    # environment (production / dns-records-sandbox) and this job only ever runs
+    # after that approval succeeds (needs: gate-approval). Declaring the SAME
+    # protected environment a second time on this job made a reviewer approve the
+    # identical decision twice in one run, with nothing new to review in between.
+    # One approval per run is correct; the gate above is where it belongs.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Set up Python + boto3"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install boto3 --quiet
+
+      - name: "Look up deploy role ARN"
+        id: role
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+          ACCOUNT: ${{ inputs.account }}
+        run: |
+          set -eo pipefail
+          ROLE_ARN=$(echo "${ARNS_JSON}" | jq -r --arg a "${ACCOUNT}" '.[$a] // ""' 2>/dev/null || true)
+          if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+            echo "[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}"; exit 1
+          fi
+          echo "::add-mask::${ROLE_ARN}"
+          echo "role_arn=${ROLE_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: "Configure AWS credentials (OIDC)"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.role.outputs.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Apply"
+        env:
+          ACCOUNT: ${{ inputs.account }}
+          STACK_ID: ${{ matrix.stack_id }}
+          WITH_DELETES: ${{ inputs.with_deletes }}
+          ACTOR: ${{ github.actor }}
+          JOB_INDEX: ${{ strategy.job-index }}
+          JOB_TOTAL: ${{ strategy.job-total }}
+        run: |
+          set -eo pipefail
+          DEL_FLAG=""
+          [[ "$WITH_DELETES" == "true" ]] && DEL_FLAG="--with-deletes"
+          STATUS=APPLIED
+          OUT=$(python3 pipeline/dns_records_apply.py \
+                  --account "$ACCOUNT" --stack-id "$STACK_ID" $DEL_FLAG --execute 2>&1) || STATUS=FAILED
+          echo "$OUT"
+
+          JOB_NUM=$((JOB_INDEX + 1))
+          {
+            echo "## WS2 DNS Records -- ${STATUS} [${{ matrix.stack_id }}]"
+            echo ""
+            echo "- Triggered by: \`${ACTOR}\`"
+            echo "- Account: \`${ACCOUNT}\`"
+            echo "- Stack: \`${STACK_ID}\`"
+            echo "- with_deletes: \`${WITH_DELETES}\`"
+            echo "- Matrix: \`${JOB_NUM}/${JOB_TOTAL}\`"
+            echo ""
+            echo '```'
+            echo "$OUT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "${STATUS}" == "APPLIED" ]] || exit 1
