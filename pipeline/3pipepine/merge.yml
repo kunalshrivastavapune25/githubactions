@@ -1,0 +1,1255 @@
+name: CloudFormation Security Scan
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  id-token: write        # OIDC → AWS auth
+  contents: read
+  pull-requests: write   # post PR comments
+
+jobs:
+  detect-changes:
+    name: Detect changed files
+    runs-on: ubuntu-latest
+    outputs:
+      iac_files: ${{ steps.filter.outputs.iac_files }}
+      manifest_files: ${{ steps.filter.outputs.manifest_files }}
+      code_files: ${{ steps.filter.outputs.code_files }}
+      shell_files: ${{ steps.filter.outputs.shell_files }}
+      powershell_files: ${{ steps.filter.outputs.powershell_files }}
+      any_iac_changed: ${{ steps.filter.outputs.any_iac_changed }}
+      any_manifest_changed: ${{ steps.filter.outputs.any_manifest_changed }}
+      any_code_changed: ${{ steps.filter.outputs.any_code_changed }}
+      any_shell_changed: ${{ steps.filter.outputs.any_shell_changed }}
+      any_powershell_changed: ${{ steps.filter.outputs.any_powershell_changed }}
+      any_changed: ${{ steps.filter.outputs.any_changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find changed files from main to PR branch
+        id: filter
+        shell: bash
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          # Verify this workflow only evaluates main <- PR branch.
+          if [ "$BASE_BRANCH" != "main" ]; then
+            echo "iac_files=[]" >> "$GITHUB_OUTPUT"
+            echo "manifest_files=[]" >> "$GITHUB_OUTPUT"
+            echo "code_files=[]" >> "$GITHUB_OUTPUT"
+            echo "shell_files=[]" >> "$GITHUB_OUTPUT"
+            echo "powershell_files=[]" >> "$GITHUB_OUTPUT"
+            echo "any_iac_changed=false" >> "$GITHUB_OUTPUT"
+            echo "any_manifest_changed=false" >> "$GITHUB_OUTPUT"
+            echo "any_code_changed=false" >> "$GITHUB_OUTPUT"
+            echo "any_shell_changed=false" >> "$GITHUB_OUTPUT"
+            echo "any_powershell_changed=false" >> "$GITHUB_OUTPUT"
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Fetch both branches so git diff can compare them
+          git fetch origin "$BASE_BRANCH" "$HEAD_BRANCH"
+
+          # Compare main tip to PR source tip so only PR changes are scanned.
+          CHANGED=$(git diff --name-only "origin/$BASE_BRANCH" "origin/$HEAD_BRANCH")
+          echo "=== CHANGED ==="
+          echo "$CHANGED"
+
+          CANDIDATE_IAC_FILES=$(echo "$CHANGED" | grep -E '\.(ya?ml|json)$' || true)
+          IAC_FILES=""
+          NON_TEMPLATE_YAML_JSON=""
+
+          # cfn-lint and Snyk IaC should only run on files that start with AWSTemplateFormatVersion.
+          while read -r f; do
+            [ -z "$f" ] && continue
+            [ -f "$f" ] || continue
+
+            FIRST_LINE=$(head -n 1 "$f" 2>/dev/null || true)
+            if echo "$FIRST_LINE" | grep -q '^AWSTemplateFormatVersion'; then
+              IAC_FILES+="$f"$'\n'
+            else
+              NON_TEMPLATE_YAML_JSON+="$f"$'\n'
+            fi
+          done < <(echo "$CANDIDATE_IAC_FILES")
+
+          IAC_FILES="${IAC_FILES%$'\n'}"
+          NON_TEMPLATE_YAML_JSON="${NON_TEMPLATE_YAML_JSON%$'\n'}"
+
+          OTHER_FILES=$(printf '%s\n%s\n' "$(echo "$CHANGED" | grep -Ev '\.(ya?ml|json)$' || true)" "$NON_TEMPLATE_YAML_JSON" | sed '/^$/d' | sort -u)
+          SHELL_FILES=$(echo "$OTHER_FILES" | grep -E '\.(sh|bash)$' || true)
+          POWERSHELL_FILES=$(echo "$OTHER_FILES" | grep -E '\.(ps1|psm1|psd1)$' || true)
+
+          NON_SCRIPT_FILES=$(comm -23 <(echo "$OTHER_FILES" | sort -u) <(printf '%s\n%s\n' "$SHELL_FILES" "$POWERSHELL_FILES" | sed '/^$/d' | sort -u) 2>/dev/null || true)
+          NON_SCRIPT_FILES=$(echo "$NON_SCRIPT_FILES" | sed '/^$/d')
+
+          MANIFEST_REGEX='(^|/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|Pipfile(\.lock)?|poetry\.lock|pyproject\.toml|pom\.xml|build\.gradle(\.kts)?|go\.mod|go\.sum|Gemfile(\.lock)?|composer\.json|composer\.lock|[^/]*\.csproj|Cargo\.(toml|lock))$'
+          MANIFEST_FILES=$(echo "$NON_SCRIPT_FILES" | grep -E "$MANIFEST_REGEX" || true)
+          CODE_FILES=$(comm -23 <(echo "$NON_SCRIPT_FILES" | sort -u) <(echo "$MANIFEST_FILES" | sed '/^$/d' | sort -u) 2>/dev/null || true)
+          CODE_FILES=$(echo "$CODE_FILES" | sed '/^$/d')
+
+          echo "=== CANDIDATE_IAC_FILES ==="
+          echo "$CANDIDATE_IAC_FILES"
+          echo "=== IAC_FILES ==="
+          echo "$IAC_FILES"
+          echo "=== NON_TEMPLATE_YAML_JSON ==="
+          echo "$NON_TEMPLATE_YAML_JSON"
+          echo "=== MANIFEST_FILES ==="
+          echo "$MANIFEST_FILES"
+          echo "=== CODE_FILES ==="
+          echo "$CODE_FILES"
+          echo "=== SHELL_FILES ==="
+          echo "$SHELL_FILES"
+          echo "=== POWERSHELL_FILES ==="
+          echo "$POWERSHELL_FILES"
+
+          IAC_JSON=$(echo "$IAC_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          MANIFEST_JSON=$(echo "$MANIFEST_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          CODE_JSON=$(echo "$CODE_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          SHELL_JSON=$(echo "$SHELL_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          POWERSHELL_JSON=$(echo "$POWERSHELL_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+          echo "iac_files=$IAC_JSON" >> "$GITHUB_OUTPUT"
+          echo "manifest_files=$MANIFEST_JSON" >> "$GITHUB_OUTPUT"
+          echo "code_files=$CODE_JSON" >> "$GITHUB_OUTPUT"
+          echo "shell_files=$SHELL_JSON" >> "$GITHUB_OUTPUT"
+          echo "powershell_files=$POWERSHELL_JSON" >> "$GITHUB_OUTPUT"
+
+          if [ "$IAC_JSON" = '[]' ]; then
+            echo "any_iac_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_iac_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$MANIFEST_JSON" = '[]' ]; then
+            echo "any_manifest_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_manifest_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$CODE_JSON" = '[]' ]; then
+            echo "any_code_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_code_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$SHELL_JSON" = '[]' ]; then
+            echo "any_shell_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_shell_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$POWERSHELL_JSON" = '[]' ]; then
+            echo "any_powershell_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_powershell_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$IAC_JSON" = '[]' ] && [ "$MANIFEST_JSON" = '[]' ] && [ "$CODE_JSON" = '[]' ] && [ "$SHELL_JSON" = '[]' ] && [ "$POWERSHELL_JSON" = '[]' ]; then
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  cfn-lint:
+    name: cfn-lint
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any_iac_changed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.scan.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cfn-lint
+        shell: bash
+        run: pip install cfn-lint
+
+      - name: Run cfn-lint on changed templates
+        id: scan
+        shell: bash
+        env:
+          IAC_FILES: ${{ needs.detect-changes.outputs.iac_files }}
+        run: |
+          set -euo pipefail
+
+          REPORT_FILE="cfn-lint-report.md"
+          FAILED=false
+          TOTAL=0
+          FAIL_COUNT=0
+          SUMMARY_FILE=$(mktemp)
+          DETAILS_FILE=$(mktemp)
+
+          # REQ 1: one report for all changed templates
+          echo "## 🔍 CloudFormation Lint Results" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "| File | Status |" >> "$SUMMARY_FILE"
+          echo "|------|--------|" >> "$SUMMARY_FILE"
+
+          while read -r template; do
+            TOTAL=$((TOTAL + 1))
+
+            set +e
+            OUTPUT=$(cfn-lint "$template" --format pretty --include-checks W 2>&1)
+            set -e
+
+            # Run 2: no W flag so exit code reflects errors only (gate)
+            set +e
+            cfn-lint "$template" --format pretty > /dev/null 2>&1
+            ERROR_EXIT=$?
+            set -e
+
+            if [ $ERROR_EXIT -ne 0 ]; then
+              FAILED=true
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+              STATUS="❌ Errors found"
+            elif echo "$OUTPUT" | grep -qE '^W[0-9]'; then
+              STATUS="⚠️ Warnings only"
+            else
+              STATUS="✅ No issues found"
+            fi
+
+            echo "| \`$template\` | $STATUS |" >> "$SUMMARY_FILE"
+
+            echo "<details>" >> "$DETAILS_FILE"
+            echo "<summary><b>$template</b> — $STATUS</summary>" >> "$DETAILS_FILE"
+            echo "" >> "$DETAILS_FILE"
+            echo '```' >> "$DETAILS_FILE"
+            echo "$OUTPUT" >> "$DETAILS_FILE"
+            echo '```' >> "$DETAILS_FILE"
+            echo "" >> "$DETAILS_FILE"
+            echo "</details>" >> "$DETAILS_FILE"
+            echo "" >> "$DETAILS_FILE"
+          done < <(echo "$IAC_FILES" | jq -r '.[]')
+
+          {
+            echo "Files scanned: $TOTAL | Files with errors: $FAIL_COUNT"
+            echo ""
+            cat "$SUMMARY_FILE"
+            echo ""
+            cat "$DETAILS_FILE"
+          } >> "$REPORT_FILE"
+
+          if [ "$FAILED" = true ]; then
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload cfn-lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cfn-lint-report
+          path: cfn-lint-report.md
+          retention-days: 365
+
+  snyk-iac:
+    name: Snyk IaC
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any_iac_changed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-1
+    environment: ${{ github.base_ref }}
+    outputs:
+      outcome: ${{ steps.scan.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume broker role with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.SNYK_ROOT_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-skip-session-tagging: true
+          unset-current-credentials: true
+
+      - name: Chain into Snyk workload role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.SNYK_WORKLOAD_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-chaining: true
+          role-skip-session-tagging: true
+
+      - name: Fetch Snyk API key from AWS Secrets Manager
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            snyk-prd-apikey-01
+          parse-json-secrets: true
+
+      - name: Install Snyk CLI
+        shell: bash
+        run: npm install -g snyk
+
+      - name: Set environment
+        shell: bash
+        run: snyk config set endpoint=https://api.eu.snyk.io
+
+      - name: Authenticate Snyk
+        shell: bash
+        run: snyk auth "$SNYK_PRD_APIKEY_01"
+
+      - name: Run Snyk IaC scan on changed templates
+        id: scan
+        shell: bash
+        env:
+          IAC_FILES: ${{ needs.detect-changes.outputs.iac_files }}
+        run: |
+          set -euo pipefail
+
+          REPORT_FILE="snyk-report.md"
+          FAILED=false
+          TOTAL=0
+          ISSUE_COUNT=0
+          SUMMARY_FILE=$(mktemp)
+          DETAILS_FILE=$(mktemp)
+
+          echo "## 🔒 Snyk IAC scan results" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "| File | All Findings | High Severity |" >> "$SUMMARY_FILE"
+          echo "|------|-------------|---------------|" >> "$SUMMARY_FILE"
+
+          while read -r template; do
+            TOTAL=$((TOTAL + 1))
+
+            # Run 1: no threshold — captures ALL severities for the report
+            set +e
+            OUTPUT=$(snyk iac test "$template" --policy-path=.snyk 2>&1)
+            ALL_EXIT=$?
+            set -e
+
+            # Run 2: high threshold only — controls the gate
+            set +e
+            snyk iac test "$template" --severity-threshold=high --policy-path=.snyk > /dev/null 2>&1
+            HIGH_EXIT=$?
+            set -e
+
+            if [ $ALL_EXIT -ne 0 ]; then
+              ISSUE_COUNT=$((ISSUE_COUNT + 1))
+              ALL_STATUS="❌ Findings present"
+            else
+              ALL_STATUS="✅ Clean"
+            fi
+
+            # Gate: only high/critical findings fail the job
+            if [ $HIGH_EXIT -ne 0 ]; then
+              FAILED=true
+              HIGH_STATUS="🚨 High/critical found (PR blocked)"
+            else
+              HIGH_STATUS="✅ None"
+            fi
+
+            echo "| \`$template\` | $ALL_STATUS | $HIGH_STATUS |" >> "$SUMMARY_FILE"
+
+            echo "<details>" >> "$DETAILS_FILE"
+            echo "<summary><b>$template</b> — $ALL_STATUS | High: $HIGH_STATUS</summary>" >> "$DETAILS_FILE"
+            echo "" >> "$DETAILS_FILE"
+            echo '```' >> "$DETAILS_FILE"
+            echo "$OUTPUT" >> "$DETAILS_FILE"
+            echo '```' >> "$DETAILS_FILE"
+            echo "" >> "$DETAILS_FILE"
+            echo "</details>" >> "$DETAILS_FILE"
+            echo "" >> "$DETAILS_FILE"
+          done < <(echo "$IAC_FILES" | jq -r '.[]')
+
+          {
+            echo "Files scanned: $TOTAL | Files with any findings: $ISSUE_COUNT"
+            echo "> ⚠️ Report shows **all severities**. Gate fails only on **high** findings."
+            echo ""
+            cat "$SUMMARY_FILE"
+            echo ""
+            cat "$DETAILS_FILE"
+          } >> "$REPORT_FILE"
+
+          if [ "$FAILED" = true ]; then
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Fail the snyk-iac job itself if high/critical findings exist
+          # This surfaces as a direct job failure in the Actions UI,
+          # independent of enforce-gate
+          if [ "$FAILED" = true ]; then
+            echo "🚨 Snyk IaC scan failed — findings detected. See report in PR comment."
+            exit 1
+          fi
+      - name: Upload Snyk report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-report
+          path: snyk-report.md
+          retention-days: 365
+
+  snyk-app-scan:
+    name: Snyk OSS + Code
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_manifest_changed == 'true' ||
+      needs.detect-changes.outputs.any_code_changed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-1
+    environment: ${{ github.base_ref }}
+    outputs:
+      outcome: ${{ steps.scan.outputs.outcome }}
+      oss_outcome: ${{ steps.scan.outputs.oss_outcome }}
+      code_outcome: ${{ steps.scan.outputs.code_outcome }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume broker role with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.SNYK_ROOT_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-skip-session-tagging: true
+          unset-current-credentials: true
+
+      - name: Chain into Snyk workload role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.SNYK_WORKLOAD_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-chaining: true
+          role-skip-session-tagging: true
+
+      - name: Fetch Snyk API key from AWS Secrets Manager
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            snyk-prd-apikey-01
+          parse-json-secrets: true
+
+      - name: Install Snyk CLI
+        shell: bash
+        run: npm install -g snyk
+
+      - name: Set environment
+        shell: bash
+        run: snyk config set endpoint=https://api.eu.snyk.io
+
+      - name: Authenticate Snyk
+        shell: bash
+        run: snyk auth "$SNYK_PRD_APIKEY_01"
+
+      - name: Run Snyk OSS + Code scans
+        id: scan
+        shell: bash
+        env:
+          MANIFEST_FILES: ${{ needs.detect-changes.outputs.manifest_files }}
+          CODE_FILES: ${{ needs.detect-changes.outputs.code_files }}
+          ANY_MANIFEST_CHANGED: ${{ needs.detect-changes.outputs.any_manifest_changed }}
+          ANY_CODE_CHANGED: ${{ needs.detect-changes.outputs.any_code_changed }}
+        run: |
+          set -euo pipefail
+
+          OSS_REPORT_FILE="snyk-oss-report.md"
+          CODE_REPORT_FILE="snyk-code-report.md"
+          FAILED=false
+          FAILED_OSS=false
+          FAILED_CODE=false
+
+          if [ "$ANY_MANIFEST_CHANGED" = "true" ]; then
+            OSS_TOTAL=0
+            OSS_ISSUE_COUNT=0
+            OSS_SUMMARY_FILE=$(mktemp)
+            OSS_SCOPE_FILE=$(mktemp)
+            OSS_DETAILS_FILE=$(mktemp)
+
+            echo "| File | All Findings | High Severity |" >> "$OSS_SUMMARY_FILE"
+            echo "|------|-------------|---------------|" >> "$OSS_SUMMARY_FILE"
+            echo "| File |" >> "$OSS_SCOPE_FILE"
+            echo "|------|" >> "$OSS_SCOPE_FILE"
+
+            while read -r manifest; do
+              [ -z "$manifest" ] && continue
+              [ -f "$manifest" ] || continue
+              OSS_TOTAL=$((OSS_TOTAL + 1))
+              echo "| \`$manifest\` |" >> "$OSS_SCOPE_FILE"
+
+              DIR=$(dirname "$manifest")
+              FILE=$(basename "$manifest")
+
+              set +e
+              OSS_OUTPUT=$(cd "$DIR" && snyk test --file="$FILE" --policy-path="$GITHUB_WORKSPACE/.snyk" 2>&1)
+              OSS_ALL_EXIT=$?
+              set -e
+
+              set +e
+              (cd "$DIR" && snyk test --file="$FILE" --severity-threshold=high --policy-path="$GITHUB_WORKSPACE/.snyk") > /dev/null 2>&1
+              OSS_HIGH_EXIT=$?
+              set -e
+
+              if echo "$OSS_OUTPUT" | grep -qiE 'no supported projects detected|could not detect supported target files'; then
+                OSS_ALL_STATUS="ℹ️ No supported OSS project detected"
+                OSS_HIGH_STATUS="N/A"
+              else
+                if [ $OSS_ALL_EXIT -ne 0 ]; then
+                  OSS_ISSUE_COUNT=$((OSS_ISSUE_COUNT + 1))
+                  OSS_ALL_STATUS="❌ Findings present"
+                else
+                  OSS_ALL_STATUS="✅ Clean"
+                fi
+
+                if [ $OSS_HIGH_EXIT -ne 0 ]; then
+                  FAILED=true
+                  FAILED_OSS=true
+                  OSS_HIGH_STATUS="🚨 High/critical found (PR blocked)"
+                else
+                  OSS_HIGH_STATUS="✅ None"
+                fi
+              fi
+
+              echo "| \`$manifest\` | $OSS_ALL_STATUS | $OSS_HIGH_STATUS |" >> "$OSS_SUMMARY_FILE"
+
+              echo "<details>" >> "$OSS_DETAILS_FILE"
+              echo "<summary><b>$manifest</b> — $OSS_ALL_STATUS | High: $OSS_HIGH_STATUS</summary>" >> "$OSS_DETAILS_FILE"
+              echo "" >> "$OSS_DETAILS_FILE"
+              echo '```' >> "$OSS_DETAILS_FILE"
+              echo "$OSS_OUTPUT" >> "$OSS_DETAILS_FILE"
+              echo '```' >> "$OSS_DETAILS_FILE"
+              echo "" >> "$OSS_DETAILS_FILE"
+              echo "</details>" >> "$OSS_DETAILS_FILE"
+              echo "" >> "$OSS_DETAILS_FILE"
+            done < <(echo "$MANIFEST_FILES" | jq -r '.[]')
+
+            {
+              echo "## 📦 Snyk OpenSourceScan Results"
+              echo ""
+              echo "Files scanned: $OSS_TOTAL | Files with any findings: $OSS_ISSUE_COUNT"
+              echo "> ⚠️ Report shows **all severities**. Gate fails only on **high** findings."
+              echo ""
+              cat "$OSS_SUMMARY_FILE"
+              echo ""
+              echo "### Files In Scan Scope"
+              echo ""
+              cat "$OSS_SCOPE_FILE"
+              echo ""
+              cat "$OSS_DETAILS_FILE"
+            } > "$OSS_REPORT_FILE"
+          else
+            {
+              echo "## 📦 Snyk OpenSourceScan Results"
+              echo ""
+              echo "⏭️ Skipped (no files matching scan criteria)"
+            } > "$OSS_REPORT_FILE"
+          fi
+
+          if [ "$ANY_CODE_CHANGED" = "true" ]; then
+            CODE_TOTAL=0
+            CODE_ISSUE_COUNT=0
+            CODE_SUMMARY_FILE=$(mktemp)
+            CODE_SCOPE_FILE=$(mktemp)
+            CODE_DETAILS_FILE=$(mktemp)
+
+            echo "| File | All Findings | High Severity |" >> "$CODE_SUMMARY_FILE"
+            echo "|------|-------------|---------------|" >> "$CODE_SUMMARY_FILE"
+            echo "| File |" >> "$CODE_SCOPE_FILE"
+            echo "|------|" >> "$CODE_SCOPE_FILE"
+
+            while read -r file; do
+              [ -z "$file" ] && continue
+              [ -f "$file" ] || continue
+              CODE_TOTAL=$((CODE_TOTAL + 1))
+              echo "| \`$file\` |" >> "$CODE_SCOPE_FILE"
+
+              CODE_ALL_SARIF=$(mktemp)
+              CODE_HIGH_SARIF=$(mktemp)
+
+              set +e
+              CODE_OUTPUT=$(snyk code test "$file" --sarif-file-output="$CODE_ALL_SARIF" 2>&1)
+              CODE_ALL_EXIT=$?
+              set -e
+
+              set +e
+              snyk code test "$file" --severity-threshold=high --sarif-file-output="$CODE_HIGH_SARIF" > /dev/null 2>&1
+              CODE_HIGH_EXIT=$?
+              set -e
+
+              FILTER_EXPR='[(.runs[]?.results[]?) | select(any(.locations[]?; ((.physicalLocation.artifactLocation.uri // "") | tostring | endswith($target))))]'
+
+              CODE_MATCH_COUNT=0
+              if [ -s "$CODE_ALL_SARIF" ]; then
+                CODE_MATCH_COUNT=$(jq -r --arg target "$file" "$FILTER_EXPR | length" "$CODE_ALL_SARIF" 2>/dev/null || echo 0)
+              fi
+
+              CODE_HIGH_MATCH_COUNT=0
+              if [ -s "$CODE_HIGH_SARIF" ]; then
+                CODE_HIGH_MATCH_COUNT=$(jq -r --arg target "$file" "$FILTER_EXPR | length" "$CODE_HIGH_SARIF" 2>/dev/null || echo 0)
+              fi
+
+              if echo "$CODE_OUTPUT" | grep -qiE 'no supported files|no files to scan'; then
+                CODE_ALL_STATUS="ℹ️ No supported code file detected"
+                CODE_HIGH_STATUS="N/A"
+              elif [ $CODE_ALL_EXIT -eq 2 ] || [ $CODE_HIGH_EXIT -eq 2 ]; then
+                FAILED=true
+                FAILED_CODE=true
+                CODE_ALL_STATUS="⚠️ Scan error"
+                CODE_HIGH_STATUS="⚠️ Scan error (PR blocked)"
+              else
+                if [ "$CODE_MATCH_COUNT" -gt 0 ]; then
+                  CODE_ISSUE_COUNT=$((CODE_ISSUE_COUNT + 1))
+                  CODE_ALL_STATUS="❌ Findings present"
+                else
+                  CODE_ALL_STATUS="✅ Clean"
+                fi
+
+                if [ "$CODE_HIGH_MATCH_COUNT" -gt 0 ]; then
+                  FAILED=true
+                  FAILED_CODE=true
+                  CODE_HIGH_STATUS="🚨 High/critical found (PR blocked)"
+                else
+                  CODE_HIGH_STATUS="✅ None"
+                fi
+              fi
+
+              echo "| \`$file\` | $CODE_ALL_STATUS | $CODE_HIGH_STATUS |" >> "$CODE_SUMMARY_FILE"
+
+              FILTERED_CODE_OUTPUT="No PR-scoped findings in this file."
+              if [ -s "$CODE_ALL_SARIF" ] && [ "$CODE_MATCH_COUNT" -gt 0 ]; then
+                FILTERED_CODE_OUTPUT=$(jq -r --arg target "$file" '
+                  [(.runs[]?.results[]?)
+                    | select(any(.locations[]?; ((.physicalLocation.artifactLocation.uri // "") | tostring | endswith($target))))
+                    | {
+                        level: (.level // "unknown"),
+                        ruleId: (.ruleId // "unknown-rule"),
+                        message: (.message.text // .message.markdown // "No message"),
+                        uri: (.locations[0].physicalLocation.artifactLocation.uri // $target),
+                        line: (.locations[0].physicalLocation.region.startLine // 1)
+                      }
+                  ]
+                  | .[]
+                  | "- [\(.level)] \(.ruleId) at \(.uri):\(.line) - \(.message)"' "$CODE_ALL_SARIF" 2>/dev/null || echo "$CODE_OUTPUT")
+              elif [ "$CODE_ALL_STATUS" = "⚠️ Scan error" ]; then
+                FILTERED_CODE_OUTPUT="$CODE_OUTPUT"
+              fi
+
+              echo "<details>" >> "$CODE_DETAILS_FILE"
+              echo "<summary><b>$file</b> — $CODE_ALL_STATUS | High: $CODE_HIGH_STATUS</summary>" >> "$CODE_DETAILS_FILE"
+              echo "" >> "$CODE_DETAILS_FILE"
+              echo '```' >> "$CODE_DETAILS_FILE"
+              echo "$FILTERED_CODE_OUTPUT" >> "$CODE_DETAILS_FILE"
+              echo '```' >> "$CODE_DETAILS_FILE"
+              echo "" >> "$CODE_DETAILS_FILE"
+              echo "</details>" >> "$CODE_DETAILS_FILE"
+              echo "" >> "$CODE_DETAILS_FILE"
+            done < <(echo "$CODE_FILES" | jq -r '.[]')
+
+            {
+              echo "## 🧠 Snyk code scan results"
+              echo ""
+              echo "Files scanned: $CODE_TOTAL | Files with any findings: $CODE_ISSUE_COUNT"
+              echo "> ℹ️ Results are filtered to findings whose reported file matches a changed PR file."
+              echo "> ⚠️ Report shows **all severities**. Gate fails only on **high** findings."
+              echo ""
+              cat "$CODE_SUMMARY_FILE"
+              echo ""
+              echo "### Files In Scan Scope"
+              echo ""
+              cat "$CODE_SCOPE_FILE"
+              echo ""
+              cat "$CODE_DETAILS_FILE"
+            } > "$CODE_REPORT_FILE"
+          else
+            {
+              echo "## 🧠 Snyk code scan results"
+              echo ""
+              echo "⏭️ Skipped (no files matching scan criteria)"
+            } > "$CODE_REPORT_FILE"
+          fi
+
+          if [ "$FAILED" = true ]; then
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$ANY_MANIFEST_CHANGED" = "true" ]; then
+            echo "oss_outcome=$([ "$FAILED_OSS" = true ] && echo failure || echo success)" >> "$GITHUB_OUTPUT"
+          else
+            echo "oss_outcome=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$ANY_CODE_CHANGED" = "true" ]; then
+            echo "code_outcome=$([ "$FAILED_CODE" = true ] && echo failure || echo success)" >> "$GITHUB_OUTPUT"
+          else
+            echo "code_outcome=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$FAILED" = true ]; then
+            echo "🚨 Snyk OSS/Code scan failed — high/critical findings detected."
+            exit 1
+          fi
+
+      - name: Upload Snyk OSS report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-oss-report
+          path: snyk-oss-report.md
+          retention-days: 365
+
+      - name: Upload Snyk Code report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-code-report
+          path: snyk-code-report.md
+          retention-days: 365
+
+  script-lint:
+    name: Shell / PowerShell Lint (non-blocking)
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_shell_changed == 'true' ||
+      needs.detect-changes.outputs.any_powershell_changed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.scan.outputs.outcome }}
+      shell_outcome: ${{ steps.scan.outputs.shell_outcome }}
+      powershell_outcome: ${{ steps.scan.outputs.powershell_outcome }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure ShellCheck is available
+        if: needs.detect-changes.outputs.any_shell_changed == 'true'
+        shell: bash
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y shellcheck || true
+          fi
+
+      - name: Ensure PSScriptAnalyzer is available
+        if: needs.detect-changes.outputs.any_powershell_changed == 'true'
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery -ErrorAction SilentlyContinue
+          }
+
+      - name: Lint changed shell / PowerShell files
+        id: scan
+        shell: bash
+        env:
+          SHELL_FILES: ${{ needs.detect-changes.outputs.shell_files }}
+          POWERSHELL_FILES: ${{ needs.detect-changes.outputs.powershell_files }}
+          ANY_SHELL_CHANGED: ${{ needs.detect-changes.outputs.any_shell_changed }}
+          ANY_POWERSHELL_CHANGED: ${{ needs.detect-changes.outputs.any_powershell_changed }}
+        run: |
+          set -euo pipefail
+
+          REPORT_FILE="script-lint-report.md"
+          FAILED_SHELL=false
+          FAILED_PS=false
+          TOTAL=0
+          ISSUE_COUNT=0
+
+          if [ "$ANY_SHELL_CHANGED" = "true" ]; then
+            SHELL_SUMMARY=$(mktemp)
+            SHELL_DETAILS=$(mktemp)
+            echo "| File | All Findings | Error Findings |" >> "$SHELL_SUMMARY"
+            echo "|------|-------------|----------------|" >> "$SHELL_SUMMARY"
+
+            HAS_SHELLCHECK=true
+            if ! command -v shellcheck >/dev/null 2>&1; then
+              HAS_SHELLCHECK=false
+            fi
+
+            while read -r file; do
+              [ -z "$file" ] && continue
+              [ -f "$file" ] || continue
+              TOTAL=$((TOTAL + 1))
+
+              if [ "$HAS_SHELLCHECK" = "false" ]; then
+                OUTPUT="ShellCheck not available on runner."
+                ALL_STATUS="⚠️ Not scanned"
+                ERROR_STATUS="N/A"
+              else
+                set +e
+                OUTPUT=$(shellcheck "$file" 2>&1)
+                ALL_EXIT=$?
+                set -e
+
+                set +e
+                shellcheck --severity=error "$file" > /dev/null 2>&1
+                ERROR_EXIT=$?
+                set -e
+
+                if [ $ALL_EXIT -ne 0 ]; then
+                  ISSUE_COUNT=$((ISSUE_COUNT + 1))
+                  ALL_STATUS="❌ Findings present"
+                else
+                  ALL_STATUS="✅ Clean"
+                fi
+
+                if [ $ERROR_EXIT -ne 0 ]; then
+                  FAILED_SHELL=true
+                  ERROR_STATUS="🚨 Errors found"
+                else
+                  ERROR_STATUS="✅ None"
+                fi
+              fi
+
+              echo "| \`$file\` | $ALL_STATUS | $ERROR_STATUS |" >> "$SHELL_SUMMARY"
+
+              echo "<details>" >> "$SHELL_DETAILS"
+              echo "<summary><b>$file</b> — $ALL_STATUS | Error findings: $ERROR_STATUS</summary>" >> "$SHELL_DETAILS"
+              echo "" >> "$SHELL_DETAILS"
+              echo '```' >> "$SHELL_DETAILS"
+              echo "$OUTPUT" >> "$SHELL_DETAILS"
+              echo '```' >> "$SHELL_DETAILS"
+              echo "" >> "$SHELL_DETAILS"
+              echo "</details>" >> "$SHELL_DETAILS"
+              echo "" >> "$SHELL_DETAILS"
+            done < <(echo "$SHELL_FILES" | jq -r '.[]')
+          fi
+
+          if [ "$ANY_POWERSHELL_CHANGED" = "true" ]; then
+            PS_SUMMARY=$(mktemp)
+            PS_DETAILS=$(mktemp)
+            echo "| File | All Findings | Error Findings |" >> "$PS_SUMMARY"
+            echo "|------|-------------|----------------|" >> "$PS_SUMMARY"
+
+            HAS_PSSA=true
+            if ! pwsh -NoProfile -Command "if (Get-Module -ListAvailable -Name PSScriptAnalyzer) { exit 0 } else { exit 1 }" >/dev/null 2>&1; then
+              HAS_PSSA=false
+            fi
+
+            while read -r file; do
+              [ -z "$file" ] && continue
+              [ -f "$file" ] || continue
+              TOTAL=$((TOTAL + 1))
+
+              if [ "$HAS_PSSA" = "false" ]; then
+                OUTPUT="PSScriptAnalyzer not available on runner."
+                ALL_STATUS="⚠️ Not scanned"
+                ERROR_STATUS="N/A"
+              else
+                set +e
+                OUTPUT=$(pwsh -NoProfile -Command "
+                  \$r = Invoke-ScriptAnalyzer -Path '$file' -Severity Error,Warning,Information
+                  if (\$r) { \$r | Format-Table -AutoSize | Out-String -Width 200 } else { 'No issues found.' }
+                " 2>&1)
+                set -e
+
+                set +e
+                ERROR_COUNT=$(pwsh -NoProfile -Command "(Invoke-ScriptAnalyzer -Path '$file' -Severity Error).Count" 2>/dev/null)
+                set -e
+                ERROR_COUNT="${ERROR_COUNT:-0}"
+
+                if echo "$OUTPUT" | grep -q "No issues found."; then
+                  ALL_STATUS="✅ Clean"
+                else
+                  ISSUE_COUNT=$((ISSUE_COUNT + 1))
+                  ALL_STATUS="❌ Findings present"
+                fi
+
+                if [ "$ERROR_COUNT" -gt 0 ] 2>/dev/null; then
+                  FAILED_PS=true
+                  ERROR_STATUS="🚨 Errors found"
+                else
+                  ERROR_STATUS="✅ None"
+                fi
+              fi
+
+              echo "| \`$file\` | $ALL_STATUS | $ERROR_STATUS |" >> "$PS_SUMMARY"
+
+              echo "<details>" >> "$PS_DETAILS"
+              echo "<summary><b>$file</b> — $ALL_STATUS | Error findings: $ERROR_STATUS</summary>" >> "$PS_DETAILS"
+              echo "" >> "$PS_DETAILS"
+              echo '```' >> "$PS_DETAILS"
+              echo "$OUTPUT" >> "$PS_DETAILS"
+              echo '```' >> "$PS_DETAILS"
+              echo "" >> "$PS_DETAILS"
+              echo "</details>" >> "$PS_DETAILS"
+              echo "" >> "$PS_DETAILS"
+            done < <(echo "$POWERSHELL_FILES" | jq -r '.[]')
+          fi
+
+          {
+            echo "## 🐚 Shell / PowerShell Lint Results"
+            echo ""
+            echo "Files scanned: $TOTAL | Files with any findings: $ISSUE_COUNT"
+            echo "> ℹ️ Non-blocking scan: findings are reported in PR comments but do not fail the pipeline."
+            echo ""
+
+            if [ "$ANY_SHELL_CHANGED" = "true" ]; then
+              echo "### 🐚 Shell (ShellCheck)"
+              echo ""
+              cat "$SHELL_SUMMARY"
+              echo ""
+              cat "$SHELL_DETAILS"
+              echo ""
+            fi
+
+            if [ "$ANY_POWERSHELL_CHANGED" = "true" ]; then
+              echo "### 💻 PowerShell (PSScriptAnalyzer)"
+              echo ""
+              cat "$PS_SUMMARY"
+              echo ""
+              cat "$PS_DETAILS"
+            fi
+          } > "$REPORT_FILE"
+
+          # Keep this job non-blocking while still exposing per-scanner findings.
+          echo "outcome=success" >> "$GITHUB_OUTPUT"
+
+          if [ "$ANY_SHELL_CHANGED" = "true" ]; then
+            echo "shell_outcome=$([ "$FAILED_SHELL" = true ] && echo failure || echo success)" >> "$GITHUB_OUTPUT"
+          else
+            echo "shell_outcome=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$ANY_POWERSHELL_CHANGED" = "true" ]; then
+            echo "powershell_outcome=$([ "$FAILED_PS" = true ] && echo failure || echo success)" >> "$GITHUB_OUTPUT"
+          else
+            echo "powershell_outcome=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$FAILED_SHELL" = true ] || [ "$FAILED_PS" = true ]; then
+            echo "⚠️ Script lint findings detected (non-blocking). See report in PR comment."
+          fi
+
+      - name: Upload Script lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: script-lint-report
+          path: script-lint-report.md
+          retention-days: 365
+
+  comment-pr:
+    name: Comment PR findings
+    needs: [detect-changes, cfn-lint, snyk-iac, snyk-app-scan, script-lint]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.any_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download cfn-lint report
+        if: needs.cfn-lint.result != 'skipped'
+        uses: actions/download-artifact@v4
+        with:
+          name: cfn-lint-report
+          path: reports/cfn-lint
+          if-no-artifact-found: ignore
+
+      - name: Download Snyk IaC report
+        if: needs.snyk-iac.result != 'skipped'
+        uses: actions/download-artifact@v4
+        with:
+          name: snyk-report
+          path: reports/snyk
+          if-no-artifact-found: ignore
+
+      - name: Download Snyk OSS report
+        if: needs.snyk-app-scan.result != 'skipped'
+        uses: actions/download-artifact@v4
+        with:
+          name: snyk-oss-report
+          path: reports/snyk-oss
+          if-no-artifact-found: ignore
+
+      - name: Download Snyk Code report
+        if: needs.snyk-app-scan.result != 'skipped'
+        uses: actions/download-artifact@v4
+        with:
+          name: snyk-code-report
+          path: reports/snyk-code
+          if-no-artifact-found: ignore
+
+      - name: Download Script lint report
+        if: needs.script-lint.result != 'skipped'
+        uses: actions/download-artifact@v4
+        with:
+          name: script-lint-report
+          path: reports/script-lint
+          if-no-artifact-found: ignore
+
+      - name: Build combined comment
+        id: build-comment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ANY_CHANGED="${{ needs.detect-changes.outputs.any_changed }}"
+          LINT_OUTCOME="${{ needs.cfn-lint.outputs.outcome }}"
+          IAC_OUTCOME="${{ needs.snyk-iac.outputs.outcome }}"
+          OSS_OUTCOME="${{ needs.snyk-app-scan.outputs.oss_outcome }}"
+          CODE_OUTCOME="${{ needs.snyk-app-scan.outputs.code_outcome }}"
+          SHELL_OUTCOME="${{ needs.script-lint.outputs.shell_outcome }}"
+          POWERSHELL_OUTCOME="${{ needs.script-lint.outputs.powershell_outcome }}"
+
+          LINT_RESULT="${{ needs.cfn-lint.result }}"
+          IAC_RESULT="${{ needs.snyk-iac.result }}"
+          APP_RESULT="${{ needs.snyk-app-scan.result }}"
+          SCRIPT_RESULT="${{ needs.script-lint.result }}"
+
+          if [ "$ANY_CHANGED" != "true" ]; then
+            OVERALL="### ✅ Security scans skipped — no changed files in this PR"
+          elif [ "$LINT_OUTCOME" = "failure" ] || [ "$IAC_OUTCOME" = "failure" ] || [ "$OSS_OUTCOME" = "failure" ] || [ "$CODE_OUTCOME" = "failure" ]; then
+            OVERALL="### ❌ Security scans found blocking issues — please review before merging"
+          else
+            OVERALL="### ✅ Security scans passed"
+          fi
+
+          CFN_REPORT_PATH="reports/cfn-lint/cfn-lint-report.md"
+          SNYK_REPORT_PATH="reports/snyk/snyk-report.md"
+          OSS_REPORT_PATH="reports/snyk-oss/snyk-oss-report.md"
+          CODE_REPORT_PATH="reports/snyk-code/snyk-code-report.md"
+          SCRIPT_REPORT_PATH="reports/script-lint/script-lint-report.md"
+
+          snyk_all_status() {
+            local report_path="$1"
+            local result="$2"
+            local gate_outcome="$3"
+
+            if [ "$result" = "skipped" ] || [ "$gate_outcome" = "skipped" ]; then
+              echo "⏭️ Skipped"
+            elif [ ! -f "$report_path" ]; then
+              echo "⚠️ Report unavailable"
+            elif grep -q "❌ Findings present" "$report_path"; then
+              echo "❌ Findings present"
+            elif grep -q "✅ Clean" "$report_path"; then
+              echo "✅ Clean"
+            else
+              echo "ℹ️ See details"
+            fi
+          }
+
+          snyk_high_status() {
+            local result="$1"
+            local gate_outcome="$2"
+
+            if [ "$result" = "skipped" ] || [ "$gate_outcome" = "skipped" ]; then
+              echo "⏭️ Skipped"
+            elif [ "$gate_outcome" = "failure" ]; then
+              echo "🚨 High/critical found (PR blocked)"
+            elif [ "$gate_outcome" = "success" ]; then
+              echo "✅ None"
+            else
+              echo "⚠️ Unknown"
+            fi
+          }
+
+          scanner_status() {
+            local result="$1"
+            local outcome="$2"
+
+            if [ "$result" = "skipped" ] || [ "$outcome" = "skipped" ]; then
+              echo "⏭️ Skipped (no files matching scan criteria)"
+            elif [ "$outcome" = "failure" ]; then
+              echo "❌ Failed"
+            elif [ "$outcome" = "success" ]; then
+              echo "✅ Passed"
+            else
+              echo "⚠️ Unknown"
+            fi
+          }
+
+          {
+            echo "<!-- cfn-scan-comment -->"
+            echo "$OVERALL"
+            echo ""
+            echo "PR comparison: \`main\` ← \`${{ github.head_ref }}\`"
+            echo ""
+            echo "> Summary style: **All Findings** (visibility) + **High Severity** (blocking gate)."
+            echo ""
+
+            if [ "$ANY_CHANGED" = "true" ]; then
+              echo "| Scanner | All Findings | High Severity | Job Status |"
+              echo "|---------|--------------|---------------|------------|"
+              echo "| cfn-lint (.json/.yml/.yaml) | $(scanner_status "$LINT_RESULT" "$LINT_OUTCOME") | N/A | $(scanner_status "$LINT_RESULT" "$LINT_OUTCOME") |"
+              echo "| IaC Scan (.json/.yml/.yaml) | $(snyk_all_status "$SNYK_REPORT_PATH" "$IAC_RESULT" "$IAC_OUTCOME") | $(snyk_high_status "$IAC_RESULT" "$IAC_OUTCOME") | $(scanner_status "$IAC_RESULT" "$IAC_OUTCOME") |"
+              echo "| OpenSource Scan (remaining files) | $(snyk_all_status "$OSS_REPORT_PATH" "$APP_RESULT" "$OSS_OUTCOME") | $(snyk_high_status "$APP_RESULT" "$OSS_OUTCOME") | $(scanner_status "$APP_RESULT" "$OSS_OUTCOME") |"
+              echo "| Code Scan (remaining files) | $(snyk_all_status "$CODE_REPORT_PATH" "$APP_RESULT" "$CODE_OUTCOME") | $(snyk_high_status "$APP_RESULT" "$CODE_OUTCOME") | $(scanner_status "$APP_RESULT" "$CODE_OUTCOME") |"
+              echo "| Shell Script Scan (.sh/.bash) | $(scanner_status "$SCRIPT_RESULT" "$SHELL_OUTCOME") | N/A (non-blocking) | $(scanner_status "$SCRIPT_RESULT" "$SHELL_OUTCOME") |"
+              echo "| PowerShell Script Scan (.ps1/.psm1/.psd1) | $(scanner_status "$SCRIPT_RESULT" "$POWERSHELL_OUTCOME") | N/A (non-blocking) | $(scanner_status "$SCRIPT_RESULT" "$POWERSHELL_OUTCOME") |"
+              echo ""
+              echo "---"
+              echo ""
+
+              if [ -f "$CFN_REPORT_PATH" ]; then
+                cat "$CFN_REPORT_PATH"
+              else
+                echo "cfn-lint report was not produced."
+              fi
+
+              echo ""
+              echo "---"
+              echo ""
+
+              if [ -f "$SNYK_REPORT_PATH" ]; then
+                cat "$SNYK_REPORT_PATH"
+              else
+                echo "Snyk IaC report was not produced."
+              fi
+
+              echo ""
+              echo "---"
+              echo ""
+
+              if [ -f "$OSS_REPORT_PATH" ]; then
+                cat "$OSS_REPORT_PATH"
+              else
+                echo "Snyk OSS report was not produced."
+              fi
+
+              echo ""
+              echo "---"
+              echo ""
+
+              if [ -f "$CODE_REPORT_PATH" ]; then
+                cat "$CODE_REPORT_PATH"
+              else
+                echo "Snyk Code report was not produced."
+              fi
+
+              echo ""
+              echo "---"
+              echo ""
+
+              if [ -f "$SCRIPT_REPORT_PATH" ]; then
+                cat "$SCRIPT_REPORT_PATH"
+              else
+                echo "Script lint report was not produced."
+              fi
+            else
+              echo "No files matched the scan criteria in this PR."
+            fi
+
+            echo ""
+            echo "---"
+            echo "<sub>Triggered by commit \`${{ github.event.pull_request.head.sha }}\` · $(date -u '+%Y-%m-%d %H:%M UTC')</sub>"
+          } > combined-comment.md
+
+          cat combined-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete previous scan comment (if any)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              }
+            );
+            for (const comment of comments) {
+              if (comment.body?.includes('<!-- cfn-scan-comment -->')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('combined-comment.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  enforce-gate:
+    name: Enforce scan gate
+    needs: [detect-changes, comment-pr, cfn-lint, snyk-iac, snyk-app-scan, script-lint]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.any_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any scanner reported issues
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LINT_RESULT="${{ needs.cfn-lint.result }}"
+          IAC_RESULT="${{ needs.snyk-iac.result }}"
+          APP_RESULT="${{ needs.snyk-app-scan.result }}"
+
+          LINT_OUTCOME="${{ needs.cfn-lint.outputs.outcome }}"
+          IAC_OUTCOME="${{ needs.snyk-iac.outputs.outcome }}"
+          OSS_OUTCOME="${{ needs.snyk-app-scan.outputs.oss_outcome }}"
+          CODE_OUTCOME="${{ needs.snyk-app-scan.outputs.code_outcome }}"
+          FAILED=false
+
+          if [ "$LINT_RESULT" = "skipped" ]; then
+            echo "⏭️ cfn-lint skipped"
+          else
+            if [ "$LINT_OUTCOME" = "failure" ]; then
+              echo "❌ cfn-lint reported issues"
+              FAILED=true
+            else
+              echo "✅ cfn-lint passed"
+            fi
+          fi
+
+          if [ "$IAC_RESULT" = "skipped" ]; then
+            echo "⏭️ Snyk IaC skipped"
+          else
+            if [ "$IAC_OUTCOME" = "failure" ]; then
+              echo "❌ Snyk IaC reported issues"
+              FAILED=true
+            else
+              echo "✅ Snyk IaC passed"
+            fi
+          fi
+
+          if [ "$APP_RESULT" = "skipped" ]; then
+            echo "⏭️ Snyk OSS skipped"
+          else
+            if [ "$OSS_OUTCOME" = "failure" ]; then
+              echo "❌ Snyk OSS reported issues"
+              FAILED=true
+            else
+              echo "✅ Snyk OSS passed"
+            fi
+          fi
+
+          if [ "$APP_RESULT" = "skipped" ]; then
+            echo "⏭️ Snyk Code skipped"
+          else
+            if [ "$CODE_OUTCOME" = "failure" ]; then
+              echo "❌ Snyk Code reported issues"
+              FAILED=true
+            else
+              echo "✅ Snyk Code passed"
+            fi
+          fi
+
+          # Script lint is intentionally non-blocking.
+          if [ "${{ needs.script-lint.result }}" = "skipped" ]; then
+            echo "⏭️ Script lint skipped"
+          else
+            echo "ℹ️ Script lint completed (non-blocking)"
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "One or more scanners failed. See the PR comment for details."
+            exit 1
+          fi
