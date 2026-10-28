@@ -3,16 +3,13 @@
 #
 #   Every stage is its own job, so the run page draws them as connected boxes
 #   that turn green (passed), red (failed) or grey (skipped).
-#     • Drift check runs only for an existing stack. If anything was changed by hand,
-#       the change set is made drift-aware (compared with live AWS, not just the last
-#       deploy). Drift your template now matches is kept and cleared; drift it would
-#       undo stops the run unless Revert drift = yes; drift that can't be synced stops it.
+#     • Drift check runs only for an existing stack – any drift stops the run.
 #     • Change set prints exactly what will change and links to it in the AWS console.
 #     • Deploy = no (default): the pipeline stops there and nothing is deployed –
 #       you review the change set and execute it in the AWS console yourself.
 #     • Deploy = yes: the Deploy stage executes that same change set and follows the
 #       stack events until it finishes. It is skipped when there is nothing to change.
-#   Inputs, secrets and BUCKET_NAME are the same as before, plus the Deploy and Revert drift choices.
+#   Inputs, secrets and BUCKET_NAME are the same as before, plus the Deploy choice.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CloudFormation Stack using S3 as required
 run-name: "${{ inputs.deploy == 'yes' && '🚀' || '📝' }} ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
@@ -71,14 +68,6 @@ on:
         options:
           - 'no'
           - 'yes'
-      revertDrift:
-        description: "Only used when drift is found and your template doesn't match the live value: 'no' = stop and show it · 'yes' = put the template value back (undo the manual change)"
-        required: false
-        type: choice
-        default: 'no'
-        options:
-          - 'no'
-          - 'yes'
 
 permissions:
   id-token: write
@@ -98,7 +87,6 @@ env:
   # Region = the dropdown pick, or the Custom region text when the pick is 'other'
   REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}
   DEPLOY: ${{ inputs.deploy }}
-  REVERT_DRIFT: ${{ inputs.revertDrift }}
 
 defaults:
   run:
@@ -276,9 +264,6 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.mode == 'update'
     runs-on: ubuntu-latest
-    outputs:
-      drifted: ${{ steps.detect.outputs.drifted }}
-      drifted_ids: ${{ steps.detect.outputs.drifted_ids }}
     steps:
       - name: Configure AWS credentials for deployment
         uses: aws-actions/configure-aws-credentials@v4
@@ -288,7 +273,6 @@ jobs:
           aws-region: ${{ env.REGION }}
 
       - name: Detect drift
-        id: detect
         run: |
           echo "🔎 Checking $STACK_NAME for drift (changes made outside CloudFormation)…"
           id=$(aws cloudformation detect-stack-drift --stack-name "$STACK_NAME" \
@@ -323,21 +307,20 @@ jobs:
             ' "$RUNNER_TEMP/drift.json" > "$RUNNER_TEMP/drift_diff.txt"
 
             echo
-            echo "⚠️  DRIFT FOUND – $count resource(s) no longer match the last deployed template:"
+            echo "❌ DRIFT FOUND – $count resource(s) no longer match the template:"
             echo
             cat "$RUNNER_TEMP/drift_table.txt"
             if [ -s "$RUNNER_TEMP/drift_diff.txt" ]; then
               echo
-              echo "What changed (expected = last deployed template, actual = live in AWS):"
+              echo "What changed (expected = template, actual = live in AWS):"
               cat "$RUNNER_TEMP/drift_diff.txt"
             fi
             echo
-            echo "➡️  Not stopping yet: the change set will be drift-aware (compared with live AWS),"
-            echo "   so the next stage can see whether your template keeps or undoes these changes."
+            echo "⛔ Stopping before the change set. Undo the manual change (or add it to the template), then re-run."
 
             {
               echo "### 🔎 Drift check"
-              echo "⚠️ **Drift found in $count resource(s)** – the change set is made drift-aware to check whether your template keeps or undoes it."
+              echo "❌ **Drift found in $count resource(s) – run stopped before the change set.**"
               echo
               echo "| Drift | Resource | Type | Physical ID |"
               echo "|---|---|---|---|"
@@ -349,12 +332,8 @@ jobs:
                 echo '```'
               fi
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning title=Drift detected::$count resource(s) in $STACK_NAME were changed by hand – the change set will be drift-aware."
-            {
-              echo "drifted=true"
-              echo "drifted_ids=$(jq -r '[.StackResourceDrifts[].LogicalResourceId] | unique | join(" ")' "$RUNNER_TEMP/drift.json")"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error title=Drift detected::$count resource(s) in $STACK_NAME drifted from the template – stopped before the change set."
+            exit 1
           fi
 
           if [ "$drift" = IN_SYNC ] && [ "$detection" = DETECTION_COMPLETE ]; then
@@ -366,7 +345,6 @@ jobs:
             echo "::warning title=Drift check incomplete::$msg"
             printf '### 🔎 Drift check\n⚠️ %s – continuing.\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "drifted=false" >> "$GITHUB_OUTPUT"
 
   # ── 3 · Change set: create it and show what will change ───────────────────────
   changeset:
@@ -382,8 +360,6 @@ jobs:
       TEMPLATE_FILE: ${{ needs.prepare.outputs.template_file }}
       PARAMS_FILE: ${{ needs.prepare.outputs.params_file }}
       MODE: ${{ needs.prepare.outputs.mode }}
-      DRIFTED: ${{ needs.drift.outputs.drifted }}
-      DRIFTED_IDS: ${{ needs.drift.outputs.drifted_ids }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -491,28 +467,16 @@ jobs:
           cs_name="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cs_type=UPDATE
           if [ "$MODE" = create ]; then cs_type=CREATE; fi
-          cs_label=$cs_type
-          mode_args=()
-          if [ "$DRIFTED" = true ]; then
-            # Compare with live AWS as well as the last deploy, so drift your template already matches is kept
-            mode_args=(--deployment-mode REVERT_DRIFT)
-            cs_label="$cs_type, drift-aware"
-          fi
-          echo "📝 Creating $cs_label change set $cs_name…"
+          echo "📝 Creating $cs_type change set $cs_name…"
           if ! created=$(aws cloudformation create-change-set \
                            --stack-name "$STACK_NAME" \
                            --change-set-name "$cs_name" \
                            --change-set-type "$cs_type" \
-                           "${tpl[@]}" "${params[@]}" "${mode_args[@]}" \
+                           "${tpl[@]}" "${params[@]}" \
                            --capabilities CAPABILITY_NAMED_IAM \
                            --description "GitHub Actions run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}" \
-                           --output json 2> "$RUNNER_TEMP/cs_err"); then
-            cat "$RUNNER_TEMP/cs_err"
-            if grep -q -- '--deployment-mode' "$RUNNER_TEMP/cs_err"; then
-              echo "::error title=AWS CLI too old::This runner's AWS CLI doesn't support drift-aware change sets (--deployment-mode). Nothing was changed."
-            else
-              echo "::error title=Change set failed::CloudFormation rejected the change set – see the error above."
-            fi
+                           --output json); then
+            echo "::error title=Change set failed::CloudFormation rejected the change set – see the error above."
             exit 1
           fi
           cs_id=$(jq -r .Id <<< "$created")
@@ -531,15 +495,8 @@ jobs:
 
           # Nothing to change → this stage passes and there is nothing to execute
           if [ "$status" = FAILED ] && grep -qE "didn't contain changes|No updates are to be performed" <<< "$reason"; then
-            aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" || true
-            if [ "$DRIFTED" = true ]; then
-              msg="Drift was found, but the drift-aware change set contains no changes, so this run can't clear it. Re-run to check again; if it stops again, fix the drifted resource by hand (see Drift check)."
-              echo "⛔ $msg"
-              echo "::error title=Drift can't be synced::$msg"
-              printf '### 📝 Change set – stopped\n⛔ %s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
             echo "✅ No changes – the stack already matches this template and these parameters. Nothing to execute."
+            aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" || true
             printf '### 📝 Change set\n✅ No changes – the stack is already up to date. Nothing to execute.\n' >> "$GITHUB_STEP_SUMMARY"
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -553,11 +510,10 @@ jobs:
           fi
 
           # ── What will change: one line per resource, then each property with before → after ──
-          read -r n_all n_add n_mod n_del n_rep n_sync <<< "$(jq -r '
+          read -r n_all n_add n_mod n_del n_rep <<< "$(jq -r '
             [.Changes[]?.ResourceChange // empty]
             | [., map(select(.Action == "Add")), map(select(.Action == "Modify")),
-               map(select(.Action == "Remove")), map(select(.Replacement == "True")),
-               map(select(.Action == "SyncWithActual"))]
+               map(select(.Action == "Remove")), map(select(.Replacement == "True"))]
             | map(length) | @tsv' <<< "$cs")"
 
           jq -r '
@@ -569,15 +525,13 @@ jobs:
                      | (if $t == "string" then ($s | tojson) else $s end) | clip end;
             def secretish: test("password|secret|token|passphrase|credential|privatekey"; "i");
             def icon: if .Action == "Add" then "➕" elif .Action == "Remove" then "➖"
-                      elif .Replacement == "True" then "🔄" elif .Action == "SyncWithActual" then "🔁"
-                      elif .Action == "Modify" then "🔧" else "• " end;
-            def act: if .Action == "SyncWithActual" then "Sync" else .Action end;
+                      elif .Replacement == "True" then "🔄" elif .Action == "Modify" then "🔧" else "• " end;
             [.Changes[]?.ResourceChange // empty] as $changes
             | if ($changes | length) == 0 then
                 "   (no resource changes – stack-level update only, e.g. outputs or tags)"
               else
                 $changes[]
-                | (("   \(icon) \(act | pad(8)) \(.LogicalResourceId | pad(38)) \(.ResourceType | pad(42)) "
+                | (("   \(icon) \(.Action | pad(8)) \(.LogicalResourceId | pad(38)) \(.ResourceType | pad(42)) "
                     + (if .Replacement == "True" then "⚠ REPLACEMENT"
                        elif .Replacement == "Conditional" then "may be replaced"
                        elif .Action == "Remove" then "(\(.PolicyAction // "Delete"))"
@@ -585,24 +539,22 @@ jobs:
                   ([.Details[]?.Target // empty
                     | {path: (.Path // ("/" + .Attribute + (if .Name then "/" + .Name else "" end))),
                        type: (.AttributeChangeType // ""), before: .BeforeValue, after: .AfterValue,
-                       rec: (.RequiresRecreation // "Never"), drift: (.Drift != null)}]
+                       rec: (.RequiresRecreation // "Never")}]
                    | unique_by([.path, .type, .before, .after])[]
                    | (.path | secretish) as $hide
                    | (if $hide and .before != null then "(hidden)" else (.before | fmt) end) as $b
                    | (if $hide and .after != null then "(hidden)" else (.after | fmt) end) as $a
-                   | "        \(if .type == "Add" then "+" elif .type == "Remove" then "-" elif .type == "Modify" then "~" elif .type == "SyncWithActual" then "=" else "•" end) \(.path | pad(42)) "
-                     + (if .type == "SyncWithActual" then "live value kept – it already matches the template, nothing changes"
-                        elif .type == "Add" then "→ \($a)"
+                   | "        \(if .type == "Add" then "+" elif .type == "Remove" then "-" elif .type == "Modify" then "~" else "•" end) \(.path | pad(42)) "
+                     + (if .type == "Add" then "→ \($a)"
                         elif .type == "Remove" then "\($b) → (removed)"
                         elif .before == null and .after == null then "(resolved at deploy time)"
                         else "\($b) → \($a)" end)
-                     + (if .drift and .type != "SyncWithActual" then "   ↩ undoes a manual change" else "" end)
                      + (if .rec == "Always" then "   ⚠ forces replacement"
                         elif .rec == "Conditionally" then "   (may force replacement)" else "" end))
               end
           ' <<< "$cs" > "$RUNNER_TEMP/changes.txt"
 
-          echo "📋 Planned changes: $n_add to add · $n_mod to modify · $n_del to remove$( [ "$n_sync" -gt 0 ] && echo " · $n_sync synced with live (drift kept)")"
+          echo "📋 Planned changes: $n_add to add · $n_mod to modify · $n_del to remove"
           echo
           cat "$RUNNER_TEMP/changes.txt"
           echo
@@ -611,132 +563,6 @@ jobs:
           fi
           if [ "$n_del" -gt 0 ]; then
             echo "::warning title=Removal::$n_del resource(s) will be removed if you execute this change set"
-          fi
-
-          # ── Drift: kept by your template, undone by this change set, or impossible to sync? ──
-          if [ "$DRIFTED" = true ]; then
-            jq -r --arg ids "$DRIFTED_IDS" '
-              def clip: tostring | gsub("[\\r\\n\\t]+"; " ") | gsub("[|]"; "/") | if length > 100 then .[:100] + " …" else . end;
-              def val: if . == null or . == "" then "-" else clip end;
-              def secretish: test("password|secret|token|passphrase|credential|privatekey"; "i");
-              def where: (.Path // ("/" + (.Attribute // "") + (if .Name then "/" + .Name else "" end)));
-              [.Changes[]?.ResourceChange // empty] as $rc
-              | ($ids | split(" ") | map(select(length > 0))) as $drifted
-              | ( ( $rc[]
-                    | . as $r
-                    | ($r.ResourceDriftStatus // "") as $st
-                    | ($drifted | index($r.LogicalResourceId) != null) as $was
-                    | [$r.Details[]?.Target // empty | select(.Drift != null)] as $props
-                    | ( ( if $st == "UNSUPPORTED" or $st == "UNKNOWN" then
-                            (if $was then ["CANT", $r.LogicalResourceId, "-", "-", "-", "-", "CloudFormation cannot compare this resource with live AWS"] else empty end)
-                          elif $st == "DELETED" then
-                            (if $r.Action == "Remove" then ["KEPT", $r.LogicalResourceId, "(whole resource)", "existed", "deleted by hand", "removed", "the stack stops tracking it"]
-                             else ["UNDO", $r.LogicalResourceId, "(whole resource)", "existed", "deleted by hand", "in template", "it would be created again"] end)
-                          elif ($props | length) > 0 then
-                            ( $props[]
-                              | where as $p | ($p | secretish) as $hide
-                              | (.AttributeChangeType == "SyncWithActual") as $keep
-                              | (.AttributeChangeType // "") as $how
-                              | [ (if $keep then "KEPT" else "UNDO" end), $r.LogicalResourceId, $p,
-                                  (if $hide then "(hidden)" elif .Drift.PreviousValue == null then "(not there)" else (.Drift.PreviousValue | val) end),
-                                  (if $hide then "(hidden)" elif .Drift.ActualValue == null then "(not there)" else (.Drift.ActualValue | val) end),
-                                  (if $hide then "(hidden)" elif $keep then (.Drift.ActualValue | val)
-                                   elif $how == "Remove" then "(not in template)" else (.AfterValue | val) end),
-                                  (if $keep then "template matches live – nothing changes"
-                                   elif $how == "Remove" then "it would be removed"
-                                   elif $how == "Add" then "the template value would be added back"
-                                   else "the live value would be replaced" end) ] )
-                          elif $r.Action == "SyncWithActual" then
-                            ["KEPT", $r.LogicalResourceId, "-", "-", "-", "-", "template matches live – nothing changes"]
-                          elif $st == "MODIFIED" then
-                            ["UNDO", $r.LogicalResourceId, "-", "-", "-", "-", "changed by hand – this change set puts the template values back"]
-                          elif $was and $st == "IN_SYNC" then
-                            ["KEPT", $r.LogicalResourceId, "-", "-", "-", "-", "already back in line – nothing to undo"]
-                          elif $was then
-                            ["CANT", $r.LogicalResourceId, "-", "-", "-", "-", "drift status \(if $st == "" then "missing" else $st end) – cannot tell what would happen"]
-                          else empty end ),
-                        ( if $was or $st == "MODIFIED" then
-                            ( $r.ResourceDriftIgnoredAttributes[]?
-                              | ["LEFT", $r.LogicalResourceId, (.Path // "-"), "-", "-", "-",
-                                 (if .Reason == "MANAGED_BY_AWS" then "managed by AWS – left as it is"
-                                  elif .Reason == "WRITE_ONLY_PROPERTY" then "write-only, cannot be read – left as it is"
-                                  else "left as it is (\(.Reason // "no reason given"))" end)] )
-                          else empty end ) ) ),
-                  ( $drifted[] as $id
-                    | select(([$rc[].LogicalResourceId] | index($id)) == null)
-                    | ["CANT", $id, "-", "-", "-", "-", "not covered by the drift-aware change set"] ) )
-              | @tsv
-            ' <<< "$cs" > "$RUNNER_TEMP/drift_rows.tsv"
-
-            n_kept=$(grep -c '^KEPT' "$RUNNER_TEMP/drift_rows.tsv" || true)
-            n_undo=$(grep -c '^UNDO' "$RUNNER_TEMP/drift_rows.tsv" || true)
-            n_cant=$(grep -c '^CANT' "$RUNNER_TEMP/drift_rows.tsv" || true)
-
-            echo "🧭 Drift vs your template: $n_kept kept · $n_undo would be undone · $n_cant can't be synced"
-            while IFS=$'\t' read -r outcome res path prev live tmpl note; do
-              case "$outcome" in
-                KEPT) tag="✅ kept " ;;
-                UNDO) tag="↩️ undo " ;;
-                CANT) tag="⛔ can't" ;;
-                *)    tag="ℹ️ left " ;;
-              esac
-              printf '   %s  %-34s %-40s %s\n' "$tag" "$res" "$path" "$note"
-              if [ "$prev$live$tmpl" != "---" ]; then
-                printf '            last deployed: %s | live now: %s | your template: %s\n' "$prev" "$live" "$tmpl"
-              fi
-            done < "$RUNNER_TEMP/drift_rows.tsv"
-            echo
-
-            {
-              echo "### 🧭 Drift vs your template"
-              echo "✅ **$n_kept** kept · ↩️ **$n_undo** would be undone · ⛔ **$n_cant** can't be synced"
-              echo
-              echo "| | Resource | Setting | Last deployed | Live now | Your template | What happens |"
-              echo "|---|---|---|---|---|---|---|"
-              while IFS=$'\t' read -r outcome res path prev live tmpl note; do
-                case "$outcome" in
-                  KEPT) tag="✅ Kept" ;;
-                  UNDO) tag="↩️ Undone" ;;
-                  CANT) tag="⛔ Can't sync" ;;
-                  *)    tag="ℹ️ Left as is" ;;
-                esac
-                printf '| %s | `%s` | `%s` | %s | %s | %s | %s |\n' "$tag" "$res" "$path" "$prev" "$live" "$tmpl" "$note"
-              done < "$RUNNER_TEMP/drift_rows.tsv"
-              echo
-            } > "$RUNNER_TEMP/drift_summary.md"
-
-            stop=""
-            if [ "$n_cant" -gt 0 ]; then
-              stop_title="Drift can't be synced"
-              stop="CloudFormation can't bring $n_cant drifted item(s) back in line (marked ⛔). Fix them by hand, then re-run."
-            elif [ "$n_undo" -gt 0 ] && [ "$REVERT_DRIFT" != yes ]; then
-              stop_title="Change would undo manual changes"
-              stop="This change set would undo $n_undo manual change(s) (marked ↩️). To keep them, add them to your template; to undo them on purpose, re-run with Revert drift = yes."
-            fi
-            if [ -n "$stop" ]; then
-              aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" || true
-              echo "⛔ $stop The change set was deleted so it can't be executed by mistake."
-              echo "::error title=$stop_title::$stop"
-              {
-                echo "### 📝 Change set – stopped"
-                echo "⛔ $stop The change set was deleted so it can't be executed by mistake."
-                echo
-                cat "$RUNNER_TEMP/drift_summary.md"
-                echo "<details><summary>Everything this change set would have done</summary>"
-                echo
-                echo '```text'
-                cat "$RUNNER_TEMP/changes.txt"
-                echo '```'
-                echo "</details>"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            if [ "$n_undo" -gt 0 ]; then
-              echo "::warning title=Undoing manual changes::Revert drift = yes – executing this change set undoes $n_undo manual change(s) (marked ↩️)."
-            fi
-            if [ "$n_kept" -gt 0 ]; then
-              echo "::notice title=Drift kept::$n_kept drifted item(s) already match your template – executing clears the drift without changing them."
-            fi
           fi
 
           # Older pipeline change sets still waiting on this stack could be executed by mistake
@@ -775,12 +601,10 @@ jobs:
 
           {
             echo "$heading"
-            printf '`%s` (%s) on `%s` · account `%s` (%s) · %s\n\n' "$cs_name" "$cs_label" "$STACK_NAME" "$account" "$ROLE_ALIAS" "$REGION"
+            printf '`%s` (%s) on `%s` · account `%s` (%s) · %s\n\n' "$cs_name" "$cs_type" "$STACK_NAME" "$account" "$ROLE_ALIAS" "$REGION"
             printf '**%s** to add · **%s** to modify · **%s** to remove' "$n_add" "$n_mod" "$n_del"
-            if [ "$n_sync" -gt 0 ]; then printf ' · 🔁 **%s** synced with live (drift kept)' "$n_sync"; fi
             if [ "$n_rep" -gt 0 ]; then printf ' · ⚠️ **%s** replacement(s)' "$n_rep"; fi
             printf '\n\n%s\n\n' "$next"
-            if [ -f "$RUNNER_TEMP/drift_summary.md" ]; then cat "$RUNNER_TEMP/drift_summary.md"; fi
             if [ "$n_all" -gt 0 ]; then
               echo "| Action | Resource | Type | Replacement |"
               echo "|---|---|---|---|"
