@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: IAM roles in management account for GitHub OIDC federated access - Deploy and Read roles
+
+Parameters:
+  SourceAccountId:
+    Type: String
+    Description: AWS Account ID that can assume these roles
+    # Default: "390403857119"
+ 
+Resources:   
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "iamr-net-ppe-deploy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub "arn:aws:iam::${SourceAccountId}:root"
+            Action: "sts:AssumeRole"
+          - Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub "arn:aws:iam::${SourceAccountId}:role/iamr-net-ppe-deploy"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AdministratorAccess"
+
+  ReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "iamr-net-ppe-read"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub "arn:aws:iam::${SourceAccountId}:root"
+            Action: "sts:AssumeRole"
+          - Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub "arn:aws:iam::${SourceAccountId}:role/iamr-net-ppe-read"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/ReadOnlyAccess"

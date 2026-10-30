@@ -1,0 +1,107 @@
+
+AWSControlTowerExecution Info
+Delete
+Summary
+Edit
+Creation date
+July 14, 2025, 10:47 (UTC+01:00)
+ARN
+
+arn:aws:iam::584477831165:role/AWSControlTowerExecution
+Link to switch roles in console
+
+https://signin.aws.amazon.com/switchrole?roleName=AWSControlTowerExecution&account=584477831165
+Last activity
+56 minutes ago
+Maximum session duration
+1 hour
+
+Permissions
+
+Trust relationships
+
+Tags
+
+Last Accessed
+
+Revoke sessions
+Permissions policies (1) Info
+
+Simulate 
+Remove
+Add permissions
+You can attach up to 20 managed policies.
+
+Filter by Type
+
+All types
+
+1
+
+
+Policy name 
+	
+Type
+	
+Attached entities
+
+AdministratorAccess
+AWS managed - job function
+5
+Permissions boundary (not set)
+Generate policy based on CloudTrail events
+You can generate a new policy based on the access activity for this role, then customize, create, and attach it to this role. AWS uses your CloudTrail events to identify the services and actions used and generate a policy. Learn more 
+Generate policy
+No requests to generate a policy in the past 7 days.
+
+
+
+
+Trusted entities
+Edit trust policy
+Entities that can assume this role under specified conditions.
+
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::390403857119:root"
+            },
+            "Action": "sts:AssumeRole"
+        },
+        {
+            "Sid": "AllowNewGithubOIDC",
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::584477831165:oidc-provider/token.actions.tescoims.ghe.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "token.actions.tescoims.ghe.com:aud": "sts.amazonaws.com"
+                },
+                "StringLike": {
+                    "token.actions.tescoims.ghe.com:sub": "repo:plat-eng/AWS-Landing-Zone:*"
+                }
+            }
+        },
+        {
+            "Sid": "AllowGithubOIDC",
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::584477831165:oidc-provider/token.actions.githubusercontent.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                },
+                "StringLike": {
+                    "token.actions.githubusercontent.com:sub": "repo:tescoims/*"
+                }
+            }
+        }
+    ]
+}
