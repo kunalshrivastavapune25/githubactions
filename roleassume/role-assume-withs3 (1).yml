@@ -1,0 +1,391 @@
+name: Deploy CFT with IAM Role and S3
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment code (dev, tst, ppe, prd)"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - tst
+          - ppe
+          - prd
+      workload:
+        description: "Workload code (coll, comm, cust, fin, int, sec, tu)"
+        required: true
+        default: comm
+        type: choice
+        options:
+          - coll
+          - comm
+          - cust
+          - fin
+          - int
+          - sec
+          - tu
+      accessLevel:
+        description: "Which IMS role to use"
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - read
+      folderPath:
+        description: "Path under cloudformation/ (e.g. 'vpc' or 'network/peering')"
+        required: true
+      stackName:
+        description: "Name of CloudFormation stack to deploy"
+        required: true
+      # roleAlias:
+      #   description: "Alias for the IAM role to assume (e.g. NETWORK, DIRECTORY)"
+      #   required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  Lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: Find template and params
+        id: find_files
+        run: |
+          base_dir="cloudformation"
+          folder="${{ github.event.inputs.folderPath }}"
+          full_path="${base_dir}/${folder}"
+          template_file=$(find "$full_path" -type f \( -iname "*-template.yaml" -o -iname "*-template.yml" \) | head -n 1)
+          params_file="${full_path}/params.json"
+          if [[ -z "$template_file" ]]; then
+            echo "No template matching '*-template.y[a]ml' found in $full_path"
+            exit 1
+          fi
+          if [[ ! -f "$params_file" ]]; then
+            echo "params.json not found in $full_path"
+            exit 1
+          fi
+          echo "template_file=$template_file" >> $GITHUB_OUTPUT
+          echo "params_file=$params_file" >> $GITHUB_OUTPUT
+
+      - name: Run cfn-lint
+        run: cfn-lint -t ${{ steps.find_files.outputs.template_file }}
+        continue-on-error: true
+  deploy:
+    runs-on: ubuntu-latest
+    needs: Lint
+    env:
+      BUCKET_NAME: ss-cfts3
+      AWS_REGION: eu-west-1
+      ROOT_ACCOUNT_ID: "390403857119"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      # - name: Set role ARN from alias
+      #   id: setrole
+      #   run: |
+      #     alias="${{ github.event.inputs.roleAlias }}"
+      #     case "$alias" in
+      #       NETWORK) arn="${{ secrets.NETWORK_SERVICES_ROLE }}" ;;
+      #       DIRECTORY) arn="${{ secrets.DIRECTORY_SERVICES_ROLE }}" ;;
+      #       SECURITY) arn="${{ secrets.SECURITY_INFRA_ROLE }}" ;;
+      #       SHAREDSERVICES) arn="${{ secrets.SHAREDSERVICES_ROLE }}" ;;
+      #       MANAGEMENT) arn="${{ secrets.MGMT_ROLE }}" ;;
+      #       LOGARCHIVE) arn="${{ secrets.LOGARCHIVE_ROLE }}" ;;
+      #       MONITORING) arn="${{ secrets.MONITORING_ROLE }}" ;;
+      #       DIRECTORY-DEV) arn="${{ secrets.DIRECTORY_SERVICES_DEV_ROLE }}" ;;
+      #       DEV-COLL) arn="${{ secrets.DEV_COLL_ROLE }}" ;;
+      #       PROD-COLL) arn="${{ secrets.PROD_COLL_ROLE }}" ;;
+      #       PROD-COMM) arn="${{ secrets.PROD_COMM_ROLE }}" ;;
+      #       PROD-CUST) arn="${{ secrets.PROD_CUST_ROLE }}" ;;
+      #       PROD-FIN) arn="${{ secrets.PROD_FIN_ROLE }}" ;;
+      #       PROD-INT) arn="${{ secrets.PROD_INT_ROLE }}" ;;
+      #       PROD-SEC) arn="${{ secrets.PROD_SEC_ROLE }}" ;;
+      #       PROD-TU) arn="${{ secrets.PROD_TU_ROLE }}" ;;
+      #       TST-TU) arn="${{ secrets.TST_TU_ROLE }}" ;;
+      #       DEV-COMM) arn="${{ secrets.DEV_COMM_ROLE }}" ;;
+      #       DEV-INT) arn="${{ secrets.DEV_INT_ROLE }}" ;;
+      #       TST-COMM) arn="${{ secrets.TST_COMM_ROLE }}" ;;
+      #       TST-FIN)  arn="${{ secrets.TST_FIN_ROLE }}" ;;
+      #       DEV-TU)   arn="${{ secrets.DEV_TU_ROLE }}" ;;
+      #       TST-INT)  arn="${{ secrets.TST_INT_ROLE }}" ;;
+      #       DEV-FIN)  arn="${{ secrets.DEV_FIN_ROLE }}" ;;
+      #       PPE-COMM) arn="${{ secrets.PPE_COMM_ROLE }}" ;;
+      #       DEV-CUST) arn="${{ secrets.DEV_CUST_ROLE }}" ;;
+      #       DEV-SEC)  arn="${{ secrets.DEV_SEC_ROLE }}" ;;
+      #       TST-COLL) arn="${{ secrets.TST_COLL_ROLE }}" ;;
+      #       TST-CUST) arn="${{ secrets.TST_CUST_ROLE }}" ;;
+      #       TST-SEC)  arn="${{ secrets.TST_SEC_ROLE }}" ;;
+      #       PPE-TU)   arn="${{ secrets.PPE_TU_ROLE }}" ;;
+      #       PPE-INT)  arn="${{ secrets.PPE_INT_ROLE }}" ;;
+      #       PPE-FIN)  arn="${{ secrets.PPE_FIN_ROLE }}" ;;
+      #       PPE-COLL) arn="${{ secrets.PPE_COLL_ROLE }}" ;;
+      #       PPE-CUST) arn="${{ secrets.PPE_CUST_ROLE }}" ;;
+      #       PPE-SEC)  arn="${{ secrets.PPE_SEC_ROLE }}" ;;
+            
+            
+      #       # Add more mappings here            
+      #       *)
+      #         echo "No secret found for alias $alias" >&2
+      #         exit 1
+      #         ;;
+      #     esac
+      #     echo "arn=$arn" >> $GITHUB_OUTPUT
+
+      - name: Find template and params
+        id: find_files
+        run: |
+          base_dir="cloudformation"
+          folder="${{ github.event.inputs.folderPath }}"
+          full_path="${base_dir}/${folder}"
+          template_file=$(find "$full_path" -type f \( -iname "*-template.yaml" -o -iname "*-template.yml" \) | head -n 1)
+          params_file="${full_path}/params.json"
+          if [[ -z "$template_file" ]]; then
+            echo "No template matching '*-template.y[a]ml' found in $full_path"
+            exit 1
+          fi
+          if [[ ! -f "$params_file" ]]; then
+            echo "params.json not found in $full_path"
+            exit 1
+          fi
+          echo "template_file=$template_file" >> $GITHUB_OUTPUT
+          echo "params_file=$params_file" >> $GITHUB_OUTPUT
+
+      - name: Resolve role pair
+        id: resolve
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          WORKLOAD: ${{ github.event.inputs.workload }}
+          ACCESS: ${{ github.event.inputs.accessLevel }}
+          PARAMETER_FILE: ${{ steps.find_files.outputs.params_file }}
+        run: |
+          set -euo pipefail
+          echo "rootid: ${ROOT_ACCOUNT_ID}"
+          case "${{ github.event.inputs.environment }}" in
+            dev) env_token="Dev" ;;
+            tst) env_token="Tst" ;;
+            ppe) env_token="Ppe" ;;
+            prd) env_token="Prd" ;;
+            *) echo "::error::Unsupported environment '$ENVIRONMENT'"; exit 1 ;;
+          esac
+          case "${{ github.event.inputs.workload }}" in
+            coll) workload_token="Coll" ;;
+            comm) workload_token="Comm" ;;
+            cust) workload_token="Cust" ;;
+            fin) workload_token="Fin" ;;
+            int) workload_token="Int" ;;
+            sec) workload_token="Sec" ;;
+            tu) workload_token="Tu" ;;
+            *) echo "::error::Unsupported workload '$WORKLOAD'"; exit 1 ;;
+          esac
+          param_key="AccountId"
+          account_id=$(jq -r --arg key "$param_key" '.[] | select(.ParameterKey==$key) | .ParameterValue' "$PARAMETER_FILE")
+          if [ -z "$account_id" ] || [ "$account_id" = "null" ]; then
+            echo "::error::Account ID not found for key $param_key"
+            exit 1
+          fi
+          root_role_arn="arn:aws:iam::${ROOT_ACCOUNT_ID}:role/iamr-${{github.event.inputs.workload}}-${{github.event.inputs.environment}}-${{github.event.inputs.accessLevel}}"
+          workload_role_arn="arn:aws:iam::${account_id}:role/iamr-${{github.event.inputs.workload}}-${{github.event.inputs.environment}}-${{github.event.inputs.accessLevel}}"
+          session_suffix="${{github.event.inputs.workload}}-${{github.event.inputs.environment}}-${{github.event.inputs.accessLevel}}"
+          {
+            echo "root_role_arn=$root_role_arn"
+            echo "workload_role_arn=$workload_role_arn"
+            echo "session_suffix=$session_suffix"
+            echo "target_account_id=$account_id"
+          } >> "$GITHUB_OUTPUT"
+          echo "root_role_arn=$root_role_arn"
+          echo "workload_role_arn=$workload_role_arn"
+          echo "session_suffix=$session_suffix"
+          echo "target_account_id=$account_id"
+      - name: Assume IMS Root broker role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.resolve.outputs.root_role_arn }}
+          role-session-name: ims-root-broker
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Show IMS Root identity
+        run: aws sts get-caller-identity
+
+      - name: Assume workload role
+        id: workload
+        env:
+          WORKLOAD_ROLE_ARN: ${{ steps.resolve.outputs.workload_role_arn }}
+          SESSION_SUFFIX: ${{ steps.resolve.outputs.session_suffix }}
+        run: |
+          set -euo pipefail
+          echo "Chaining into workload role $WORKLOAD_ROLE_ARN"
+          creds=$(aws sts assume-role \
+            --role-arn "$WORKLOAD_ROLE_ARN" \
+            --role-session-name "workload-${SESSION_SUFFIX}" \
+            --duration-seconds 900 \
+            --output json)
+          access_key=$(echo "$creds" | jq -r '.Credentials.AccessKeyId')
+          secret_key=$(echo "$creds" | jq -r '.Credentials.SecretAccessKey')
+          session_token=$(echo "$creds" | jq -r '.Credentials.SessionToken')
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_key"
+            echo "AWS_SESSION_TOKEN=$session_token"
+          } >> "$GITHUB_ENV"
+      - name: Show workload identity
+        run: aws sts get-caller-identity
+
+      - name: Check template size
+        id: size
+        run: |
+          size=$(stat --format=%s "${{ steps.find_files.outputs.template_file }}")
+          echo "Template size: $size"
+          if [ "$size" -gt 51200 ]; then
+            echo "large=true" >> $GITHUB_OUTPUT
+          else
+            echo "large=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate S3 object key
+        if: steps.size.outputs.large == 'true'
+        id: s3key
+        run: |
+          # Use a unique key per deployment, e.g. stackName-timestamp.yaml
+          key="${{ github.event.inputs.stackName }}-$(date +%s).yaml"
+          echo "key=$key" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials for S3 upload
+        if: steps.size.outputs.large == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}
+          role-session-name: s3_upload
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate pre-signed PUT/GET URLs and upload template
+        if: steps.size.outputs.large == 'true'
+        id: presign_upload
+        run: |
+          pip install boto3
+          urls=$(python cloudformation/production/shared_services/Github_s3/presign.py "${{ steps.s3key.outputs.key }}")
+          put_url=$(echo "$urls" | grep '^put_url=' | cut -d'=' -f2-)
+          get_url=$(echo "$urls" | grep '^get_url=' | cut -d'=' -f2-)
+          echo "Pre-signed PUT URL: $put_url"
+          echo "Pre-signed GET URL: $get_url"
+          curl -v -X PUT -T "${{ steps.find_files.outputs.template_file }}" "$put_url"
+          echo "put_url=$put_url" >> $GITHUB_OUTPUT
+          echo "get_url=$get_url" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials for deployment
+        # if: steps.size.outputs.large == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.setrole.outputs.arn }}
+          role-session-name: cft_deployment
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy stack (large template)
+        if: steps.size.outputs.large == 'true'
+        run: |
+          set -e
+          template_url="${{ steps.presign_upload.outputs.get_url }}"
+          echo "Deploying stack with template URL: $template_url"
+          stack_name="${{ github.event.inputs.stackName }}"
+          params_file="${{ steps.find_files.outputs.params_file }}"
+          param_args=$(jq -r '.[] | "ParameterKey=\(.ParameterKey),ParameterValue=\(.ParameterValue)"' "$params_file" | xargs -I {} echo {})
+          echo $param_args
+          # Check if stack exists
+          if aws cloudformation describe-stacks --stack-name "$stack_name" > /dev/null 2>&1; then
+            echo "Updating stack..."
+            aws cloudformation update-stack \
+              --stack-name "$stack_name" \
+              --template-url "$template_url" \
+              --parameters $param_args \
+              --capabilities CAPABILITY_NAMED_IAM &
+            DEPLOY_PID=$!
+          else
+            echo "Creating stack..."
+            aws cloudformation create-stack \
+              --stack-name "$stack_name" \
+              --template-url "$template_url" \
+              --parameters $param_args \
+              --capabilities CAPABILITY_NAMED_IAM &
+            DEPLOY_PID=$!
+          fi
+          # Show real-time stack events
+          while kill -0 $DEPLOY_PID 2>/dev/null; do
+            aws cloudformation describe-stack-events --stack-name "$stack_name" --max-items 10
+            sleep 10
+          done
+          wait $DEPLOY_PID
+          # Wait for stack operation to complete
+          status=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query "Stacks[0].StackStatus" --output text)
+          if [[ ! "$status" =~ _COMPLETE$ && ! "$status" =~ _FAILED$ ]]; then
+            echo " Stack deployment failed. Fetching failure reason..."
+            aws cloudformation describe-stack-events \
+              --stack-name "$stack_name" \
+              --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId, ResourceStatusReason]" \
+              --output table || echo " Failed to fetch stack events"
+            exit 1
+          fi
+
+      - name: Deploy stack (small template)
+        if: steps.size.outputs.large == 'false'
+        run: |
+          template_file="${{ steps.find_files.outputs.template_file }}"
+          echo "Deploying stack with template file: $template_file"
+          aws cloudformation deploy \
+            --stack-name "${{ github.event.inputs.stackName }}" \
+            --template-file "$template_file" \
+            --parameter-overrides $(jq -r '.[] | "\(.ParameterKey)=\(.ParameterValue)"' "${{ steps.find_files.outputs.params_file }}") \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset &
+          DEPLOY_PID=$!
+          stack_name="${{ github.event.inputs.stackName }}"
+          # Show real-time stack events
+          while kill -0 $DEPLOY_PID 2>/dev/null; do
+            aws cloudformation describe-stack-events --stack-name "$stack_name"
+            sleep 10
+          done
+          wait $DEPLOY_PID
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo " Stack deployment failed. Fetching failure reason..."
+            aws cloudformation describe-stack-events \
+              --stack-name "$stack_name" \
+              --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId, ResourceStatusReason]" \
+              --output table || echo " Failed to fetch stack events"
+            exit $exit_code
+          fi
+
+      - name: Extract CloudFormation outputs
+        id: get_outputs
+        run: |
+          stack_name="${{ github.event.inputs.stackName }}"
+          outputs_json=$(aws cloudformation describe-stacks \
+            --stack-name "$stack_name" \
+            --query "Stacks[0].Outputs" \
+            --output json)
+          echo "$outputs_json" | jq
+          for row in $(echo "$outputs_json" | jq -r '.[] | @base64'); do
+            _jq() { echo "${row}" | base64 --decode | jq -r "${1}"; }
+            key=$(_jq '.OutputKey')
+            value=$(_jq '.OutputValue')
+            echo " $key = $value"
+            echo "${key}=${value}" >> $GITHUB_OUTPUT
+          done
