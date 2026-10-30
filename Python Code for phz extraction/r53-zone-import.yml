@@ -1,0 +1,729 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#   📤 Export  →  📥 Import change set  →  🚀 Import  →  🔀 Pull request
+#
+#   One run brings a hosted zone that was built by hand into a CloudFormation stack –
+#   no console needed.
+#     • Export: reads the live zone and every record set (read-only), checks which records
+#       other stacks already manage (this region and us-east-1) and writes the files:
+#         <zone>-import.yml + resources-to-import.json   the import of the hosted zone
+#         <zone>-template.yml + params.json              the record sets, for the CloudFormation pipeline
+#       The run summary lists every record set; the files and a backup of the zone are
+#       the run's artifact.
+#     • Import change set: an IMPORT change set that brings the hosted zone – only the zone,
+#       nothing is created, changed or deleted – into the stack, and the list of what it imports.
+#     • Import = no (default): the run stops there and the change set (and the empty stack
+#       it created) are deleted again. Nothing changes in AWS or in the repo. Check the
+#       summary, then run again with Import = yes.
+#     • Import = yes: the Import stage executes the change set, follows the stack events to
+#       IMPORT_COMPLETE and checks the template matches the live zone (drift detection).
+#       Then, with Open pull request = yes, the Pull request stage commits the files to
+#       cloudformation/<folder>/ on a new branch and opens a pull request.
+#   After merging: the CloudFormation pipeline (same folderPath and stackName, Deploy = yes)
+#   adds the record sets. CloudFormation can't import record sets; it takes each one over
+#   when a deploy adds a record that matches the live one exactly.
+#   A zone that is already in a stack needs no import: Import = yes only opens the pull request.
+#   The role needs route53 read access (ListHostedZonesByName, GetHostedZone,
+#   ListResourceRecordSets, ListTagsForResource, ListQueryLoggingConfigs) and cloudformation
+#   ListStacks, ListStackResources, DescribeStacks, GetTemplate, CreateChangeSet,
+#   DescribeChangeSet, ExecuteChangeSet, DeleteChangeSet, DescribeStackEvents,
+#   DetectStackResourceDrift and DeleteStack (only for the empty stack a preview leaves).
+# ─────────────────────────────────────────────────────────────────────────────
+name: Route 53 zone into a CloudFormation stack
+run-name: "${{ inputs.execute == 'yes' && '📥' || '👀' }} zone import · ${{ inputs.zone }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: "Hosted zone name (e.g. tescoforbusiness.com) or hosted zone ID (Z0123…)"
+        required: true
+      roleAlias:
+        description: "Alias for the IAM role to assume (the account the zone is in)"
+        required: true
+        type: choice
+        default: 'NETWORK'
+        options:
+          - NETWORK
+          - DIRECTORY
+          - SECURITY
+          - SHAREDSERVICES
+          - MANAGEMENT
+          - LOGARCHIVE
+          - COREAUDIT
+          - MONITORING
+          - DIRECTORY-DEV
+          - DIRECTORY-PPE
+          - MONITORING-PPE
+          - SHAREDSERVICES-DEV
+          - SHAREDSERVICES-PPE
+          - SANDBOX
+          - TST-NETWORK
+          - PPE-NETWORK
+          - BACKUP
+          - CRV
+      AWS_REGION:
+        description: "Region of the zone's stack – pick one, or 'other' and type it under Custom region"
+        required: false
+        type: choice
+        default: 'eu-west-1'
+        options:
+          - eu-west-1
+          - us-east-1
+          - other
+      CUSTOM_REGION:
+        description: "Only used when AWS Region is 'other' (e.g. ap-south-1)"
+        required: false
+        default: ''
+      stackName:
+        description: "Stack for the zone (default: <zone>-dns). A stack that already manages the zone is found by itself"
+        required: false
+        default: ''
+      folderPath:
+        description: "Folder under cloudformation/ for the files (default: route53/<zone>)"
+        required: false
+        default: ''
+      execute:
+        description: "Import the zone? 'no' = preview: the import change set is shown, then deleted again"
+        required: false
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+      openPullRequest:
+        description: "With Import = yes: commit the files to a new branch and open a pull request?"
+        required: false
+        type: choice
+        default: 'yes'
+        options:
+          - 'yes'
+          - 'no'
+
+permissions:
+  id-token: write
+  contents: read
+
+# One run per zone at a time
+concurrency:
+  group: r53-zone-${{ inputs.roleAlias }}-${{ inputs.zone }}
+  cancel-in-progress: false
+
+env:
+  SCRIPT: .github/scripts/r53_zone_to_cfn.py   # where r53_zone_to_cfn.py lives in this repo
+  ZONE: ${{ inputs.zone }}
+  ROLE_ALIAS: ${{ inputs.roleAlias }}
+  # Region = the dropdown pick, or the Custom region text when the pick is 'other'
+  REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}
+  STACK_INPUT: ${{ inputs.stackName }}
+  FOLDER_INPUT: ${{ inputs.folderPath }}
+  EXECUTE: ${{ inputs.execute }}
+  OPEN_PR: ${{ inputs.openPullRequest }}
+
+defaults:
+  run:
+    shell: bash   # runs as bash -eo pipefail: any failing command fails the stage
+
+jobs:
+  # ── 1 · Export: read the live zone, write the CloudFormation files ────────────
+  export:
+    name: 📤 Export
+    runs-on: ubuntu-latest
+    outputs:
+      role_secret: ${{ steps.check.outputs.secret }}
+      folder: ${{ steps.check.outputs.folder }}
+      artifact: ${{ steps.check.outputs.artifact }}
+      zone_name: ${{ steps.export.outputs.zone_name }}
+      stack_name: ${{ steps.export.outputs.stack_name }}
+      stack_region: ${{ steps.export.outputs.stack_region }}
+      import_needed: ${{ steps.export.outputs.import_needed }}
+      import_template: ${{ steps.export.outputs.import_template }}
+      records: ${{ steps.export.outputs.records }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check the inputs and pick the role
+        id: check
+        run: |
+          fail() { echo "::error title=Export failed::$1"; exit 1; }
+
+          region_re='^[a-z]{2}(-[a-z]+)+-[0-9]+$'
+          if [[ ! "$REGION" =~ $region_re ]]; then
+            if [ "$REGION" = other ]; then
+              fail "Choose a region, or type one under 'Custom region' (e.g. ap-south-1)."
+            fi
+            fail "'$REGION' is not a valid AWS region (e.g. eu-west-1)."
+          fi
+
+          # Maps the alias to the NAME of the secret that holds the role ARN (as in the CloudFormation pipeline)
+          case "$ROLE_ALIAS" in
+            NETWORK)            secret=NETWORK_SERVICES_ROLE ;;
+            DIRECTORY)          secret=DIRECTORY_SERVICES_ROLE ;;
+            SECURITY)           secret=SECURITY_INFRA_ROLE ;;
+            SHAREDSERVICES)     secret=SHAREDSERVICES_ROLE ;;
+            MANAGEMENT)         secret=MGMT_ROLE ;;
+            LOGARCHIVE)         secret=LOGARCHIVE_ROLE ;;
+            COREAUDIT)          secret=COREAUDIT_ROLE ;;
+            MONITORING)         secret=MONITORING_ROLE ;;
+            DIRECTORY-DEV)      secret=DIRECTORY_SERVICES_DEV_ROLE ;;
+            DIRECTORY-PPE)      secret=DIRECTORY_SERVICES_PPE_ROLE ;;
+            MONITORING-PPE)     secret=PPE_MONITORING_SERVICE_ROLE ;;
+            SHAREDSERVICES-DEV) secret=DEV_SHAREDSERVICES_ROLE ;;
+            SHAREDSERVICES-PPE) secret=PPE_SHARED_SERVICE_ROLE ;;
+            SANDBOX)            secret=SANDBOX_ROLE ;;
+            TST-NETWORK)        secret=TST_NETWORK_SERVICE_ROLE ;;
+            PPE-NETWORK)        secret=PPE_NETWORK_SERVICE_ROLE ;;
+            BACKUP)             secret=BACKUP_ROLE ;;
+            CRV)                secret=CRV_ROLE ;;
+            *) fail "No secret found for alias '$ROLE_ALIAS'" ;;
+          esac
+
+          # Zone name or hosted zone ID (pasted values often carry spaces or a trailing dot)
+          zone=$(tr -d '[:space:]' <<< "$ZONE")
+          if [[ "$zone" =~ ^(/hostedzone/)?Z[A-Z0-9]{5,32}$ ]]; then
+            flag=--zone-id; value="${zone#/hostedzone/}"; prefix=""
+          elif [[ "$zone" =~ ^([A-Za-z0-9_-]+\.)+[A-Za-z0-9-]+\.?$ ]]; then
+            flag=--zone-name; value="$zone"
+            prefix=$(tr '[:upper:]' '[:lower:]' <<< "${zone%.}" | sed 's/[^a-z0-9-]/-/g')
+          else
+            fail "'$ZONE' is neither a zone name (e.g. tescoforbusiness.com) nor a hosted zone ID (Z0123…)."
+          fi
+
+          if [ -n "$STACK_INPUT" ] && [[ ! "$STACK_INPUT" =~ ^[A-Za-z][A-Za-z0-9-]{0,127}$ ]]; then
+            fail "'$STACK_INPUT' is not a valid stack name (letters, digits and hyphens, starting with a letter)."
+          fi
+
+          # Folder under cloudformation/ – the default needs the zone name, so a zone ID needs a folder
+          folder="${FOLDER_INPUT#/}"
+          folder="${folder%/}"
+          if [ -z "$folder" ]; then
+            [ -n "$prefix" ] || fail "With a hosted zone ID, give a folder too (folderPath), e.g. route53/tescoforbusiness-com."
+            folder="route53/$prefix"
+          fi
+          if [[ ! "$folder" =~ ^[A-Za-z0-9._/-]+$ || "$folder" == *..* ]]; then
+            fail "'$FOLDER_INPUT' is not a usable folder (letters, digits, . _ - and /)."
+          fi
+
+          [ -f "$SCRIPT" ] || fail "$SCRIPT not found – commit r53_zone_to_cfn.py there (or change SCRIPT at the top of this workflow)."
+
+          artifact="route53-zone-${prefix:-$value}-${GITHUB_RUN_ID}"
+          echo "🔑 Role alias : $ROLE_ALIAS → secret $secret"
+          echo "🌐 Zone       : $value"
+          echo "📁 Folder     : cloudformation/$folder"
+          {
+            echo "secret=$secret"
+            echo "flag=$flag"
+            echo "value=$value"
+            echo "folder=$folder"
+            echo "artifact=$artifact"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check the role secret
+        env:
+          ROLE_ARN: ${{ secrets[steps.check.outputs.secret] }}
+        run: |
+          [ -n "$ROLE_ARN" ] || { echo "::error title=Export failed::The secret for role alias '$ROLE_ALIAS' is empty or not set."; exit 1; }
+          echo "✅ Role secret is set."
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install boto3 and PyYAML
+        run: pip install --quiet boto3 pyyaml
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[steps.check.outputs.secret] }}
+          role-session-name: r53_zone_import
+          aws-region: ${{ env.REGION }}
+
+      - name: Export the zone
+        id: export
+        env:
+          FLAG: ${{ steps.check.outputs.flag }}
+          VALUE: ${{ steps.check.outputs.value }}
+          FOLDER: ${{ steps.check.outputs.folder }}
+        run: |
+          out="$RUNNER_TEMP/export"
+          args=("$FLAG" "$VALUE" --out-dir "$out/cloudformation/$FOLDER" --backup-dir "$out/zone-backup" --github)
+          if [ -n "$STACK_INPUT" ]; then args+=(--stack-name "$STACK_INPUT"); fi
+          python3 "$SCRIPT" "${args[@]}"
+
+      - name: What this run does
+        env:
+          FOLDER: ${{ steps.check.outputs.folder }}
+          ARTIFACT: ${{ steps.check.outputs.artifact }}
+          STACK: ${{ steps.export.outputs.stack_name }}
+          STACK_REGION: ${{ steps.export.outputs.stack_region }}
+          IMPORT_NEEDED: ${{ steps.export.outputs.import_needed }}
+          RECORDS: ${{ steps.export.outputs.records }}
+        run: |
+          where="${STACK_REGION:-$REGION}"
+          if [ "$IMPORT_NEEDED" = true ] && [ "$EXECUTE" = yes ]; then
+            plan="📥 **Import = yes** – the **Import change set** stage lists what it imports, then the **🚀 Import** stage brings the hosted zone into the new stack \`$STACK\` ($where)."
+          elif [ "$IMPORT_NEEDED" = true ]; then
+            plan="👀 **Import = no** – the **Import change set** stage shows what the import of the hosted zone into the new stack \`$STACK\` ($where) would do, then deletes the change set again. Nothing changes in AWS. Happy with it? Run again with *Import = yes*."
+          else
+            plan="✅ The zone is already in stack \`$STACK\` ($where) – nothing to import."
+          fi
+          if [ "$EXECUTE" = yes ] && [ "$OPEN_PR" = yes ]; then
+            files="Then the **🔀 Pull request** stage commits the files to \`cloudformation/$FOLDER/\` on a new branch and opens a pull request – review and merge it."
+          elif [ "$EXECUTE" = yes ]; then
+            files="Get the files into the repo yourself: download the artifact **$ARTIFACT**, unzip it at the root of the repo and commit \`cloudformation/$FOLDER/\`."
+          else
+            files="The files are in this run's artifact **$ARTIFACT**; nothing is committed until a run with *Import = yes*."
+          fi
+          if [ "${RECORDS:-0}" -gt 0 ]; then
+            last="Last step, once the zone is in the stack and the files are merged: the **CloudFormation pipeline** – folderPath \`$FOLDER\`, stackName \`$STACK\`, roleAlias \`$ROLE_ALIAS\`, region \`$where\`, *Deploy = yes* – adds the **$RECORDS** record set(s). Deploy the file unchanged the first time: CloudFormation takes over each live record because the template matches it exactly."
+          else
+            last="The stack already has every record set – nothing for the CloudFormation pipeline to add."
+          fi
+          {
+            echo "### 🧭 This run"
+            echo "$plan"
+            echo
+            echo "$files"
+            echo
+            echo "$last"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "🧭 Stack $STACK ($where): $([ "$IMPORT_NEEDED" = true ] && echo "import needed" || echo "already has the zone") · Import = $EXECUTE · Open pull request = $OPEN_PR"
+
+      - name: Upload the files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.check.outputs.artifact }}
+          path: ${{ runner.temp }}/export/
+          if-no-files-found: error
+
+  # ── 2 · Import change set: what the import would do ───────────────────────────
+  changeset:
+    name: 📥 Import change set
+    needs: export
+    if: needs.export.outputs.import_needed == 'true'
+    runs-on: ubuntu-latest
+    # Same lock as the CloudFormation pipeline: nothing else changes this stack meanwhile
+    concurrency:
+      group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}-${{ needs.export.outputs.stack_name }}
+      cancel-in-progress: false
+    outputs:
+      change_set: ${{ steps.cs.outputs.change_set }}
+    env:
+      STACK_NAME: ${{ needs.export.outputs.stack_name }}
+      FOLDER: ${{ needs.export.outputs.folder }}
+      IMPORT_TEMPLATE: ${{ needs.export.outputs.import_template }}
+    steps:
+      - name: Download the export's files
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.export.outputs.artifact }}
+          path: ${{ runner.temp }}/export
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.export.outputs.role_secret] }}
+          role-session-name: r53_zone_import
+          aws-region: ${{ env.REGION }}
+
+      - name: Create the import change set
+        id: cs
+        run: |
+          cs_name="import-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          files="$RUNNER_TEMP/export/cloudformation/$FOLDER"
+          template="$files/$IMPORT_TEMPLATE"
+          resources="$files/resources-to-import.json"
+          mode=""
+          # Leaves nothing behind: the change set, and the empty stack it created for a new stack
+          cleanup() {
+            aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" 2> /dev/null || true
+            if [ "$mode" = new ]; then
+              st=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                     --query 'Stacks[0].StackStatus' --output text 2> /dev/null || echo NOT_FOUND)
+              if [ "$st" = REVIEW_IN_PROGRESS ]; then
+                aws cloudformation delete-stack --stack-name "$STACK_NAME" && echo "🧹 Deleted the empty stack $STACK_NAME again."
+              fi
+            fi
+          }
+          stop() {
+            echo "❌ $1"
+            echo "::error title=Import change set failed::$1"
+            printf '### 📥 Import change set\n❌ %s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+            cleanup
+            exit 1
+          }
+          if [ -z "$IMPORT_TEMPLATE" ] || [ ! -f "$template" ] || [ ! -f "$resources" ]; then
+            stop "The export's files have no import template and resources-to-import.json."
+          fi
+
+          account=$(aws sts get-caller-identity --query Account --output text)
+          # The export found no stack managing the zone; the stack is new, or one an earlier
+          # change set created and left empty
+          if ! status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                          --query 'Stacks[0].StackStatus' --output text 2> "$RUNNER_TEMP/err"); then
+            grep -q 'does not exist' "$RUNNER_TEMP/err" ||
+              stop "Could not read stack $STACK_NAME: $(head -c 300 "$RUNNER_TEMP/err" | tr '\n' ' ')"
+            status=NOT_FOUND
+          fi
+          case "$status" in
+            NOT_FOUND)          mode=new;    plan="🆕 new stack – the import creates it" ;;
+            REVIEW_IN_PROGRESS) mode=review; plan="🆕 stack left empty by an earlier change set (REVIEW_IN_PROGRESS) – the import uses it" ;;
+            *_IN_PROGRESS)      stop "$STACK_NAME is $status. Wait for it to finish, then re-run." ;;
+            *)                  stop "$STACK_NAME appeared ($status) after the export looked. Run the pipeline again." ;;
+          esac
+          echo "🏗️  Stack      : $STACK_NAME ($REGION, account $account) – $plan"
+
+          echo "📥 Creating IMPORT change set $cs_name on $STACK_NAME…"
+          if ! created=$(aws cloudformation create-change-set \
+                           --stack-name "$STACK_NAME" \
+                           --change-set-name "$cs_name" \
+                           --change-set-type IMPORT \
+                           --resources-to-import "file://$resources" \
+                           --template-body "file://$template" \
+                           --capabilities CAPABILITY_NAMED_IAM \
+                           --description "GitHub Actions zone import run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}" \
+                           --output json); then
+            stop "CloudFormation rejected the import change set – see the error above."
+          fi
+          echo "   on stack $(jq -r .StackId <<< "$created")"
+
+          deadline=$((SECONDS + 900))
+          while :; do
+            cs=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" --output json) ||
+              stop "Could not read change set $cs_name – see the error above."
+            status=$(jq -r .Status <<< "$cs")
+            case "$status" in
+              CREATE_PENDING|CREATE_IN_PROGRESS) ;;
+              *) break ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] || stop "Change set $cs_name was still $status after 15 minutes."
+            sleep 5
+          done
+          if [ "$status" != CREATE_COMPLETE ]; then
+            stop "Change set $status: $(jq -r '.StatusReason // "no reason given"' <<< "$cs")"
+          fi
+
+          # An import change set may only import – nothing created, changed or deleted
+          jq -r '.Changes[]?.ResourceChange // empty
+                 | "   \(if .Action == "Import" then "📥" else "⚠️" end) \(.Action)  \(.LogicalResourceId)  \(.ResourceType)  \(.PhysicalResourceId // "")"' \
+             <<< "$cs" > "$RUNNER_TEMP/changes.txt"
+          n_import=$(jq '[.Changes[]?.ResourceChange // empty | select(.Action == "Import")] | length' <<< "$cs")
+          n_other=$(jq '[.Changes[]?.ResourceChange // empty | select(.Action != "Import")] | length' <<< "$cs")
+          n_wanted=$(jq length "$resources")
+          echo "📋 What the import does: $n_import resource(s) imported"
+          cat "$RUNNER_TEMP/changes.txt"
+          [ "$n_other" -eq 0 ] || stop "The change set does more than import ($n_other other change(s)) – nothing was imported."
+          [ "$n_import" -eq "$n_wanted" ] || stop "The change set imports $n_import resource(s), but resources-to-import.json lists $n_wanted."
+
+          {
+            echo "### 📥 Import change set"
+            printf '`%s` (IMPORT) on `%s` · account `%s` (%s) · %s\n\n' "$cs_name" "$STACK_NAME" "$account" "$ROLE_ALIAS" "$REGION"
+            printf '%s · **%s** resource(s) imported, nothing created, changed or deleted\n\n' "$plan" "$n_import"
+            echo "| Action | Logical ID | Type | Existing resource |"
+            echo "|---|---|---|---|"
+            jq -r '.Changes[]?.ResourceChange // empty | "| 📥 \(.Action) | `\(.LogicalResourceId)` | \(.ResourceType) | `\(.PhysicalResourceId // "-")` |"' <<< "$cs"
+            echo
+            printf '<details><summary>Import template – <code>%s</code></summary>\n\n```yaml\n' "$IMPORT_TEMPLATE"
+            cat "$template"
+            if [ -n "$(tail -c 1 "$template")" ]; then echo; fi   # the closing fence needs its own line
+            printf '```\n</details>\n\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$EXECUTE" != yes ]; then
+            cleanup
+            echo "👀 Preview only (Import = no): the change set was deleted again – nothing changed in AWS."
+            echo "   Happy with it? Run this workflow again with Import = yes."
+            echo "::notice title=Preview only – nothing imported::The import change set looked right and was deleted again. Run again with Import = yes to import the zone."
+            printf '👀 **Import = no** – preview only: the change set was deleted again, nothing changed in AWS. Happy with it? Run the workflow again with *Import = yes*.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "✅ Change set $cs_name is ready. Import = yes → the next stage executes it."
+          printf '📥 **Import = yes** – the next stage executes this change set.\n' >> "$GITHUB_STEP_SUMMARY"
+          echo "change_set=$cs_name" >> "$GITHUB_OUTPUT"
+
+  # ── 3 · Import: only when Import = yes – execute, follow, check for drift ─────
+  import:
+    name: 🚀 Import
+    needs: [export, changeset]
+    if: ${{ !cancelled() && inputs.execute == 'yes' && needs.changeset.result == 'success' && needs.changeset.outputs.change_set != '' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}-${{ needs.export.outputs.stack_name }}
+      cancel-in-progress: false
+    env:
+      STACK_NAME: ${{ needs.export.outputs.stack_name }}
+      CHANGE_SET: ${{ needs.changeset.outputs.change_set }}
+      FOLDER: ${{ needs.export.outputs.folder }}
+      ARTIFACT: ${{ needs.export.outputs.artifact }}
+      RECORDS: ${{ needs.export.outputs.records }}
+    steps:
+      - name: Download the export's files
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.export.outputs.artifact }}
+          path: ${{ runner.temp }}/export
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[needs.export.outputs.role_secret] }}
+          role-session-name: r53_zone_import
+          aws-region: ${{ env.REGION }}
+
+      - name: Execute the import and follow the stack events
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          lost="Could not read the stack from CloudFormation (the sign-in may have expired). The import is NOT cancelled – it keeps running in AWS."
+
+          # Note which events already exist, so only this import's events are shown
+          events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+            fail "Can't read stack events" "Nothing was imported. The role needs cloudformation:DescribeStackEvents to follow an import."
+          jq -r '.StackEvents[]?.EventId' <<< "$events" > "$RUNNER_TEMP/seen.txt"
+          : > "$RUNNER_TEMP/events.txt"
+          : > "$RUNNER_TEMP/failed.txt"
+
+          echo "📥 Executing import change set $CHANGE_SET on $STACK_NAME …"
+          aws cloudformation execute-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" ||
+            fail "Execute failed" "CloudFormation did not start the import (see the error above) – nothing was imported. The role needs cloudformation:ExecuteChangeSet."
+          echo "▶ Started – following the stack events (checked every 15 s)"
+          echo
+
+          deadline=$((SECONDS + 3300))   # the sign-in lasts about an hour, so stop following after 55 minutes
+          while :; do
+            status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                       --query 'Stacks[0].StackStatus' --output text) || fail "Lost contact" "$lost"
+            cs_state=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" \
+                         --query ExecutionStatus --output text 2> /dev/null) || cs_state=UNKNOWN
+            events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+              fail "Lost contact" "$lost"
+
+            # New events only, oldest first
+            jq --rawfile seen "$RUNNER_TEMP/seen.txt" '
+              ($seen | split("\n")) as $s
+              | [.StackEvents[]? | select((.EventId as $i | $s | index($i)) == null)] | sort_by(.Timestamp)
+            ' <<< "$events" > "$RUNNER_TEMP/new.json"
+            jq -r '
+              def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+              .[] | "   \(.Timestamp[11:19])  \(.LogicalResourceId | pad(34)) \(.ResourceStatus)"
+                    + (if (.ResourceStatus | test("FAILED")) and .ResourceStatusReason != null
+                       then "\n        ↳ \(.ResourceStatusReason)" else "" end)
+            ' "$RUNNER_TEMP/new.json" | tee -a "$RUNNER_TEMP/events.txt"
+            jq -r '.[] | select(.ResourceStatus | test("FAILED")) | select(.ResourceStatusReason != null)
+                   | "\(.LogicalResourceId): \(.ResourceStatusReason)"' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/failed.txt"
+            jq -r '.[].EventId' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/seen.txt"
+
+            # Finished = the stack is no longer busy AND the change set has left AVAILABLE / EXECUTE_IN_PROGRESS
+            case "$status" in
+              *_IN_PROGRESS) ;;
+              *) case "$cs_state" in AVAILABLE|EXECUTE_IN_PROGRESS) ;; *) break ;; esac ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] ||
+              fail "Still running" "$STACK_NAME is still $status after 55 minutes. The import is NOT cancelled – run this pipeline again later with Import = no to see the stack's state."
+            sleep 15
+          done
+
+          msg=""
+          if [ "$cs_state" = OBSOLETE ]; then
+            msg="The change set became obsolete – another change reached the stack first, so nothing was imported. Run the pipeline again."
+          else
+            case "$status" in
+              IMPORT_COMPLETE) ;;
+              IMPORT_ROLLBACK_COMPLETE)
+                msg="The import failed and CloudFormation rolled it back – the zone is as it was and not in the stack." ;;
+              IMPORT_ROLLBACK_FAILED)
+                msg="The import failed and so did its rollback – the stack needs fixing before anything else is done with it." ;;
+              *)
+                msg="The stack ended as $status." ;;
+            esac
+          fi
+          {
+            echo "### 🚀 Import"
+            if [ -z "$msg" ]; then echo "✅ **Imported** – the hosted zone is in \`$STACK_NAME\`, which is \`$status\`."; else echo "❌ **Import failed** – $msg"; fi
+            if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+              printf '\n**What failed**\n\n```text\n'
+              cat "$RUNNER_TEMP/failed.txt"
+              printf '```\n'
+            fi
+            printf '\n<details><summary>Stack events</summary>\n\n```text\n'
+            cat "$RUNNER_TEMP/events.txt"
+            printf '```\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo
+          if [ -n "$msg" ]; then
+            echo "❌ $msg"
+            if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+              echo "What failed:"
+              sed 's/^/   • /' "$RUNNER_TEMP/failed.txt"
+            fi
+            echo "::error title=Import failed::$msg"
+            exit 1
+          fi
+          echo "✅ Imported – $STACK_NAME is $status."
+          echo "::notice title=Imported::The hosted zone is in $STACK_NAME ($status)"
+
+      - name: Check the imported zone for drift
+        run: |
+          # An import doesn't compare the template with the live zone. Drift detection does:
+          # IN_SYNC means the next update through the CloudFormation pipeline changes nothing by surprise.
+          echo "🔎 Comparing the template with the imported resources…"
+          resources="$RUNNER_TEMP/export/cloudformation/$FOLDER/resources-to-import.json"
+          : > "$RUNNER_TEMP/drift_rows.md"
+          : > "$RUNNER_TEMP/drift_diff.txt"
+          drifted=0
+          for lid in $(jq -r '.[].LogicalResourceId' "$resources"); do
+            if ! res=$(aws cloudformation detect-stack-resource-drift --stack-name "$STACK_NAME" \
+                         --logical-resource-id "$lid" --output json 2> "$RUNNER_TEMP/err"); then
+              echo "❔ $lid: drift could not be checked – $(head -c 300 "$RUNNER_TEMP/err")"
+              printf '| `%s` | ❔ not checked |\n' "$lid" >> "$RUNNER_TEMP/drift_rows.md"
+              continue
+            fi
+            state=$(jq -r '.StackResourceDrift.StackResourceDriftStatus' <<< "$res")
+            case "$state" in
+              IN_SYNC)
+                echo "✅ $lid matches the template"
+                printf '| `%s` | ✅ matches the template |\n' "$lid" >> "$RUNNER_TEMP/drift_rows.md" ;;
+              MODIFIED|DELETED)
+                drifted=$((drifted + 1))
+                echo "⚠️  $lid differs from the template ($state):"
+                jq -r '.StackResourceDrift.PropertyDifferences[]?
+                       | "   • \(.PropertyPath) (\(.DifferenceType))\n       template: \(.ExpectedValue)\n       live    : \(.ActualValue)"' \
+                  <<< "$res" | tee -a "$RUNNER_TEMP/drift_diff.txt"
+                printf '| `%s` | ⚠️ differs from the template (%s) |\n' "$lid" "$state" >> "$RUNNER_TEMP/drift_rows.md" ;;
+              *)
+                echo "❔ $lid: $state"
+                printf '| `%s` | ❔ %s |\n' "$lid" "$state" >> "$RUNNER_TEMP/drift_rows.md" ;;
+            esac
+          done
+
+          if [ "$OPEN_PR" = yes ]; then
+            get="the **🔀 Pull request** stage commits the files – review and merge its pull request"
+          else
+            get="download the artifact **$ARTIFACT**, unzip it at the root of the repo and commit \`cloudformation/$FOLDER/\`"
+          fi
+          {
+            echo
+            echo "#### 🔎 Template vs. the imported zone"
+            echo "| Logical ID | Drift |"
+            echo "|---|---|"
+            cat "$RUNNER_TEMP/drift_rows.md"
+            if [ -s "$RUNNER_TEMP/drift_diff.txt" ]; then
+              echo
+              echo "Someone changed the zone after the export read it. Copy the live values into both templates in \`cloudformation/$FOLDER/\` before the next deploy – otherwise that deploy changes the live zone:"
+              echo '```text'
+              cat "$RUNNER_TEMP/drift_diff.txt"
+              echo '```'
+            fi
+            echo
+            echo "### 👉 Next"
+            echo "1. **Get the files into the repo:** $get."
+            if [ "${RECORDS:-0}" -gt 0 ]; then
+              echo "2. **CloudFormation pipeline** – folderPath \`$FOLDER\`, stackName \`$STACK_NAME\`, roleAlias \`$ROLE_ALIAS\`, region \`$REGION\`, *Deploy = yes*, *Remove manual changes = no*: adds the **$RECORDS** record sets. Deploy the file unchanged the first time."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$drifted" -gt 0 ]; then
+            echo "::warning title=Template differs from the live zone::$drifted imported resource(s) differ from the template – copy the live values into the templates before the next deploy (see the summary)."
+          fi
+
+  # ── 4 · Pull request: Import = yes and Open pull request = yes ────────────────
+  pull-request:
+    name: 🔀 Pull request
+    needs: [export, import]
+    # After a successful import – or straight away when the zone was already in a stack
+    if: ${{ !cancelled() && inputs.execute == 'yes' && inputs.openPullRequest == 'yes' && needs.export.result == 'success' && (needs.import.result == 'success' || needs.export.outputs.import_needed == 'false') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      FOLDER: ${{ needs.export.outputs.folder }}
+      ARTIFACT: ${{ needs.export.outputs.artifact }}
+      ZONE_NAME: ${{ needs.export.outputs.zone_name }}
+      STACK: ${{ needs.export.outputs.stack_name }}
+      STACK_REGION: ${{ needs.export.outputs.stack_region }}
+      IMPORT_NEEDED: ${{ needs.export.outputs.import_needed }}
+      RECORDS: ${{ needs.export.outputs.records }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the export's files
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ runner.temp }}/export
+
+      - name: Commit the files and open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Never fails the run: if the repo doesn't let workflows push or open pull requests,
+          # it says what to do instead – the files are always in the run's artifact.
+          manual() {
+            echo "::warning title=No pull request::$1"
+            printf '### 🔀 Pull request\n⚠️ %s\n\nDownload the artifact **%s**, unzip it at the root of the repo and commit `cloudformation/%s/` yourself.\n' \
+              "$1" "$ARTIFACT" "$FOLDER" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          src="$RUNNER_TEMP/export/cloudformation/$FOLDER"
+          dest="cloudformation/$FOLDER"
+          [ -d "$src" ] || manual "The artifact has no cloudformation/$FOLDER folder."
+
+          # A file counts as changed only if more than its "Generated … at <time>" line differs
+          stamp='^# Generated by r53_zone_to_cfn\.py '
+          changed=()
+          for f in "$src"/*; do
+            old="$dest/$(basename "$f")"
+            if [ ! -f "$old" ] || ! cmp -s <(grep -v "$stamp" "$old") <(grep -v "$stamp" "$f"); then
+              changed+=("$(basename "$f")")
+            fi
+          done
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo "✅ cloudformation/$FOLDER on $GITHUB_REF_NAME already has these files (at most the export time differs) – no pull request needed."
+            printf '### 🔀 Pull request\n✅ `cloudformation/%s` on `%s` already has these files – nothing to commit.\n' \
+              "$FOLDER" "$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "📝 New or changed: ${changed[*]}"
+          mkdir -p "$dest"
+          cp "$src"/* "$dest"/
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="route53-zone/$(basename "$FOLDER")-${GITHUB_RUN_ID}"
+          git switch -c "$branch"
+          git add "$dest"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git commit --quiet -m "Route 53: CloudFormation files for $ZONE_NAME" -m "Exported from the live zone by $run_url"
+          if ! git push --quiet origin "$branch" 2> "$RUNNER_TEMP/push.err"; then
+            cat "$RUNNER_TEMP/push.err"
+            manual "Could not push a branch (the workflow token may not be allowed to write to this repo)."
+          fi
+          echo "✅ Pushed branch $branch"
+
+          if [ "$IMPORT_NEEDED" = true ]; then
+            done_line="[This run]($run_url) exported the hosted zone **$ZONE_NAME** and imported it into the new stack \`$STACK\` – its summary lists every record."
+          else
+            done_line="CloudFormation files for the hosted zone **$ZONE_NAME**, which is already in stack \`$STACK\`, exported from the live zone by [this run]($run_url) – its summary lists every record."
+          fi
+          if [ "${RECORDS:-0}" -gt 0 ]; then
+            next="After merging: run the **CloudFormation pipeline** with folderPath \`$FOLDER\`, stackName \`$STACK\`, region \`${STACK_REGION:-$REGION}\`, *Deploy = yes*: it adds the $RECORDS record set(s). Deploy the file unchanged the first time."
+          else
+            next="The stack already has every record set; from now on, change records in \`$dest/\` and deploy them with the CloudFormation pipeline."
+          fi
+          body="$done_line"$'\n\n'"$next"
+          export GH_HOST="${GITHUB_SERVER_URL#https://}"   # works on github.com and on GitHub Enterprise (ghe.com)
+          compare="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$GITHUB_REF_NAME...$branch?expand=1"
+          if url=$(gh pr create --base "$GITHUB_REF_NAME" --head "$branch" \
+                     --title "Route 53: CloudFormation files for $ZONE_NAME" --body "$body" 2> "$RUNNER_TEMP/pr.err"); then
+            echo "✅ Pull request: $url"
+            echo "::notice title=Pull request opened::$url"
+            printf '### 🔀 Pull request\n✅ [%s](%s) – branch `%s` into `%s`. Review and merge it, then run the CloudFormation pipeline.\n' \
+              "$url" "$url" "$branch" "$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
+          else
+            cat "$RUNNER_TEMP/pr.err"
+            echo "::warning title=Branch pushed, no pull request::The workflow may not open pull requests here. Open it yourself: $compare"
+            printf '### 🔀 Pull request\n⚠️ Branch `%s` is pushed, but the workflow could not open the pull request. **[Open it here](%s)**.\n' \
+              "$branch" "$compare" >> "$GITHUB_STEP_SUMMARY"
+          fi

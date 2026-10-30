@@ -37,6 +37,12 @@ Usage (AWS CloudShell, in the account and region for the stack)
   python3 r53_zone_to_cfn.py --zone-id Z0123456789ABCDEFGHIJ --only '^(www|_dmarc)\\.'
   python3 r53_zone_to_cfn.py --zone-name tescoforbusiness.com --exclude-ns-soa
   python3 r53_zone_to_cfn.py --from-file tescoforbusiness-com-backup-....json  # offline
+
+In GitHub Actions (r53-zone-import.yml and r53-zone-export.yml run it with --github)
+  --github writes the files under the names the pipelines look for, and reports to the
+  run page (job summary, step outputs, annotations) instead of console instructions:
+    <zone>-import.yml + resources-to-import.json   step 1, the import of the hosted zone
+    <zone>-template.yml + params.json              step 2, for the CloudFormation pipeline
 """
 
 import argparse
@@ -655,6 +661,70 @@ def write_json(path, data):
     write_text(path, json.dumps(data, indent=2, default=str) + '\n')
 
 
+# ------------------------------------------------------- GitHub Actions (--github)
+
+def _gh(text, prop=False):
+    text = str(text).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    return text.replace(':', '%3A').replace(',', '%2C') if prop else text
+
+
+class GitHub:
+    """--github: annotations, a section in the job summary and step outputs. Off: does nothing."""
+
+    def __init__(self, enabled):
+        self.enabled, self.md, self.outputs = enabled, [], {}
+
+    def annotate(self, level, message, title='Route 53 export'):
+        if self.enabled:
+            print(f'::{level} title={_gh(title, True)}::{_gh(message)}', flush=True)
+
+    def output(self, **values):
+        self.outputs.update({k: (str(v).lower() if isinstance(v, bool) else str(v)) for k, v in values.items()})
+
+    def fail(self, message):
+        if self.enabled:
+            self.annotate('error', message, 'Export failed')
+            self.md += ['', '❌ **Export failed:**', '', '```text', message, '```']
+
+    def close(self):
+        if not self.enabled:
+            return
+        summary, outputs = os.environ.get('GITHUB_STEP_SUMMARY'), os.environ.get('GITHUB_OUTPUT')
+        if summary and self.md:
+            with open(summary, 'a', encoding='utf-8') as fh:
+                fh.write('\n'.join(self.md) + '\n\n')
+        if outputs and self.outputs:
+            with open(outputs, 'a', encoding='utf-8') as fh:
+                fh.write(''.join(f'{k}={v}\n' for k, v in self.outputs.items()))
+
+
+def _cell(text):
+    return (str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            .replace('|', '\\|').replace('\n', ' '))
+
+
+def _md_value(props):
+    if 'AliasTarget' in props:
+        alias = props['AliasTarget']
+        return 'alias → ' + _cell(alias['DNSName']) + (' (evaluates target health)'
+                                                       if alias.get('EvaluateTargetHealth') else '')
+    values = props.get('ResourceRecords') or []
+    shown = [_cell(v if len(v) <= 70 else v[:67] + '…') for v in values[:6]]
+    return '<br>'.join(shown) + (f'<br>… and {len(values) - 6} more' if len(values) > 6 else '')
+
+
+def md_records(resources):
+    rows = ['| Resource | Record | Type | TTL | Value |', '|---|---|---|---|---|']
+    for lid, res in resources.items():
+        props = res['Properties']
+        name = _cell(props['Name']) + (f' [{_cell(props["SetIdentifier"])}]' if props.get('SetIdentifier') else '')
+        ttl = 'alias' if 'AliasTarget' in props else props.get('TTL', '')
+        rows.append(f'| `{lid}` | {name} | {props["Type"]} | {ttl} | {_md_value(props)} |')
+    if len(resources) > 40:
+        return [f'<details><summary>The {len(resources)} record sets</summary>', ''] + rows + ['', '</details>']
+    return rows
+
+
 # ------------------------------------------------------------------------ main
 
 def _csv(text):
@@ -685,6 +755,10 @@ def parse_args(argv):
                              f'manage the zone or its records (default: {EXTRA_REGION})')
     parser.add_argument('--from-file', metavar='JSON',
                         help='read records from a saved backup or list-resource-record-sets output')
+    parser.add_argument('--backup-dir', help='where to write the record backup (default: --out-dir)')
+    parser.add_argument('--github', action='store_true',
+                        help='for the GitHub pipelines: their file names, a job summary, step outputs '
+                             'and annotations')
     args = parser.parse_args(argv)
     if not (args.zone_name or args.zone_id or args.from_file):
         parser.error('give --zone-name or --zone-id')
@@ -693,9 +767,22 @@ def parse_args(argv):
 
 def main(argv=None):
     args = parse_args(argv)
+    gh = GitHub(args.github)
+    try:
+        run(args, gh)
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            gh.fail(exc.code)
+        raise
+    finally:
+        gh.close()
+
+
+def run(args, gh):
     now = dt.datetime.now(dt.timezone.utc)
     captured_at, stamp = now.strftime('%Y-%m-%dT%H:%M:%SZ'), now.strftime('%Y%m%d-%H%M%S')
     account, extras, backup, scan, clients, region = None, {}, None, None, {}, None
+    pipeline, notes = args.github, []
 
     if args.from_file:
         zone, records = load_backup(args.from_file, args.zone_id, args.zone_name)
@@ -734,7 +821,9 @@ def main(argv=None):
 
     # 1. Back up the zone before anything else.
     if not args.from_file:
-        backup = out(f'{base}-backup-{now:%Y%m%dT%H%M%SZ}.json')
+        backup_dir = args.backup_dir or args.out_dir
+        os.makedirs(backup_dir, exist_ok=True)
+        backup = os.path.normpath(os.path.join(backup_dir, f'{base}-backup-{now:%Y%m%dT%H%M%SZ}.json'))
         write_json(backup, {'CapturedAt': captured_at, 'Account': account,
                             'HostedZoneId': zone['id'], 'HostedZoneName': zone['fqdn'],
                             'HostedZoneComment': zone['comment'], 'ResourceRecordSets': records})
@@ -766,11 +855,15 @@ def main(argv=None):
         else:
             stack = describe_stack(clients[region], stack_name)
             if stack and stack['StackStatus'] == 'REVIEW_IN_PROGRESS':
-                sys.exit(f'Stack {stack_name} is REVIEW_IN_PROGRESS: execute its import change set in the '
-                         'console (or delete the stack to start over), then run this again.')
+                if not pipeline:
+                    sys.exit(f'Stack {stack_name} is REVIEW_IN_PROGRESS: execute its import change set in the '
+                             'console (or delete the stack to start over), then run this again.')
+                notes.append(f'stack {stack_name} already exists in REVIEW_IN_PROGRESS (an import that was '
+                             'never executed); the import uses it')
+                stack = None
             if stack:
-                sys.exit(f'Stack {stack_name} exists but does not manage {zone["fqdn"]}. '
-                         'Pick another --stack-name; the script then imports the zone into a new stack.')
+                sys.exit(f'Stack {stack_name} exists but does not manage {zone["name"]}. '
+                         'Choose another stack name (--stack-name; stackName in the pipelines) for a new stack.')
             extras = fetch_zone_extras(r53, zone['id'])
 
     # 3. Which records go in?
@@ -811,9 +904,14 @@ def main(argv=None):
     import_tpl = import_ids = records_tpl = params = None
     if existing is None:
         zdoc = zone_document(zone, extras)
-        import_tpl, import_ids = out(f'{prefix}-1-import-zone.yml'), out(f'{prefix}-1-import-zone.json')
+        if pipeline:
+            import_tpl, import_ids = out(f'{prefix}-import.yml'), out('resources-to-import.json')
+            how = 'step 1 of 2: an IMPORT change set brings it into the stack.'
+        else:
+            import_tpl, import_ids = out(f'{prefix}-1-import-zone.yml'), out(f'{prefix}-1-import-zone.json')
+            how = 'step 1 of 2, an IMPORT change set.'
         write_text(import_tpl, render_template(zdoc, [
-            f'Hosted zone {zone["fqdn"]} ({zone["id"]}): step 1 of 2, an IMPORT change set.',
+            f'Hosted zone {zone["fqdn"]} ({zone["id"]}): {how}',
             'An import can only bring in the zone; the records follow in step 2.',
             f'Generated by r53_zone_to_cfn.py from {source} at {captured_at}.',
             'DeletionPolicy Retain: deleting the stack never deletes the hosted zone.']))
@@ -825,12 +923,21 @@ def main(argv=None):
             if load(open(import_tpl, encoding='utf-8').read()) != _as_plain(zdoc):
                 sys.exit(f'Self-check FAILED: {import_tpl} does not read back as intended. Do not deploy it.')
         checks.append(f'{import_tpl}: ' + ('passed' if load else 'skipped (PyYAML not installed)'))
-    if chosen:
+    # In the pipeline the stack's template is always written, so the folder holds it even
+    # when no record is added this time.
+    if chosen or pipeline:
         if existing is None:
+            if pipeline:
+                step = ['step 2 of 2: once the zone is imported, the CloudFormation pipeline (Deploy = yes)',
+                        'adds the record sets with an UPDATE change set.',
+                        "From then on this is the stack's template: change records here and deploy them",
+                        'with the CloudFormation pipeline.']
+            else:
+                step = ['step 2 of 2, an UPDATE change set on the stack the zone was imported into.']
             header = [
                 f'Hosted zone {zone["fqdn"]} ({zone["id"]}) with its record sets'
                 + (", the zone's own NS and SOA included:" if own_records else ':'),
-                'step 2 of 2, an UPDATE change set on the stack the zone was imported into.',
+            ] + step + [
                 f'Generated by r53_zone_to_cfn.py from {source} at {captured_at}.',
                 '',
                 'Record values are copied verbatim from Route 53. CloudFormation takes over an',
@@ -845,7 +952,10 @@ def main(argv=None):
             original_text, original, fmt = existing
         resources, comments, warnings = build_records(chosen, zone['fqdn'], zone_lid,
                                                       set(original.get('Resources', {})))
-        records_tpl = out(f'{prefix}-2-zone-and-records.' + ('json' if fmt == 'json' else 'yml'))
+        if pipeline:   # the CloudFormation pipeline looks for *-template.yml (JSON is valid YAML too)
+            records_tpl = out(f'{prefix}-template.yml')
+        else:
+            records_tpl = out(f'{prefix}-2-zone-and-records.' + ('json' if fmt == 'json' else 'yml'))
         if fmt == 'json':
             merged = dict(original, Resources=dict(original.get('Resources', {}), **_as_plain(resources)))
             write_text(records_tpl, json.dumps(merged, indent=2) + '\n')
@@ -857,7 +967,11 @@ def main(argv=None):
                 sys.exit(f"Could not extend stack {stack_name}'s template: {exc}.")
             checks.append(f'{records_tpl}: ' + verify(original, open(records_tpl).read(), resources, load))
         files.append(records_tpl)
-        if stack and stack.get('Parameters'):
+        if pipeline:   # the CloudFormation pipeline needs the file; an existing stack keeps its values
+            params = out('params.json')
+            write_json(params, [])
+            files.append(params)
+        elif stack and stack.get('Parameters'):
             params = out(f'{prefix}-2-params.json')
             write_json(params, [{'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
                                 for p in stack['Parameters']])
@@ -868,15 +982,17 @@ def main(argv=None):
     if account:
         print(f'Account     : {account}')
     if existing:
-        print(f'Stack       : {stack_name} in {stack_region} ({stack["StackStatus"]}) already manages '
-              f'the zone as {zone_lid}')
+        stack_text = (f'{stack_name} in {stack_region} ({stack["StackStatus"]}) already manages '
+                      f'the zone as {zone_lid}')
     elif scan:
-        print(f'Stack       : {stack_name} in {stack_region} (new; the zone is not in any stack yet)')
+        stack_text = f'{stack_name} in {stack_region} (new; the zone is not in any stack yet)'
     else:
-        print('Stack       : not checked (--from-file): make sure no stack manages the zone or its '
-              'records, and add zone tags or query logging to the step-1 file by hand')
+        stack_text = ('not checked (--from-file): make sure no stack manages the zone or its '
+                      'records, and add zone tags or query logging to the step-1 file by hand')
+    print(f'Stack       : {stack_text}')
+    checked = ', '.join(f'{n} stacks in {r}' for r, n in scan.counts.items()) if scan else ''
     if scan:
-        print('Checked     : ' + ', '.join(f'{n} stacks in {r}' for r, n in scan.counts.items()))
+        print(f'Checked     : {checked}')
     read = f'{len(records)} record sets'
     if zone['count'] is not None and zone['count'] != len(records):
         read += f' (the zone reports {zone["count"]})'
@@ -893,24 +1009,42 @@ def main(argv=None):
         width = max(len(lid) for lid in resources)
         for lid in resources:
             print(f'  {lid:<{width}}  {comments[lid]}')
-    for warning in warnings + (scan.warnings if scan else []):
-        print(f'WARNING     : {warning}')
+    all_warnings = notes + warnings + (scan.warnings if scan else [])
     exposed = unprotected(existing[1].get('Resources', {})) if existing else []
     if exposed:
-        print(f'WARNING     : already in {stack_name} without DeletionPolicy Retain: {", ".join(exposed)}. '
-              'Deleting the stack would delete them from Route 53; consider adding Retain in a later update.')
+        all_warnings.append(f'already in {stack_name} without DeletionPolicy Retain: {", ".join(exposed)}. '
+                            'Deleting the stack would delete them from Route 53; consider adding Retain in '
+                            'a later update.')
+    for warning in all_warnings:
+        print(f'WARNING     : {warning}')
     print()
     if files:
         print('Wrote       : ' + ', '.join(files))
     for check in checks:
         print(f'Self-check  : {check}')
-    for path in (import_tpl, records_tpl):
-        if path and os.path.getsize(path) > TEMPLATE_BODY_LIMIT:
-            print(f'NOTE        : {path} is over {TEMPLATE_BODY_LIMIT:,} bytes; upload it to S3 and use '
-                  '--template-url instead of --template-body.')
+    big = [path for path in (import_tpl, records_tpl) if path and os.path.getsize(path) > TEMPLATE_BODY_LIMIT]
+    for path in big:
+        print(f'NOTE        : {path} is over {TEMPLATE_BODY_LIMIT:,} bytes; upload it to S3 and use '
+              '--template-url instead of --template-body.' if not pipeline else
+              f'NOTE        : {path} is over {TEMPLATE_BODY_LIMIT:,} bytes; the CloudFormation pipeline '
+              'sends it through S3.')
+    if pipeline:
+        github_report(gh, zone, account, stack_text, checked, records, chosen, skipped, in_stack, unselected,
+                      own_records, resources, all_warnings, files, checks, backup, import_tpl, records_tpl,
+                      existing, stack_name, stack_region)
 
     if not chosen and existing:
         print(f'\nNothing to add: {stack_name} already has every record this run would manage.')
+        return
+    if pipeline:
+        steps = ['', 'Next steps (the run summary has them with your folder and stack name)']
+        if import_tpl:
+            steps.append(f'  1. Import: an IMPORT change set brings the hosted zone '
+                         f'({os.path.basename(import_tpl)}) into stack {stack_name}.')
+        if records_tpl:
+            steps.append(f'  {"2" if import_tpl else "1"}. CloudFormation pipeline (Deploy = yes): '
+                         f'{os.path.basename(records_tpl)} adds {len(chosen)} record set(s) to {stack_name}.')
+        print('\n'.join(steps))
         return
     where = f'      --region {stack_region} \\' if stack_region else None
     steps = ['', 'Next steps (in this directory)']
@@ -958,6 +1092,62 @@ def main(argv=None):
                 '| jq -S .ResourceRecordSets) && echo "zone unchanged"',
             ]
     print('\n'.join(steps))
+
+
+def github_report(gh, zone, account, stack_text, checked, records, chosen, skipped, in_stack, unselected,
+                  own_records, resources, warnings, files, checks, backup, import_tpl, records_tpl,
+                  existing, stack_name, stack_region):
+    """The export's section of the job summary, its step outputs and its annotations."""
+    name = os.path.basename
+    gh.md += [f'### 📤 Export · `{zone["name"]}`', '', '| | |', '|---|---|',
+              f'| **Hosted zone** | `{zone["fqdn"]}` (`{zone["id"]}`) · public · {len(records)} record sets |']
+    if account:
+        gh.md.append(f'| **Account** | `{account}` |')
+    gh.md.append(f'| **Stack** | {_cell(stack_text)} |')
+    if checked:
+        gh.md.append(f'| **Checked for owners** | {checked} |')
+    gh.md += ['', f'**{len(records)}** record sets read · **{len(chosen)}** to add'
+              + (" (the zone's NS and SOA among them)" if own_records == 2 else '')
+              + f' · **{len(skipped) + unselected}** left out'
+              + (f' · **{in_stack}** already in the stack' if in_stack else ''), '']
+    if resources:
+        gh.md += md_records(resources)
+    elif existing:
+        gh.md.append(f'✅ Nothing to add: `{stack_name}` already has every record this run would manage.')
+    if skipped or unselected:
+        gh.md += ['', '**Left out**', '']
+        gh.md += [f'- `{_cell(label(rr))}` – {_cell(why)}' for rr, why in skipped]
+        if unselected:
+            gh.md.append(f'- {unselected} record set(s) not matching --only/--types')
+    if warnings:
+        gh.md += ['', '**Warnings**', ''] + [f'- ⚠️ {_cell(w)}' for w in warnings]
+    roles = {}
+    if import_tpl:
+        roles[name(import_tpl)] = 'step 1 – the hosted zone only, for the **import** (an IMPORT change set)'
+        roles['resources-to-import.json'] = f'which hosted zone that is (`{zone["id"]}`)'
+    if records_tpl:
+        roles[name(records_tpl)] = ((f'step 2 – the zone and its {len(chosen)} record sets, for the '
+                                     '**CloudFormation** pipeline') if import_tpl else
+                                    f"the stack's template plus {len(chosen)} record set(s), for the "
+                                    '**CloudFormation** pipeline')
+        roles['params.json'] = 'no parameters (the CloudFormation pipeline needs the file)'
+    gh.md += ['', '**Files**', '', '| File | What it is |', '|---|---|']
+    gh.md += [f'| `{name(path)}` | {roles.get(name(path), "")} |' for path in files]
+    if backup:
+        gh.md.append(f'| `{name(backup)}` | every record set exactly as Route 53 returned it – keep it, '
+                     "don't deploy it |")
+    passed = all(check.endswith('passed') for check in checks)
+    gh.md += ['', ('✅ Self-check passed: the files read back exactly as intended.' if passed else
+                   '⚠️ Self-check: ' + '; '.join(_cell(c) for c in checks))]
+    for warning in warnings:
+        gh.annotate('warning', warning)
+    gh.annotate('notice', f'{zone["fqdn"]}: {len(chosen)} record set(s) to add to stack {stack_name}'
+                + ('; the zone is imported first' if import_tpl else ''), 'Exported')
+    gh.output(zone_id=zone['id'], zone_name=zone['name'], stack_name=stack_name, stack_region=stack_region or '',
+              import_needed=bool(import_tpl), records=len(chosen), left_out=len(skipped) + unselected,
+              already=in_stack, template=name(records_tpl) if records_tpl else '',
+              import_template=name(import_tpl) if import_tpl else '',
+              backup=name(backup) if backup else '')
 
 
 if __name__ == '__main__':
