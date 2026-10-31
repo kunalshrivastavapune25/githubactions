@@ -1,0 +1,1075 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Your New Pipelines Explained</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@600;800&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with wider exhibit bands for the run player and the code screenshots */
+:root {
+  --bg: #F1F3F6; --surface: #FFFFFF; --ink: #17202C; --muted: #566273; --line: #DCE1E8; --line-strong: #A6B0BE;
+  --accent: #A35C00; --accent-soft: #FFF0D2;            /* amber: where the run is now */
+  --good: #0D6E5B; --good-soft: #DDF1EC;                /* the new pipeline */
+  --bad: #A8372A; --bad-soft: #F9E3DF;                  /* the old pipeline */
+  --code-bg: #FAFBFC; --code-bar: #ECEFF4; --code-ln: #8A94A3; --code-hl: #FFF1D4;
+  --tk-key: #1C4FB0; --tk-str: #0B6B58; --tk-expr: #8B3DCB; --tk-cmt: #6C7787; --tk-kw: #A8372A;
+  --font-display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --measure: 46rem; --wide: 72rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+    --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+    --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+    --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+  --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+  --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+  --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--font-body); }
+.page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+        padding-block: 40px 64px; display: grid; gap: 56px; }
+.page > * { width: 100%; max-width: var(--measure); margin-inline: auto; min-width: 0; }
+.page > .wide { max-width: var(--wide); }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 1.4rem + 2.6vw, 3.1rem); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 800; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bar); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+section { display: grid; gap: 18px; }
+.eyebrow { font: 600 0.78rem/1 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.hero { display: grid; gap: 16px; }
+.lede { font-size: 1.15rem; color: var(--ink); max-width: 40rem; }
+
+/* the short version */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 10px; align-content: start; }
+.card-old { border-top: 4px solid var(--bad); }
+.card-new { border-top: 4px solid var(--good); }
+.card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 8px; }
+.tag { font: 700 0.8rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.tag-old { color: var(--bad); } .tag-new { color: var(--good); }
+.note { color: var(--muted); }
+
+/* words */
+.glossary { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0 28px; }
+.glossary div { padding-block: 12px; border-top: 1px solid var(--line); display: grid; gap: 4px; align-content: start; }
+.glossary dt { font: 600 0.95rem var(--font-mono); color: var(--ink); }
+.glossary dd { margin: 0; color: var(--muted); }
+.glossary dd b { color: var(--ink); }
+
+/* run player */
+.tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--code-bar); border-radius: 10px; justify-self: start; flex-wrap: wrap; }
+.tabs button { font: 600 0.95rem var(--font-body); border: 0; background: transparent; color: var(--muted); padding: 8px 16px; border-radius: 7px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.tabs button[aria-selected="true"]#tab-new { color: var(--good); }
+.tabs button[aria-selected="true"]#tab-old { color: var(--bad); }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.player { display: grid; gap: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.diagram-fig { margin: 0; display: grid; gap: 8px; }
+.diagram-scroll { overflow-x: auto; }
+.diagram { display: block; width: 100%; min-width: 620px; height: auto; color: var(--muted); }
+.diagram[hidden] { display: none; }
+.diagram-fig figcaption { color: var(--muted); font-size: 0.95rem; }
+.diagram .zone { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 6 6; }
+.diagram .zone-label { fill: var(--muted); font: 700 11px var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.diagram .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+.diagram .box-bad { stroke: var(--bad); stroke-dasharray: 5 4; }
+.diagram .t-title { fill: var(--ink); font: 700 15px var(--font-display); }
+.diagram .t-sub { fill: var(--muted); font: 400 12px var(--font-body); }
+.diagram .t-bad { fill: var(--bad); font-weight: 700; }
+.diagram .t-mono { fill: var(--ink); font: 600 10.5px var(--font-mono); }
+.diagram .chip-neutral { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+.diagram .chip-good { fill: var(--good-soft); stroke: var(--good); stroke-width: 1.2; }
+.diagram .chip-bad { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; }
+.diagram .stack { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.2; }
+.diagram .arrow { color: var(--muted); }
+.diagram .arrow path { fill: none; stroke: currentColor; stroke-width: 2; }
+.diagram .arrow polygon { fill: currentColor; }
+.diagram .arrow.dashed path { stroke-dasharray: 6 5; }
+.diagram .arrow.bad { color: var(--bad); }
+.diagram .arrow-label { fill: currentColor; font: 700 12.5px var(--font-body); }
+.diagram [data-part] { transition: opacity 0.25s ease; }
+.diagram.stepping [data-part]:not(.on) { opacity: 0.2; }
+.diagram .arrow.on:not(.bad) { color: var(--accent); }
+.diagram .arrow.on path { stroke-width: 3; }
+.diagram g.on > .box:not(.box-bad) { stroke: var(--accent); stroke-width: 2.5; }
+.stepper { display: grid; gap: 14px; }
+.step-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.step-nav .nav { font: 700 0.95rem var(--font-body); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.step-nav .nav:disabled { opacity: 0.4; cursor: default; }
+.step-nav .nav.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+@media (max-width: 640px) { .step-nav .dots { order: -1; flex-basis: 100%; } .step-nav .nav { flex: 1; } }
+.dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+.dots button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--muted); font: 700 0.8rem var(--font-body); cursor: pointer; font-variant-numeric: tabular-nums; }
+.dots button[aria-current="step"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.step-body { display: grid; gap: 10px; min-width: 0; }
+.step-count { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.step-code { display: grid; gap: 12px; min-width: 0; }
+
+/* code screenshots */
+.shot { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--code-bg); min-width: 0; }
+.shot-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--code-bar); border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.fname { font: 600 0.85rem var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
+.fsub { color: var(--muted); }
+.pill { margin-left: auto; font: 700 0.7rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 8px; border-radius: 99px; }
+.pill-old { color: var(--bad); background: var(--bad-soft); } .pill-new { color: var(--good); background: var(--good-soft); }
+.shot-scroll { overflow-x: auto; }
+table.code { border-collapse: collapse; width: 100%; font: 400 12.5px/1.65 var(--font-mono); }
+table.code td { padding: 0 10px; vertical-align: top; }
+table.code td.ln { width: 1%; text-align: right; color: var(--code-ln); user-select: none; font-variant-numeric: tabular-nums; padding-left: 12px; }
+table.code td.mk { width: 1%; padding: 0 2px; }
+/* long lines wrap with a hanging indent: --n = leading spaces of the line, --iu = width of one indent space */
+table.code { --iu: 1ch; }
+table.code td.src { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); padding-right: 16px;
+  padding-left: calc(10px + (var(--n, 0) + 4) * var(--iu)); text-indent: calc(-1 * (var(--n, 0) + 4) * var(--iu)); }
+table.code td.src .ind { display: inline-block; width: calc(var(--n, 0) * var(--iu)); }
+@media (max-width: 640px) { table.code { --iu: 0.5ch; } }
+table.code tr.hl td { background: var(--code-hl); }
+table.code tr.hl td.ln { color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+table.code tr.gap td { color: var(--code-ln); font-style: italic; font-family: var(--font-body); font-size: 12.5px; padding-block: 2px; }
+table.code.no-ln td.ln { display: none; }
+.badge { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 10.5px var(--font-body); margin-top: 2px; }
+.k { color: var(--tk-key); } .s { color: var(--tk-str); } .x { color: var(--tk-expr); font-weight: 600; } .c { color: var(--tk-cmt); font-style: italic; } .w { color: var(--tk-kw); font-weight: 600; }
+
+/* line-by-line exhibits */
+.exhibit { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .exhibit { grid-template-columns: minmax(0, 1fr); } }
+.callouts { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: c; }
+.callouts li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; counter-increment: c; }
+.callouts li::before { content: counter(c); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 12px var(--font-body); margin-top: 2px; }
+.callouts li.after { display: block; counter-increment: none; color: var(--muted); font-size: 0.95rem; }
+.callouts .after::before { content: none; }
+.sub-old { color: var(--bad); } .sub-new { color: var(--good); }
+.group { display: grid; gap: 22px; }
+
+/* side by side */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.side { border-collapse: collapse; width: 100%; min-width: 36rem; font-size: 0.97rem; }
+table.side th, table.side td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.side tr:last-child > * { border-bottom: 0; }
+
+table.side thead th { font: 700 0.8rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+table.side thead th.o { color: var(--bad); } table.side thead th.n { color: var(--good); }
+table.side tbody th { font-weight: 700; width: 26%; }
+@media (max-width: 640px) {
+  table.side { min-width: 0; }
+  table.side thead { display: none; }
+  table.side tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--line); }
+  table.side tbody tr:last-child { border-bottom: 0; }
+  table.side tbody th { grid-column: 1 / -1; width: auto; padding-bottom: 2px; }
+  table.side tbody th, table.side tbody td { border-bottom: 0; }
+  table.side td::before { content: attr(data-label); display: block; margin-bottom: 2px; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+  table.side td.o::before { color: var(--bad); }
+  table.side td.n::before { color: var(--good); }
+}
+/* next */
+.todo { margin: 0; padding-left: 1.4rem; display: grid; gap: 10px; }
+footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+/* how GitHub OIDC works */
+.seq .life { stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.seq .msg { color: var(--accent); }
+.seq .msg path { fill: none; stroke: currentColor; stroke-width: 2.2; }
+.seq .msg polygon { fill: currentColor; }
+.seq .msg.back path { stroke-dasharray: 6 5; }
+.seq .msg-label { fill: var(--ink); font: 700 12.5px var(--font-body); }
+.seq .msg-note { fill: var(--muted); font: 600 11px var(--font-mono); }
+.tag-plain { color: var(--muted); }
+.swipe-hint { display: none; }
+@media (max-width: 700px) { .swipe-hint { display: inline; font-weight: 700; } }
+.card h4 { margin: 0; font: 700 1.05rem var(--font-display); }
+.where { color: var(--muted); font-size: 0.95rem; }
+.where code { overflow-wrap: anywhere; }
+table.formats { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+table.formats caption { text-align: left; padding: 12px 14px 4px; font-weight: 700; }
+table.formats th, table.formats td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.formats tr:last-child > * { border-bottom: 0; }
+table.formats thead th { font: 700 0.75rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+table.formats tbody th { font-weight: 400; width: 34%; }
+.callout-box { max-width: var(--measure); margin: 0; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--ink); padding: 12px 16px; border-radius: 0 10px 10px 0; }
+/* roles up close */
+.intro { max-width: var(--measure); }
+.jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.jump a { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 99px; background: var(--surface); color: var(--ink); text-decoration: none; font-size: 0.92rem; }
+.jump a:hover { border-color: var(--accent); }
+.jump code { background: none; padding: 0; }
+.jump .tag { font-size: 0.66rem; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 16px; }
+.glance h3 code, .role-head h3 code { background: none; padding: 0; font-size: 1.05em; }
+.kv { margin: 0; display: grid; gap: 10px; }
+.kv div { display: grid; gap: 2px; }
+.kv dt, .facts dt { font: 700 0.72rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.kv dd, .facts dd { margin: 0; min-width: 0; }
+.role { display: grid; gap: 16px; padding-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 16px; min-width: 0; }
+.role-head { display: grid; gap: 10px; max-width: var(--measure); }
+.role h4 { margin: 8px 0 0; font: 700 1.02rem var(--font-display); }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 10px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.facts div { display: grid; gap: 2px; min-width: 0; }
+.facts .full { grid-column: 1 / -1; }
+.shots { display: grid; gap: 12px; min-width: 0; }
+.callouts li.sub { display: block; counter-increment: none; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.callouts li.sub::before { content: none; }
+@media (prefers-reduced-motion: reduce) { .diagram [data-part] { transition: none; } }
+
+/* ── this page ── */
+.toc { box-sizing: border-box; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+.toc-title { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.toc ol { margin: 0; padding-left: 1.3rem; display: grid; gap: 4px; }
+.toc ol ol { margin-top: 4px; font-size: 0.95rem; }
+.toc a, .intro a, .note a { color: var(--ink); }
+.card h3 { font-size: 1.25rem; }
+.mono-line { color: var(--muted); font-size: 0.92rem; }
+.howto { margin: 0; padding-left: 1.4rem; display: grid; gap: 8px; max-width: var(--measure); }
+.part-h { margin: 22px 0 0; font: 700 1.08rem var(--font-display); }
+.pipe-h { display: grid; gap: 6px; }
+.wide > h3 { margin-top: 18px; font-size: 1.3rem; }
+.solo { min-width: 0; max-width: 58rem; }
+.player-body { display: grid; gap: 18px; min-width: 0; }
+.step-title { margin: 0; font: 600 1.15rem/1.2 var(--font-display); }
+.diagram .flow path { fill: none; stroke: var(--line-strong); stroke-width: 2; }
+.diagram .flow polygon { fill: var(--line-strong); }
+table.side.plain td::before { color: var(--muted); }
+table.side.plain thead th { color: var(--muted); }
+.goodlist { margin: 0; padding-left: 1.2rem; display: grid; gap: 8px; max-width: var(--measure); }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 16px; }
+.rules ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 6px; }
+</style>
+
+<main class="page">
+  <header class="hero">
+    <p class="eyebrow">Network accounts · CloudFormation and trust store pipelines</p>
+    <h1>Your new pipelines, explained</h1>
+    <p class="lede">You have two pipelines in GitHub Actions. One creates and updates CloudFormation stacks; the other keeps CloudFront’s trust store, the list of certificate authorities it accepts client certificates from, up to date. Both now get into AWS the new way, through IMS Root. This page walks through each one with the real code, from the button you press to what changes in AWS.</p>
+  </header>
+
+  <nav class="toc" aria-labelledby="toc-h">
+    <h2 id="toc-h" class="toc-title">On this page</h2>
+    <ol>
+      <li><a href="#glance-h">The two pipelines at a glance</a></li>
+      <li><a href="#words-h">Words on this page</a></li>
+      <li><a href="#signin-h">How both pipelines get into AWS</a></li>
+      <li><a href="#cfn-h">Pipeline 1 · CloudFormation deployment</a>
+        <ol>
+          <li><a href="#cfn-run-h">How to run it</a></li>
+          <li><a href="#cfn-watch-h">Watch one run</a></li>
+          <li><a href="#cfn-code-h">The file, line by line</a></li>
+          <li><a href="#cfn-errors-h">When something goes wrong</a></li>
+        </ol></li>
+      <li><a href="#ts-h">Pipeline 2 · Trust store</a>
+        <ol>
+          <li><a href="#ts-files-h">The files it works with</a></li>
+          <li><a href="#ts-run-h">How to run it</a></li>
+          <li><a href="#ts-watch-h">Watch one run</a></li>
+          <li><a href="#ts-rules-h">What the check looks for</a></li>
+          <li><a href="#ts-code-h">The file, line by line</a></li>
+          <li><a href="#ts-errors-h">When something goes wrong</a></li>
+        </ol></li>
+      <li><a href="#side-h">The two pipelines side by side</a></li>
+      <li><a href="#change-h">Changing or extending them</a></li>
+      <li><a href="#first-h">Before the first real runs</a></li>
+    </ol>
+  </nav>
+
+  <section aria-labelledby="glance-h">
+    <h2 id="glance-h">The two pipelines at a glance</h2>
+    <div class="compare">
+      <article class="card card-new">
+        <p class="tag tag-new">Pipeline 1</p>
+        <h3>CloudFormation deployment</h3>
+        <p class="mono-line"><code>latest_cft_deployment.yml</code> · in Actions: <b>CloudFormation Stack using S3 as required</b></p>
+        <ul>
+          <li>Creates or updates one CloudFormation stack from a template in your repo.</li>
+          <li>You start it with <b>Run workflow</b> and pick the folder, stack, account, region and whether to deploy.</li>
+          <li>Four boxes: <b>Prepare → Drift check → Change set → Deploy</b>.</li>
+          <li>Safe by default: <b>Deploy = no</b> stops at the change set, a preview you review first.</li>
+        </ul>
+      </article>
+      <article class="card card-new">
+        <p class="tag tag-new">Pipeline 2</p>
+        <h3>Trust store</h3>
+        <p class="mono-line"><code>validate-trust-store.yaml</code> · in Actions: <b>Trust store</b></p>
+        <ul>
+          <li>Checks the CA bundle (<code>truststore.pem</code>) for one environment and updates CloudFront’s trust store from it.</li>
+          <li>Starts by itself on a pull request (check only), or with <b>Run workflow</b> for tst, ppe or prd.</li>
+          <li>Three boxes: <b>Validate → Compare with S3 → Apply</b>.</li>
+          <li>Safe by default: <b>Apply = no</b> stops after showing what would change.</li>
+        </ul>
+      </article>
+    </div>
+    <p class="note">Both sign in the same way: GitHub → IMS Root → the network account, with no role names in GitHub secrets. Only the network accounts (prd, ppe and tst) can be picked, because only they have the new <code>iamr</code> roles so far.</p>
+  </section>
+
+  <section aria-labelledby="words-h">
+    <h2 id="words-h">Words on this page</h2>
+    <dl class="glossary">
+      <div><dt>workflow · job · step</dt><dd>Your YAML file is a <b>workflow</b>. Each box on the run page (Prepare, Validate…) is a <b>job</b>. Each <code>- name:</code> inside a job is a <b>step</b>.</dd></div>
+      <div><dt>run</dt><dd>One go of a workflow. Each run has a number (the run ID) and its own page with the boxes, the log of every step, and a <b>Summary</b>.</dd></div>
+      <div><dt>Run workflow</dt><dd>The button in the Actions tab that starts a pipeline by hand. It shows a short form; your answers are the workflow’s <b>inputs</b>.</dd></div>
+      <div><dt>runner</dt><dd>The fresh computer GitHub lends each box. It starts empty and is wiped afterwards, so every box copies the repo and signs in again.</dd></div>
+      <div><dt>Summary · annotations</dt><dd>The run’s overview page. Red <b>errors</b>, yellow <b>warnings</b> and <b>notices</b> appear at the top, and both pipelines write tables there.</dd></div>
+      <div><dt>CloudFormation stack</dt><dd>A group of AWS resources created from one template and changed together.</dd></div>
+      <div><dt>template · params.json</dt><dd>The file that describes the resources (its name ends in <code>-template.yaml</code>), and the file with the values for its parameters.</dd></div>
+      <div><dt>change set</dt><dd>CloudFormation’s <b>preview</b> of exactly what would change. Nothing happens until someone <b>executes</b> it.</dd></div>
+      <div><dt>drift</dt><dd>A change made by hand in AWS that the template doesn’t know about.</dd></div>
+      <div><dt>trust store</dt><dd>CloudFront’s list of <b>certificate authorities (CAs)</b> whose client certificates it accepts, for sites that ask visitors for a certificate (mutual TLS).</dd></div>
+      <div><dt>CA bundle · truststore.pem</dt><dd>The file with those CA certificates, one after another: text blocks that start with <code>-----BEGIN CERTIFICATE-----</code>.</dd></div>
+      <div><dt>pull request</dt><dd>A request to merge a branch into main. The trust store pipeline checks it by itself.</dd></div>
+      <div><dt>artifact</dt><dd>A file a run keeps for you to download from its page. The trust store pipeline keeps the previous S3 file this way.</dd></div>
+      <div><dt>IMS Root · iamr roles</dt><dd>The head office account (390403857119) and the roles made for pipelines. Each box signs in there first, then swaps into the network account.</dd></div>
+    </dl>
+  </section>
+
+  <section class="wide" aria-labelledby="signin-h">
+    <h2 id="signin-h">How both pipelines get into AWS</h2>
+    <p class="intro">Every box that talks to AWS starts with the same two steps. GitHub writes a signed note for the run; the box shows it at IMS Root, the head office account, and gets the reception copy of a role; then it swaps that for the working copy in the network account. No password or role name is stored in GitHub. The companion page <a href="https://claude.ai/artifact/SMLejXrrqCGVuZAgFxMQwq">How the pipeline gets into AWS</a> explains this in depth.</p>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Account</th><th scope="col">What you pick</th><th scope="col">Role (the same name in IMS Root and in the account)</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Network prd · 584477831165</th><td class="o" data-label="What you pick">NETWORK (CloudFormation) · prd (trust store)</td><td class="n" data-label="Role"><code>iamr-net-prd-deploy</code></td></tr>
+          <tr><th scope="row">Network ppe · 097357356161</th><td class="o" data-label="What you pick">PPE-NETWORK · ppe</td><td class="n" data-label="Role"><code>iamr-net-ppe-deploy</code></td></tr>
+          <tr><th scope="row">Network tst · 762649987860</th><td class="o" data-label="What you pick">TST-NETWORK · tst</td><td class="n" data-label="Role"><code>iamr-net-tst-deploy</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="exhibit">
+      <div data-panel="s_signin"></div>
+      <ol class="callouts">
+        <li><span><b>Hop 1.</b> A ready-made step from AWS. It asks GitHub for a signed note about this run and hands it to AWS…</span></li>
+        <li><span>…asking for the reception copy of the role in IMS Root: the name the first box worked out.</span></li>
+        <li><span>The session is named after the run number, so AWS’s activity log (CloudTrail) shows which run signed in.</span></li>
+        <li><span><b>Hop 2.</b> The same AWS step again…</span></li>
+        <li><span>…<code>role-chaining: true</code>: use the role from hop 1 instead of asking GitHub again…</span></li>
+        <li><span>…and swap it for the working copy in the network account.</span></li>
+        <li><span>Everything the run does in the network account is logged under <code>cft-</code> and the run number.</span></li>
+        <li><span>3,600 seconds: one hour, the most AWS allows after a swap.</span></li>
+        <li><span>No name tags on the swap: the working copy’s trust policy doesn’t allow them.</span></li>
+        <li class="after">The trust store pipeline uses the same two steps in its Compare and Apply boxes, with the session names <code>truststore-compare-…</code> and <code>truststore-apply-…</code> and the region from <code>truststore.json</code>.</li>
+      </ol>
+    </div>
+    <h3>Good to know</h3>
+    <ul class="goodlist">
+      <li><b>Every box signs in again.</b> Each box runs on a fresh computer that is wiped afterwards, so nothing carries over except what an earlier box hands on (role names, file names).</li>
+      <li><b>The keys last one hour.</b> That is why the CloudFormation Deploy box stops following a deployment after 55 minutes. The deployment itself carries on in AWS.</li>
+      <li><b>A trust store pull request never signs in.</b> Only its Compare and Apply boxes are allowed to ask GitHub for a signed note, and they only run for Run workflow.</li>
+      <li><b>One exception:</b> large CloudFormation templates are uploaded to S3 with the secret <code>S3_ACCESS_GITHUB_ROLE</code>, a separate role (<code>S3-github-actions-oidc-role</code>) in the shared services account.</li>
+    </ul>
+  </section>
+
+  <section class="wide" aria-labelledby="cfn-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Pipeline 1</p>
+      <h2 id="cfn-h">CloudFormation deployment</h2>
+    </div>
+    <p class="intro">This pipeline takes a CloudFormation template from your repo and creates the stack, or updates it if it already exists. It never changes anything blindly: it first checks that nobody changed the stack by hand, then makes a <b>change set</b>, a preview of exactly what would change. With Deploy = no it stops there for you to review; with Deploy = yes it executes the change set and follows it until CloudFormation finishes.</p>
+
+    <h3 id="cfn-run-h">How to run it</h3>
+    <ol class="howto">
+      <li>Put the template (a file ending in <code>-template.yaml</code>) and <code>params.json</code> in a folder under <code>cloudformation/</code>, and merge it to main.</li>
+      <li>Open the repo’s <b>Actions</b> tab and pick <b>CloudFormation Stack using S3 as required</b> on the left.</li>
+      <li>Click <b>Run workflow</b>, keep the branch on main, and fill in the form (below).</li>
+      <li>Click the green <b>Run workflow</b> button. The run appears with a title like <b>📝 my-vpc · NETWORK · eu-west-1</b>.</li>
+      <li>Open it and watch the boxes: green = passed, red = failed, grey = skipped.</li>
+      <li>Read the <b>Summary</b>: the plan, the drift check, the list of changes and a link to the change set in the AWS console. With Deploy = no, review it there and click <b>Execute change set</b> yourself, or run the pipeline again with Deploy = yes.</li>
+    </ol>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Form field</th><th scope="col">What to enter</th><th scope="col">Example</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">folderPath</th><td class="o" data-label="What to enter">The folder under <code>cloudformation/</code> with the template and <code>params.json</code></td><td class="n" data-label="Example"><code>vpc</code> or <code>network/peering</code></td></tr>
+          <tr><th scope="row">stackName</th><td class="o" data-label="What to enter">The stack to create or update: letters, digits and hyphens, starting with a letter</td><td class="n" data-label="Example"><code>my-vpc</code></td></tr>
+          <tr><th scope="row">roleAlias</th><td class="o" data-label="What to enter">The account: NETWORK (prd), PPE-NETWORK or TST-NETWORK</td><td class="n" data-label="Example"><code>PPE-NETWORK</code></td></tr>
+          <tr><th scope="row">AWS_REGION</th><td class="o" data-label="What to enter">eu-west-1 (the default), us-east-1, or other</td><td class="n" data-label="Example"><code>eu-west-1</code></td></tr>
+          <tr><th scope="row">CUSTOM_REGION</th><td class="o" data-label="What to enter">Only when AWS_REGION is other</td><td class="n" data-label="Example"><code>ap-south-1</code></td></tr>
+          <tr><th scope="row">deploy</th><td class="o" data-label="What to enter">no: stop at the change set (the default) · yes: execute it straight away</td><td class="n" data-label="Example"><code>no</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="cfn-watch-h">Watch one run</h3>
+    <p class="intro">An update of an existing stack in network prd, with Deploy = yes. Step through it: the picture shows which box is working and what it touches in AWS; under it is the code for that moment, with its real line numbers.</p>
+    <div class="player" data-player="cfn">
+      <div class="player-body">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll">
+            <svg class="diagram" viewBox="0 0 800 300" role="img" aria-label="The CloudFormation pipeline: Run workflow, then four boxes, Prepare, Drift check, Change set and Deploy. They sign in through IMS Root to the network account, where the CloudFormation stack is. Large templates go through an S3 bucket.">
+              <rect class="zone" x="8" y="8" width="784" height="124" rx="14"/>
+              <text class="zone-label" x="24" y="28">GitHub · one run</text>
+              <g data-part="start"><rect class="box" x="24" y="44" width="128" height="72" rx="12"/><text class="t-title" x="88" y="76" text-anchor="middle">Run workflow</text><text class="t-sub" x="88" y="96" text-anchor="middle">you fill the form</text></g>
+              <g data-part="j1"><rect class="box" x="176" y="44" width="128" height="72" rx="12"/><text class="t-title" x="240" y="76" text-anchor="middle">Prepare</text><text class="t-sub" x="240" y="96" text-anchor="middle">always</text></g>
+              <g data-part="j2"><rect class="box" x="328" y="44" width="128" height="72" rx="12"/><text class="t-title" x="392" y="76" text-anchor="middle">Drift check</text><text class="t-sub" x="392" y="96" text-anchor="middle">existing stacks</text></g>
+              <g data-part="j3"><rect class="box" x="480" y="44" width="128" height="72" rx="12"/><text class="t-title" x="544" y="76" text-anchor="middle">Change set</text><text class="t-sub" x="544" y="96" text-anchor="middle">always</text></g>
+              <g data-part="j4"><rect class="box" x="632" y="44" width="144" height="72" rx="12"/><text class="t-title" x="704" y="76" text-anchor="middle">Deploy</text><text class="t-sub" x="704" y="96" text-anchor="middle">only if Deploy = yes</text></g>
+              <g class="flow"><path d="M152,80 L167,80"/><polygon points="167,75 176,80 167,85"/></g>
+              <g class="flow"><path d="M304,80 L319,80"/><polygon points="319,75 328,80 319,85"/></g>
+              <g class="flow"><path d="M456,80 L471,80"/><polygon points="471,75 480,80 471,85"/></g>
+              <g class="flow"><path d="M608,80 L623,80"/><polygon points="623,75 632,80 623,85"/></g>
+              <rect class="zone" x="8" y="152" width="784" height="140" rx="14"/>
+              <text class="zone-label" x="24" y="172">AWS</text>
+              <g data-part="root"><rect class="box" x="24" y="184" width="200" height="92" rx="12"/><text class="t-title" x="124" y="214" text-anchor="middle">IMS Root</text><text class="t-sub" x="124" y="234" text-anchor="middle">check-in · 390403857119</text><text class="t-mono" x="124" y="258" text-anchor="middle">iamr-net-prd-deploy</text></g>
+              <g data-part="net"><rect class="box" x="248" y="184" width="352" height="92" rx="12"/><text class="t-title" x="340" y="214" text-anchor="middle">Network prd</text><text class="t-sub" x="340" y="234" text-anchor="middle">584477831165</text><text class="t-mono" x="340" y="258" text-anchor="middle">iamr-net-prd-deploy</text></g>
+              <g data-part="stack"><rect class="stack" x="440" y="198" width="144" height="64" rx="8"/><text class="t-sub" x="512" y="226" text-anchor="middle">CloudFormation</text><text class="t-sub" x="512" y="244" text-anchor="middle">stack</text></g>
+              <g data-part="s3"><rect class="box" x="624" y="184" width="152" height="92" rx="12"/><text class="t-title" x="700" y="214" text-anchor="middle">S3 bucket</text><text class="t-mono" x="700" y="234" text-anchor="middle">ss-cfts3</text><text class="t-sub" x="700" y="258" text-anchor="middle">large templates only</text></g>
+            </svg>
+          </div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h4 class="step-title"></h4>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 id="cfn-code-h">The file, line by line</h3>
+    <p class="intro">The whole file, part by part, from top to bottom. The numbers on the highlighted lines match the notes next to each part.</p>
+
+    <h4 class="part-h">The Run workflow form</h4>
+    <div class="exhibit">
+      <div data-panel="c_form"></div>
+      <ol class="callouts">
+        <li><span>The name in the Actions tab’s list of workflows.</span></li>
+        <li><span>Each run’s title: 🚀 or 📝, then the stack, the account and the region, so you can tell runs apart.</span></li>
+        <li><span><code>workflow_dispatch</code>: the pipeline only runs when someone clicks Run workflow. Pushing code doesn’t start it.</span></li>
+        <li><span>The folder under <code>cloudformation/</code> with the template and <code>params.json</code>.</span></li>
+        <li><span>The stack to create or update.</span></li>
+        <li><span>The account. Only the three network accounts are listed: they are the only ones with <code>iamr</code> roles so far.</span></li>
+        <li><span>The region: eu-west-1 (the default), us-east-1, or other…</span></li>
+        <li><span>…and if you picked other, you type it here.</span></li>
+        <li><span>No (the default) stops at the change set so you can review it first; yes executes it straight away.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Settings for the whole run</h4>
+    <div class="exhibit">
+      <div data-panel="c_settings"></div>
+      <ol class="callouts">
+        <li><span><code>id-token: write</code> lets each box ask GitHub for a signed note. <code>contents: read</code>: it can read the repo but not change it.</span></li>
+        <li><span>A queue name made from the account, region and stack. Two runs on the same stack never overlap…</span></li>
+        <li><span>…the second one waits for the first instead of cancelling it.</span></li>
+        <li><span>The S3 bucket for large templates.</span></li>
+        <li><span>The head office account, where the sign-in starts.</span></li>
+        <li><span>Your answers from the form, copied into plain names that the scripts read.</span></li>
+        <li><span>The region: your dropdown choice, or your Custom region text when you picked other.</span></li>
+        <li><span>Every script stops at the first failing command, and its box turns red. Nothing carries on half-done.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🧰 Prepare · work out the roles</h4>
+    <div class="exhibit">
+      <div data-panel="c_roles"></div>
+      <ol class="callouts">
+        <li><span>🧰 Prepare, the first box on the run page.</span></li>
+        <li><span>Each box runs on its own fresh Linux computer from GitHub.</span></li>
+        <li><span>What Prepare hands on to the later boxes: the two role names, the account, the files, and whether to create or update.</span></li>
+        <li><span>Copies your repo onto that computer.</span></li>
+        <li><span>The region must look like an AWS region, for example eu-west-1…</span></li>
+        <li><span>…otherwise the run stops with “Invalid region”.</span></li>
+        <li><span>NETWORK means the role <code>iamr-net-prd-deploy</code> in account 584477831165; the next two lines do the same for PPE and TST.</span></li>
+        <li><span>Any other value stops the run. That can only happen if someone adds a form option without a line here.</span></li>
+        <li><span>A line in the log saying where the run will sign in.</span></li>
+        <li><span>The two full role names: the reception copy in IMS Root (this line) and the working copy in the network account (the next line).</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🧰 Prepare · find your files</h4>
+    <div class="exhibit">
+      <div data-panel="c_files"></div>
+      <ol class="callouts">
+        <li><span><code>fail</code> prints a red error at the top of the run and stops the box.</span></li>
+        <li><span>Stack names: letters, digits and hyphens, starting with a letter (CloudFormation’s rule).</span></li>
+        <li><span>The folder <code>cloudformation/&lt;folderPath&gt;</code> must exist on the branch you ran.</span></li>
+        <li><span>It looks for a file ending in <code>-template.yaml</code> or <code>-template.yml</code> directly in the folder…</span></li>
+        <li><span>…and only if there is none, in its sub-folders.</span></li>
+        <li><span>More than one? It warns you and uses the first, in alphabetical order.</span></li>
+        <li><span><code>params.json</code> must be in the same folder…</span></li>
+        <li><span>…and be a list of <code>ParameterKey</code> / <code>ParameterValue</code> entries.</span></li>
+        <li><span>Over 51,200 bytes is too big to send to CloudFormation directly, so the Change set box uploads it to S3 first.</span></li>
+        <li class="after">Next come the two sign-in steps shown in <a href="#signin-h">How both pipelines get into AWS</a> (lines 176–191).</li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🧰 Prepare · check the account and the stack</h4>
+    <div class="exhibit">
+      <div data-panel="c_stack"></div>
+      <ol class="callouts">
+        <li><span>Asks AWS “who am I?”…</span></li>
+        <li><span>…and stops if it isn’t the account you picked. A safety net: the run never touches another account.</span></li>
+        <li><span>Asks CloudFormation for the stack’s state.</span></li>
+        <li><span>Not found (or only ever previewed): a new stack, so create.</span></li>
+        <li><span>Exists and settled: update, after the drift check.</span></li>
+        <li><span>Its first create failed, so it can’t be updated: delete it in the console and run again.</span></li>
+        <li><span>Busy: something is changing it right now. Wait, then run again.</span></li>
+        <li><span>Deploy yes or no, spelled out in the log.</span></li>
+        <li><span>The 🧰 Prepare table on the Summary page…</span></li>
+        <li><span>…including the role it signed in as, “via IMS Root”.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🔎 Drift check</h4>
+    <div class="exhibit">
+      <div data-panel="c_drift"></div>
+      <ol class="callouts">
+        <li><span>🔎 Drift check, the second box.</span></li>
+        <li><span>Only for an existing stack. For a new stack this box is grey (skipped).</span></li>
+        <li><span>Starts CloudFormation’s drift detection: every resource is compared with the template.</span></li>
+        <li><span>Asks every 10 seconds until it is done.</span></li>
+        <li><span>Drifted…</span></li>
+        <li><span>…prints a table of the resources that changed and, for each changed property, what the template says and what AWS has now…</span></li>
+        <li><span>…and stops before the change set: undo the change in AWS, or add it to the template, then run again.</span></li>
+        <li><span>The box turns red, and Change set and Deploy don’t run.</span></li>
+        <li><span>No drift: green, and the run carries on.</span></li>
+        <li><span>If CloudFormation couldn’t check every resource, it says why, warns, and carries on.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">📝 Change set · when it runs</h4>
+    <div class="exhibit">
+      <div data-panel="c_cshead"></div>
+      <ol class="callouts">
+        <li><span>📝 Change set, the third box.</span></li>
+        <li><span>Runs when Prepare passed and the drift check passed or was skipped, unless you cancelled the run.</span></li>
+        <li><span>Hands on to Deploy: whether anything changes, the change set’s name and the stack’s ID.</span></li>
+        <li><span>The files and the create-or-update decision from Prepare.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">📝 Change set · large templates go through S3</h4>
+    <div class="exhibit">
+      <div data-panel="c_s3"></div>
+      <ol class="callouts">
+        <li><span>Only for templates over 51,200 bytes.</span></li>
+        <li><span>Signs in with a separate role kept in the secret <code>S3_ACCESS_GITHUB_ROLE</code>: <code>S3-github-actions-oidc-role</code> in the shared services account.</span></li>
+        <li><span>A unique name for this run’s copy: the stack name and the time.</span></li>
+        <li><span><code>presign.py</code> makes two short-lived links: one to upload, one to read.</span></li>
+        <li><span>Uploads the template with the upload link…</span></li>
+        <li><span>…and passes the read link on to the next steps.</span></li>
+        <li class="after">Then the box signs in to the network account with the same two steps as Prepare.</li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">📝 Change set · check the template and the parameters</h4>
+    <div class="exhibit">
+      <div data-panel="c_params"></div>
+      <ol class="callouts">
+        <li><span>The template comes from S3 (large) or straight from the file.</span></li>
+        <li><span>CloudFormation reads the template and reports mistakes before anything is created.</span></li>
+        <li><span>How each parameter gets its value, the same rules as <code>aws cloudformation deploy</code>:</span></li>
+        <li><span>for an existing stack, it first reads which parameters the stack has now;</span></li>
+        <li><span>a value in <code>params.json</code> is used;</span></li>
+        <li><span>not in <code>params.json</code> but the stack has it: the stack keeps its current value.</span></li>
+        <li><span>Values of hidden parameters (NoEcho, such as passwords) are blanked out in the log.</span></li>
+        <li><span>A key in <code>params.json</code> that the template doesn’t have gets a warning and is ignored.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">📝 Change set · create it</h4>
+    <div class="exhibit">
+      <div data-panel="c_create"></div>
+      <ol class="callouts">
+        <li><span>The change set’s name: <code>gha-</code>, the run number and the attempt.</span></li>
+        <li><span>CREATE for a new stack, UPDATE for an existing one.</span></li>
+        <li><span>Asks CloudFormation to work out the changes. Nothing in AWS changes yet.</span></li>
+        <li><span>Allows templates that create IAM roles with fixed names.</span></li>
+        <li><span>A description with the run number and who started it, visible in the console.</span></li>
+        <li><span>Waits until CloudFormation has worked out the changes.</span></li>
+        <li><span>Nothing would change: the box passes, and there is nothing to deploy…</span></li>
+        <li><span>…so the empty change set is deleted.</span></li>
+        <li><span>Any other problem: a red box with CloudFormation’s reason.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">📝 Change set · show what will change</h4>
+    <div class="exhibit">
+      <div data-panel="c_show"></div>
+      <ol class="callouts">
+        <li><span>Counts the changes: added, modified, removed, replaced.</span></li>
+        <li><span>One summary line in the log, then the list (example below).</span></li>
+        <li><span>Replacements get a warning: the resource is deleted and created again.</span></li>
+        <li><span>So do removals.</span></li>
+        <li><span>Older change sets still waiting on this stack get a warning, so nobody executes the wrong one.</span></li>
+        <li><span>A direct link to this change set in the AWS console.</span></li>
+        <li><span>Deploy = yes: the Deploy box executes it next.</span></li>
+        <li><span>Deploy = no: nothing is deployed. Review it in the console and execute it yourself.</span></li>
+      </ol>
+    </div>
+    <div class="solo" data-panel="x_changes"></div>
+    <p class="intro">What the list means: ➕ add, 🔧 modify, ➖ remove, 🔄 replaced (deleted and created again). Under each resource, <code>~</code> lines show a property’s value before → after. The same list, plus a table, is on the Summary page.</p>
+
+    <h4 class="part-h">🚀 Deploy · execute and follow</h4>
+    <div class="exhibit">
+      <div data-panel="c_deploy"></div>
+      <ol class="callouts">
+        <li><span>Runs only with Deploy = yes, when the Change set box passed and found something to change.</span></li>
+        <li><span>The repo’s default branch (main), for the check below.</span></li>
+        <li><span>Running from another branch gets a warning: you are deploying code that isn’t merged yet.</span></li>
+        <li><span>Executes the change set: now AWS really changes.</span></li>
+        <li><span>Follows the stack’s events every 15 seconds and prints each new one.</span></li>
+        <li><span>Stops following after 55 minutes, because the sign-in lasts an hour…</span></li>
+        <li><span>Each round it reads the stack’s state…</span></li>
+        <li><span>…and it is finished when the stack is settled and the change set has been used.</span></li>
+        <li><span>Still busy after 55 minutes: the box turns red, but the deployment is <b>not</b> cancelled. It carries on in AWS; follow it in the console.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🚀 Deploy · the result</h4>
+    <div class="exhibit">
+      <div data-panel="c_verdict"></div>
+      <ol class="callouts">
+        <li><span>Something else changed the stack first, so this change set was not used. Run the pipeline again.</span></li>
+        <li><span>CREATE_COMPLETE or UPDATE_COMPLETE: success.</span></li>
+        <li><span>The update failed, and CloudFormation put the stack back as it was.</span></li>
+        <li><span>The first create failed. Delete the stack in the console before trying again.</span></li>
+        <li><span>The update and the roll-back both failed: in the console use Stack actions → Continue update rollback.</span></li>
+        <li><span>The create and the roll-back both failed: delete the stack, keeping any resources that block it.</span></li>
+        <li><span>Success: a “Deployed” notice at the top of the run.</span></li>
+        <li><span>Failure: a red error with the reason; the Summary page lists what failed and every stack event.</span></li>
+      </ol>
+    </div>
+
+    <h3 id="cfn-errors-h">When something goes wrong</h3>
+    <p class="intro">The message titles below are the ones the pipeline prints at the top of the run.</p>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">You see</th><th scope="col">What it means</th><th scope="col">What to do</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Invalid region</th><td class="o" data-label="What it means">The region isn’t an AWS region name, or you picked other without typing one</td><td class="n" data-label="What to do">Pick a region, or type one under Custom region</td></tr>
+          <tr><th scope="row">Prepare failed: not a valid stack name</th><td class="o" data-label="What it means">The stack name breaks CloudFormation’s naming rule</td><td class="n" data-label="What to do">Use letters, digits and hyphens, starting with a letter</td></tr>
+          <tr><th scope="row">Prepare failed: Folder… not found, No template matching…, params.json not found</th><td class="o" data-label="What it means">folderPath doesn’t point at a folder with both files, on the branch you ran</td><td class="n" data-label="What to do">Check the folder name, and that the files are merged to that branch</td></tr>
+          <tr><th scope="row">Prepare failed: …must be a JSON list</th><td class="o" data-label="What it means"><code>params.json</code> isn’t a list of ParameterKey / ParameterValue entries</td><td class="n" data-label="What to do">Fix its format</td></tr>
+          <tr><th scope="row">Sign in to IMS Root fails: Not authorized to perform sts:AssumeRoleWithWebIdentity</th><td class="o" data-label="What it means">IMS Root didn’t accept GitHub’s note: this repo isn’t on the role’s list, or the role doesn’t exist</td><td class="n" data-label="What to do">Run it from the right repo; ask the client to check the <code>iamr</code> role</td></tr>
+          <tr><th scope="row">Switch to the deploy role fails: …not authorized to perform: sts:AssumeRole</th><td class="o" data-label="What it means">The working copy in the network account is missing, or doesn’t trust IMS Root</td><td class="n" data-label="What to do">Ask the client to check the <code>iamr</code> role in that account</td></tr>
+          <tr><th scope="row">Wrong account</th><td class="o" data-label="What it means">AWS signed the run in to a different account from the one you picked</td><td class="n" data-label="What to do">The account number in Pick the roles is wrong: fix that line</td></tr>
+          <tr><th scope="row">Stack can’t be updated</th><td class="o" data-label="What it means">The stack is in ROLLBACK_COMPLETE (its first create failed) or another state that blocks updates</td><td class="n" data-label="What to do">Follow the message: usually delete or fix the stack in the console, then run again</td></tr>
+          <tr><th scope="row">Stack is busy</th><td class="o" data-label="What it means">Something is changing the stack right now</td><td class="n" data-label="What to do">Wait until it finishes, then run again</td></tr>
+          <tr><th scope="row">Drift detected</th><td class="o" data-label="What it means">Someone changed the stack’s resources by hand</td><td class="n" data-label="What to do">Undo the change in AWS, or add it to the template, then run again</td></tr>
+          <tr><th scope="row">Change set failed</th><td class="o" data-label="What it means">CloudFormation rejected the template or the parameters; the reason is in the message</td><td class="n" data-label="What to do">Fix the template or <code>params.json</code></td></tr>
+          <tr><th scope="row">Unused parameter (warning)</th><td class="o" data-label="What it means"><code>params.json</code> has a key the template doesn’t declare</td><td class="n" data-label="What to do">Remove it, or fix its spelling</td></tr>
+          <tr><th scope="row">Replacement, Removal (warnings)</th><td class="o" data-label="What it means">Executing the change set will delete and re-create, or delete, resources</td><td class="n" data-label="What to do">Read the change list carefully before executing</td></tr>
+          <tr><th scope="row">Older change sets waiting (warning)</th><td class="o" data-label="What it means">Earlier change sets on this stack are still ready to execute</td><td class="n" data-label="What to do">Delete the ones you don’t need, so nobody executes the wrong one</td></tr>
+          <tr><th scope="row">Upload failed</th><td class="o" data-label="What it means">The large-template upload to S3 failed</td><td class="n" data-label="What to do">Check the <code>S3_ACCESS_GITHUB_ROLE</code> secret and <code>presign.py</code></td></tr>
+          <tr><th scope="row">Deploying from a branch (warning)</th><td class="o" data-label="What it means">You ran Deploy = yes from a branch other than main</td><td class="n" data-label="What to do">Fine for a test; normally merge first</td></tr>
+          <tr><th scope="row">Deploy failed</th><td class="o" data-label="What it means">The deployment failed; the message says how the stack ended</td><td class="n" data-label="What to do">Read “What failed” on the Summary page and follow the message</td></tr>
+          <tr><th scope="row">Still running</th><td class="o" data-label="What it means">The stack was still busy after 55 minutes</td><td class="n" data-label="What to do">Nothing is cancelled: follow it in the console with the link</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="ts-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Pipeline 2</p>
+      <h2 id="ts-h">Trust store</h2>
+    </div>
+    <p class="intro">Some CloudFront sites use mutual TLS: the visitor’s system must show a certificate too, and CloudFront only accepts certificates issued by the certificate authorities (CAs) in its <b>trust store</b>. A trust store is built from one file, a CA bundle in S3. You keep that file in Git, one per environment, and this pipeline checks it, shows what would change, and puts it live.</p>
+
+    <h3 id="ts-files-h">The files it works with</h3>
+    <div class="solo" data-panel="x_tree"></div>
+    <div class="exhibit">
+      <div data-panel="t_json"></div>
+      <ol class="callouts">
+        <li><span><code>account_id</code>: the network account the trust store lives in. <code>trust_store</code>: its name, ID or ARN.</span></li>
+        <li><span><code>bucket</code>, <code>key</code>, <code>region</code>: where the trust store’s file is in S3. CloudFront doesn’t say which file a trust store was built from, so <code>truststore.json</code> ties the two together.</span></li>
+        <li class="after">This is how the top of the workflow describes <code>truststore.json</code>. Each environment folder has its own.</li>
+      </ol>
+    </div>
+
+    <h3 id="ts-run-h">How to run it</h3>
+    <div class="compare">
+      <article class="card">
+        <p class="tag tag-plain">1 · Check a change</p>
+        <h3>Pull request</h3>
+        <ol class="howto">
+          <li>In a branch, edit <code>truststore/&lt;env&gt;/truststore.pem</code>: add or remove a CA certificate.</li>
+          <li>Open a pull request to main.</li>
+          <li>The check runs by itself (<b>🧪 Trust store check · PR #…</b>). Problems show on the file’s lines in the pull request; the summary lists the certificates added and removed.</li>
+          <li>Merge when it is green. Nothing in AWS has changed yet.</li>
+        </ol>
+      </article>
+      <article class="card">
+        <p class="tag tag-plain">2 · Put it live</p>
+        <h3>Run workflow</h3>
+        <ol class="howto">
+          <li>Actions tab → <b>Trust store</b> → <b>Run workflow</b>, on main.</li>
+          <li>Pick the environment and leave <b>Apply = no</b> the first time.</li>
+          <li>Read the Compare summary: certificates added, removed, replaced and unchanged.</li>
+          <li>Run it again with <b>Apply = yes</b>. The summary shows the upload and the trust store becoming active; the previous file is kept as an artifact.</li>
+        </ol>
+      </article>
+    </div>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Form field</th><th scope="col">What to enter</th><th scope="col">Example</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">env</th><td class="o" data-label="What to enter">The environment folder under <code>truststore/</code>: tst (the default), ppe or prd</td><td class="n" data-label="Example"><code>tst</code></td></tr>
+          <tr><th scope="row">apply</th><td class="o" data-label="What to enter">no: stop after Compare (the default) · yes: upload the file and update the trust store</td><td class="n" data-label="Example"><code>no</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="ts-watch-h">Watch one run</h3>
+    <p class="intro">Pick the kind of run, then step through it.</p>
+    <div class="player" data-player="ts">
+      <div class="tabs" role="tablist" aria-label="Kind of run">
+        <button role="tab" id="ts-tab-0" aria-selected="true" aria-controls="ts-panel">Run workflow</button>
+        <button role="tab" id="ts-tab-1" aria-selected="false" aria-controls="ts-panel" tabindex="-1">Pull request</button>
+      </div>
+      <div class="player-body" id="ts-panel" role="tabpanel" aria-labelledby="ts-tab-0">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll">
+            <svg class="diagram" viewBox="0 0 800 300" role="img" aria-label="The trust store pipeline: it starts from Run workflow or a pull request, then three boxes, Validate, Compare with S3 and Apply. Compare and Apply sign in through IMS Root to the network account, where an S3 bucket holds the trust store's file and CloudFront's trust store is built from it.">
+              <rect class="zone" x="8" y="8" width="784" height="124" rx="14"/>
+              <text class="zone-label" x="24" y="28">GitHub · one run</text>
+              <g data-part="start"><rect class="box" x="24" y="44" width="136" height="72" rx="12"/><text class="t-title" x="92" y="76" text-anchor="middle">Start</text><text class="t-sub" x="92" y="96" text-anchor="middle">Run workflow or PR</text></g>
+              <g data-part="j1"><rect class="box" x="184" y="44" width="168" height="72" rx="12"/><text class="t-title" x="268" y="76" text-anchor="middle">Validate</text><text class="t-sub" x="268" y="96" text-anchor="middle">your files · no AWS</text></g>
+              <g data-part="j2"><rect class="box" x="376" y="44" width="184" height="72" rx="12"/><text class="t-title" x="468" y="76" text-anchor="middle">Compare with S3</text><text class="t-sub" x="468" y="96" text-anchor="middle">manual runs only</text></g>
+              <g data-part="j3"><rect class="box" x="584" y="44" width="192" height="72" rx="12"/><text class="t-title" x="680" y="76" text-anchor="middle">Apply</text><text class="t-sub" x="680" y="96" text-anchor="middle">only if Apply = yes</text></g>
+              <g class="flow"><path d="M160,80 L175,80"/><polygon points="175,75 184,80 175,85"/></g>
+              <g class="flow"><path d="M352,80 L367,80"/><polygon points="367,75 376,80 367,85"/></g>
+              <g class="flow"><path d="M560,80 L575,80"/><polygon points="575,75 584,80 575,85"/></g>
+              <rect class="zone" x="8" y="152" width="784" height="140" rx="14"/>
+              <text class="zone-label" x="24" y="172">AWS</text>
+              <g data-part="root"><rect class="box" x="24" y="184" width="200" height="92" rx="12"/><text class="t-title" x="124" y="214" text-anchor="middle">IMS Root</text><text class="t-sub" x="124" y="234" text-anchor="middle">check-in · 390403857119</text><text class="t-mono" x="124" y="258" text-anchor="middle">iamr-net-prd-deploy</text></g>
+              <g data-part="net"><rect class="box" x="248" y="184" width="528" height="92" rx="12"/><text class="t-title" x="340" y="214" text-anchor="middle">Network prd</text><text class="t-sub" x="340" y="234" text-anchor="middle">584477831165</text><text class="t-mono" x="340" y="258" text-anchor="middle">iamr-net-prd-deploy</text></g>
+              <g data-part="s3"><rect class="stack" x="440" y="198" width="150" height="64" rx="8"/><text class="t-sub" x="515" y="226" text-anchor="middle">S3 bucket</text><text class="t-sub" x="515" y="244" text-anchor="middle">the trust store’s file</text></g>
+              <g data-part="ts"><rect class="stack" x="608" y="198" width="152" height="64" rx="8"/><text class="t-sub" x="684" y="226" text-anchor="middle">CloudFront</text><text class="t-sub" x="684" y="244" text-anchor="middle">trust store</text></g>
+            </svg>
+          </div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h4 class="step-title"></h4>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 id="ts-rules-h">What the check looks for</h3>
+    <p class="intro"><code>truststore_update.py</code> holds the file to CloudFront’s rules for a trust store, plus a few of its own. The same checks run on a pull request, in Validate, and again before Apply.</p>
+    <div class="rules">
+      <article class="card card-old">
+        <p class="tag tag-old">Errors: the file is refused</p>
+        <ul>
+          <li>Only certificate blocks. Comments start with <code>#</code> and contain no <code>-</code>; no blank lines.</li>
+          <li>X.509 version 3 certificates, with RSA 2048, 3072 or 4096 keys or ECDSA P-256 or P-384 keys, signed with SHA-256, 384 or 512.</li>
+          <li>At most 25 certificates and 1 MB in total (CloudFront’s limits).</li>
+          <li>No private keys, no certificate requests (CSRs), no duplicates.</li>
+          <li>A certificate you add must be a CA certificate, not a client’s own certificate, and must not be expired.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <p class="tag tag-plain">Warnings: flagged, but allowed</p>
+        <ul>
+          <li>Problems with certificates that are already in the trust store.</li>
+          <li>Certificates that expire within 30 days.</li>
+          <li>Signs that the trust store doesn’t use the S3 file (for example, a different number of certificates).</li>
+        </ul>
+      </article>
+      <article class="card">
+        <p class="tag tag-plain">Before anything changes</p>
+        <ul>
+          <li>AWS signed the run in to the account in <code>truststore.json</code>.</li>
+          <li>The trust store isn’t in the middle of another update.</li>
+          <li>Something actually changed. If not, there is nothing to apply.</li>
+        </ul>
+      </article>
+    </div>
+
+    <h3 id="ts-code-h">The file, line by line</h3>
+    <p class="intro">The whole file, part by part. The numbers on the highlighted lines match the notes next to each part.</p>
+
+    <h4 class="part-h">How it starts: pull request or Run workflow</h4>
+    <div class="exhibit">
+      <div data-panel="t_triggers"></div>
+      <ol class="callouts">
+        <li><span>The name in the Actions tab: Trust store.</span></li>
+        <li><span>Each run’s title: “🧪 Trust store check · PR #…” for a pull request, “🔍 Trust store · tst” (or 🚀 with Apply = yes) for a manual run.</span></li>
+        <li><span>Runs by itself when a pull request changes one of these files…</span></li>
+        <li><span>…for example any environment’s <code>truststore.pem</code> (the <code>*</code> matches tst, ppe and prd).</span></li>
+        <li><span>Or by hand, with Run workflow…</span></li>
+        <li><span>…for one environment (tst by default)…</span></li>
+        <li><span>…and Apply: no (the default) stops after Compare; yes uploads the file and updates the trust store.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Settings for the whole run</h4>
+    <div class="exhibit">
+      <div data-panel="t_settings"></div>
+      <ol class="callouts">
+        <li><span>Only <code>contents: read</code> for the whole workflow, so a pull request run can’t ask GitHub for a signed note and can’t reach AWS. Compare and Apply add that permission for themselves.</span></li>
+        <li><span>One manual run per environment at a time; pull request checks queue per pull request…</span></li>
+        <li><span>…and a newer push to the same pull request cancels the older check. Manual runs wait instead.</span></li>
+        <li><span>Where the trust store files and scripts live.</span></li>
+        <li><span>The head office account, where the sign-in starts.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🧪 Validate · pick the environment and role</h4>
+    <div class="exhibit">
+      <div data-panel="t_plan"></div>
+      <ol class="callouts">
+        <li><span>🧪 Validate, the first box. Its title says the environment, or “pull request”.</span></li>
+        <li><span>What it hands on: the two role names, the PEM file and the region.</span></li>
+        <li><span>The checkout step is pinned to an exact version, so it can’t change underneath you.</span></li>
+        <li><span>Copies the whole history, so a pull request can be compared with main.</span></li>
+        <li><span>A manual run checks one environment…</span></li>
+        <li><span>…prd means the role <code>iamr-net-prd-deploy</code> in account 584477831165, with the same pattern for ppe and tst.</span></li>
+        <li><span>An environment without an <code>iamr</code> role stops the run.</span></li>
+        <li><span>The two full role names: the reception copy in IMS Root and the working copy in the network account.</span></li>
+        <li><span>A pull request checks the environments whose files it changes…</span></li>
+        <li><span>…or every environment, if only the workflow or a script changed.</span></li>
+        <li><span>No PEM file found at all: stop.</span></li>
+        <li class="after">In between (lines 120–149) a manual run reads <code>truststore.json</code> and writes the 🧭 Plan table: environment, account, trust store, S3 file and Apply.</li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🧪 Validate · check the PEM file</h4>
+    <div class="exhibit">
+      <div data-panel="t_validate"></div>
+      <ol class="callouts">
+        <li><span><code>truststore_update.py</code>: CloudFront’s rules now, and later the compare and the apply.</span></li>
+        <li><span><code>validate-truststore.sh</code>: the team’s own check, unchanged.</span></li>
+        <li><span>The Python script must be in the repo, or the box stops.</span></li>
+        <li><span>Checks each environment in the list…</span></li>
+        <li><span>…a missing PEM file is an error, but the others are still checked.</span></li>
+        <li><span>First the team’s script, as before…</span></li>
+        <li><span>…its output is folded into the log and copied to the Summary page.</span></li>
+        <li><span>Then CloudFront’s rules for a CA bundle…</span></li>
+        <li><span>…on a pull request, also compared with the file on main, listing the certificates added and removed.</span></li>
+        <li><span>No AWS here (<code>--validate-only</code>). On a pull request, errors appear on the exact lines of the PEM file.</span></li>
+        <li><span>The box fails at the end if anything failed, after every environment was checked.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🧪 Validate · check truststore.json</h4>
+    <div class="exhibit">
+      <div data-panel="t_cfg"></div>
+      <ol class="callouts">
+        <li><span>Manual runs only.</span></li>
+        <li><span><code>truststore.json</code> must exist next to the PEM file…</span></li>
+        <li><span>…with a 12-digit <code>account_id</code> in quotes and every other value filled in (no <code>&lt;placeholders&gt;</code>)…</span></li>
+        <li><span>…and <code>account_id</code> must be the account this environment signs in to, so the file can’t point at the wrong account.</span></li>
+        <li><span>Hands the PEM file and the region on to Compare and Apply.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🔍 Compare with S3</h4>
+    <div class="exhibit">
+      <div data-panel="t_compare"></div>
+      <ol class="callouts">
+        <li><span>🔍 Compare with S3, the second box.</span></li>
+        <li><span>Manual runs only. On a pull request it is grey: pull requests never touch AWS.</span></li>
+        <li><span>This box (and Apply) may ask GitHub for a signed note; the rest of the workflow can’t.</span></li>
+        <li><span><code>--diff-only</code>: reads the trust store, downloads its file from S3, and lists the certificates added, removed, replaced and unchanged. It changes nothing.</span></li>
+        <li><span>Nothing different: Apply is skipped.</span></li>
+        <li><span>Apply = yes: the next box applies.</span></li>
+        <li><span>Apply = no: nothing was uploaded. Run again with Apply = yes when you are happy.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">🚀 Apply</h4>
+    <div class="exhibit">
+      <div data-panel="t_apply"></div>
+      <ol class="callouts">
+        <li><span>Runs only for a manual run with Apply = yes, when Compare passed and found something to apply.</span></li>
+        <li><span>The name of the backup: the environment and the run number.</span></li>
+        <li><span>What the next line does, in one sentence…</span></li>
+        <li><span><code>--yes</code>: compare once more, save the current S3 file, upload <code>truststore.pem</code> and read it back, point the trust store at the new S3 version, and wait until it is active.</span></li>
+        <li><span><code>always()</code>: runs even if the step above failed…</span></li>
+        <li><span>…and keeps the previous S3 file as a download on the run page.</span></li>
+        <li><span>A line on the Summary page saying where that backup is.</span></li>
+      </ol>
+    </div>
+
+    <h3 id="ts-errors-h">When something goes wrong</h3>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">You see</th><th scope="col">What it means</th><th scope="col">What to do</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Validate failed: Folder… not found, or truststore_update.py not found</th><td class="o" data-label="What it means">The files aren’t where the workflow expects them</td><td class="n" data-label="What to do">Check the paths; commit <code>truststore_update.py</code> next to <code>validate-truststore.sh</code></td></tr>
+          <tr><th scope="row">Trust store &lt;env&gt;: …truststore.pem not found</th><td class="o" data-label="What it means">That environment has no PEM file</td><td class="n" data-label="What to do">Add it, or check the folder name</td></tr>
+          <tr><th scope="row">Trust store &lt;env&gt;: validate-truststore.sh failed</th><td class="o" data-label="What it means">The team’s own check failed</td><td class="n" data-label="What to do">Its output is on the Summary page, opened</td></tr>
+          <tr><th scope="row">Red marks on lines of truststore.pem</th><td class="o" data-label="What it means">A certificate breaks one of CloudFront’s rules (wrong type, expired, not a CA, too many…)</td><td class="n" data-label="What to do">Fix or remove that certificate</td></tr>
+          <tr><th scope="row">Settings: truststore.json not found, needs account_id…, or says account …</th><td class="o" data-label="What it means"><code>truststore.json</code> is missing, incomplete, or for another account</td><td class="n" data-label="What to do">Fill it in; <code>account_id</code> must be that environment’s network account</td></tr>
+          <tr><th scope="row">A sign-in step fails</th><td class="o" data-label="What it means">The same causes as in the CloudFormation pipeline</td><td class="n" data-label="What to do">See <a href="#cfn-errors-h">its table</a></td></tr>
+          <tr><th scope="row">You are signed in to account …, but truststore.json is for account …</th><td class="o" data-label="What it means">The sign-in and the file disagree</td><td class="n" data-label="What to do">Fix <code>account_id</code>; nothing was changed</td></tr>
+          <tr><th scope="row">Trust store … is being updated right now (pending)</th><td class="o" data-label="What it means">Another update is still running</td><td class="n" data-label="What to do">Run again once it is active</td></tr>
+          <tr><th scope="row">Nothing to apply (notice)</th><td class="o" data-label="What it means">Your file has the same certificates as the one in S3</td><td class="n" data-label="What to do">Nothing to do: Apply is skipped</td></tr>
+          <tr><th scope="row">The trust store was not updated</th><td class="o" data-label="What it means">S3 has your file, but CloudFront refused the update (the reason is in the message)</td><td class="n" data-label="What to do">Run Apply again to retry</td></tr>
+          <tr><th scope="row">The trust store update failed</th><td class="o" data-label="What it means">CloudFront couldn’t build the trust store from the file</td><td class="n" data-label="What to do">The summary shows how to put the previous file back; it is also kept as an artifact</td></tr>
+          <tr><th scope="row">Still pending after 600s</th><td class="o" data-label="What it means">CloudFront is still working on the update</td><td class="n" data-label="What to do">Check the trust store in the console</td></tr>
+          <tr><th scope="row">CloudFront counts N CA certificates; your file has M</th><td class="o" data-label="What it means">The trust store is active, but the count differs from your file</td><td class="n" data-label="What to do">Compare the file with the trust store in the console</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="side-h">
+    <h2 id="side-h">The two pipelines side by side</h2>
+    <div class="table-wrap">
+      <table class="side">
+        <thead><tr><th scope="col"></th><th scope="col">CloudFormation deployment</th><th scope="col">Trust store</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">File</th><td class="o" data-label="CloudFormation"><code>latest_cft_deployment.yml</code></td><td class="n" data-label="Trust store"><code>validate-trust-store.yaml</code></td></tr>
+          <tr><th scope="row">Starts</th><td class="o" data-label="CloudFormation">Run workflow only</td><td class="n" data-label="Trust store">A pull request (check only), or Run workflow</td></tr>
+          <tr><th scope="row">You choose</th><td class="o" data-label="CloudFormation">Folder, stack, account, region, Deploy</td><td class="n" data-label="Trust store">Environment, Apply</td></tr>
+          <tr><th scope="row">Boxes</th><td class="o" data-label="CloudFormation">Prepare → Drift check → Change set → Deploy</td><td class="n" data-label="Trust store">Validate → Compare with S3 → Apply</td></tr>
+          <tr><th scope="row">Safe default</th><td class="o" data-label="CloudFormation">Deploy = no: stops at the change set</td><td class="n" data-label="Trust store">Apply = no: stops after Compare</td></tr>
+          <tr><th scope="row">Signs in</th><td class="o" data-label="CloudFormation">Every box, through IMS Root</td><td class="n" data-label="Trust store">Compare and Apply only, through IMS Root; never on a pull request</td></tr>
+          <tr><th scope="row">Changes in AWS</th><td class="o" data-label="CloudFormation">The stack, when the change set is executed</td><td class="n" data-label="Trust store">The file in S3 and the trust store, on Apply</td></tr>
+          <tr><th scope="row">One run at a time per</th><td class="o" data-label="CloudFormation">Account, region and stack</td><td class="n" data-label="Trust store">Environment</td></tr>
+          <tr><th scope="row">Going back</th><td class="o" data-label="CloudFormation">Deploy the previous template again; a failed update rolls back by itself</td><td class="n" data-label="Trust store">Revert the PEM in Git and Apply again; the previous S3 file is kept as an artifact</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="change-h">
+    <h2 id="change-h">Changing or extending them</h2>
+    <ul class="goodlist">
+      <li><b>Add an account to the CloudFormation pipeline</b>, once the client has made an <code>iamr</code> role for it: add its name to the roleAlias options (lines 36–39), and add a line like the ones in Pick the roles (lines 120–122) with the role name and the 12-digit account number.</li>
+      <li><b>Add an environment to the trust store pipeline</b>: create <code>truststore/&lt;env&gt;/</code> with <code>truststore.pem</code> and <code>truststore.json</code>, add it to the env options (lines 44–47), and add a line in Pick environment and role (lines 107–109).</li>
+      <li><b>Leave these as they are:</b> <code>role-chaining: true</code>, <code>role-skip-session-tagging: true</code> and <code>role-duration-seconds: 3600</code> in every second sign-in step, and <code>id-token: write</code> (the whole CloudFormation workflow; only Compare and Apply in the trust store one).</li>
+      <li><b>Large templates</b> still use the <code>S3_ACCESS_GITHUB_ROLE</code> secret. If the client wants that to go through IMS Root as well, the S3 step needs the same two sign-in steps and an <code>iamr</code> role for the shared services account.</li>
+      <li><b>The drift-aware version</b> of the CloudFormation pipeline (drift shown as information, and a change set that lists what it would undo) is still on the old sign-in. It needs the same conversion before it can replace this one.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="first-h">
+    <h2 id="first-h">Before the first real runs</h2>
+    <ol class="todo">
+      <li>Ask the client to confirm that <code>iamr-net-prd-deploy</code> and <code>iamr-net-tst-deploy</code> exist in network prd and tst. Only the ppe account’s file was shared.</li>
+      <li>CloudFormation: run once on PPE-NETWORK with <b>Deploy = no</b>. The Prepare summary should say <b>Signed in as iamr-net-ppe-deploy (via IMS Root)</b>.</li>
+      <li>Trust store: run once for tst with <b>Apply = no</b>. Compare should list the certificates as unchanged, unless your file differs from S3.</li>
+      <li>Then make a real change in tst and apply it, before doing the same in ppe and prd.</li>
+    </ol>
+  </section>
+
+  <footer>Code is copied from latest_cft_deployment.yml and validate-trust-store.yaml as converted on 30 October 2026, with their real line numbers. The change list and the pull request check output were made by running the pipelines’ own code on sample data; the Prepare log, stack and folder names are examples.</footer>
+</main>
+
+<script>
+const DATA = {"panels": {"s_signin": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 176, "t": "      - name: Sign in to IMS Root", "m": 1}, {"n": 177, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 178, "t": "        with:", "m": null}, {"n": 179, "t": "          role-to-assume: ${{ steps.setrole.outputs.broker_role }}", "m": 2}, {"n": 180, "t": "          role-session-name: ims-root-${{ github.run_id }}", "m": 3}, {"n": 181, "t": "          aws-region: ${{ env.REGION }}", "m": null}, {"n": 182, "t": "", "m": null}, {"n": 183, "t": "      - name: Switch to the deploy role in the target account", "m": 4}, {"n": 184, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 185, "t": "        with:", "m": null}, {"n": 186, "t": "          role-chaining: true", "m": 5}, {"n": 187, "t": "          role-to-assume: ${{ steps.setrole.outputs.target_role }}", "m": 6}, {"n": 188, "t": "          role-session-name: cft-${{ github.run_id }}", "m": 7}, {"n": 189, "t": "          role-duration-seconds: 3600", "m": 8}, {"n": 190, "t": "          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession", "m": 9}, {"n": 191, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "new"}, "c_form": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 19, "t": "name: CloudFormation Stack using S3 as required", "m": 1}, {"n": 20, "t": "run-name: \"${{ inputs.deploy == 'yes' && '🚀' || '📝' }} ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}\"", "m": 2}, {"n": 21, "t": "", "m": null}, {"n": 22, "t": "on:", "m": null}, {"n": 23, "t": "  workflow_dispatch:", "m": 3}, {"n": 24, "t": "    inputs:", "m": null}, {"n": 25, "t": "      folderPath:", "m": 4}, {"n": 26, "t": "        description: \"Path under cloudformation/ (e.g. 'vpc' or 'network/peering')\"", "m": null}, {"n": 27, "t": "        required: true", "m": null}, {"n": 28, "t": "      stackName:", "m": 5}, {"n": 29, "t": "        description: \"Name of CloudFormation stack to deploy\"", "m": null}, {"n": 30, "t": "        required: true", "m": null}, {"n": 31, "t": "      roleAlias:", "m": 6}, {"n": 32, "t": "        description: \"Account to deploy to (only accounts with an iamr role in IMS Root)\"", "m": null}, {"n": 33, "t": "        required: true", "m": null}, {"n": 34, "t": "        type: choice", "m": null}, {"n": 35, "t": "        default: 'NETWORK'", "m": null}, {"n": 36, "t": "        options:", "m": null}, {"n": 37, "t": "          - NETWORK", "m": null}, {"n": 38, "t": "          - PPE-NETWORK", "m": null}, {"n": 39, "t": "          - TST-NETWORK", "m": null}, {"n": 40, "t": "      AWS_REGION:", "m": 7}, {"n": 41, "t": "        description: \"AWS Region for deployment – pick one, or 'other' and type it under Custom region\"", "m": null}, {"n": 42, "t": "        required: false", "m": null}, {"n": 43, "t": "        type: choice", "m": null}, {"n": 44, "t": "        default: 'eu-west-1'", "m": null}, {"n": 45, "t": "        options:", "m": null}, {"n": 46, "t": "          - eu-west-1", "m": null}, {"n": 47, "t": "          - us-east-1", "m": null}, {"n": 48, "t": "          - other", "m": null}, {"n": 49, "t": "      CUSTOM_REGION:", "m": 8}, {"n": 50, "t": "        description: \"Only used when AWS Region is 'other' (e.g. ap-south-1)\"", "m": null}, {"n": 51, "t": "        required: false", "m": null}, {"n": 52, "t": "        default: ''", "m": null}, {"n": 53, "t": "      deploy:", "m": 9}, {"n": 54, "t": "        description: \"Deploy the change set once it is created? 'no' = stop at the change set (you execute it in the console)\"", "m": null}, {"n": 55, "t": "        required: false", "m": null}, {"n": 56, "t": "        type: choice", "m": null}, {"n": 57, "t": "        default: 'no'", "m": null}, {"n": 58, "t": "        options:", "m": null}, {"n": 59, "t": "          - 'no'", "m": null}, {"n": 60, "t": "          - 'yes'", "m": null}], "tone": "new"}, "c_settings": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 62, "t": "permissions:", "m": null}, {"n": 63, "t": "  id-token: write", "m": 1}, {"n": 64, "t": "  contents: read", "m": null}, {"n": 65, "t": "", "m": null}, {"n": 66, "t": "# One run per stack at a time: a second run on the same stack waits instead of colliding.", "m": null}, {"n": 67, "t": "concurrency:", "m": null}, {"n": 68, "t": "  group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}-${{ inputs.stackName }}", "m": 2}, {"n": 69, "t": "  cancel-in-progress: false", "m": 3}, {"n": 70, "t": "", "m": null}, {"n": 71, "t": "env:", "m": null}, {"n": 72, "t": "  BUCKET_NAME: ss-cfts3", "m": 4}, {"n": 73, "t": "  IMS_ROOT_ACCOUNT: \"390403857119\"   # where GitHub signs in; the iamr roles there switch into the target accounts", "m": 5}, {"n": 74, "t": "  # The workflow inputs, handed to the scripts as plain env vars (nothing new to configure).", "m": null}, {"n": 75, "t": "  STACK_NAME: ${{ inputs.stackName }}", "m": 6}, {"n": 76, "t": "  FOLDER_PATH: ${{ inputs.folderPath }}", "m": null}, {"n": 77, "t": "  ROLE_ALIAS: ${{ inputs.roleAlias }}", "m": null}, {"n": 78, "t": "  # Region = the dropdown pick, or the Custom region text when the pick is 'other'", "m": null}, {"n": 79, "t": "  REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}", "m": 7}, {"n": 80, "t": "  DEPLOY: ${{ inputs.deploy }}", "m": null}, {"n": 81, "t": "", "m": null}, {"n": 82, "t": "defaults:", "m": null}, {"n": 83, "t": "  run:", "m": null}, {"n": 84, "t": "    shell: bash   # runs as bash -eo pipefail: any failing command fails the stage", "m": 8}], "tone": "new"}, "c_roles": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 86, "t": "jobs:", "m": null}, {"n": 87, "t": "  # ── 1 · Prepare: resolve the role, find the files, check the stack ─────────────", "m": null}, {"n": 88, "t": "  prepare:", "m": null}, {"n": 89, "t": "    name: 🧰 Prepare", "m": 1}, {"n": 90, "t": "    runs-on: ubuntu-latest", "m": 2}, {"n": 91, "t": "    outputs:", "m": 3}, {"n": 92, "t": "      broker_role: ${{ steps.setrole.outputs.broker_role }}", "m": null}, {"n": 93, "t": "      target_role: ${{ steps.setrole.outputs.target_role }}", "m": null}, {"n": 94, "t": "      account: ${{ steps.setrole.outputs.account }}", "m": null}, {"n": 95, "t": "      template_file: ${{ steps.find_files.outputs.template_file }}", "m": null}, {"n": 96, "t": "      params_file: ${{ steps.find_files.outputs.params_file }}", "m": null}, {"n": 97, "t": "      large: ${{ steps.find_files.outputs.large }}", "m": null}, {"n": 98, "t": "      mode: ${{ steps.stack.outputs.mode }}", "m": null}, {"n": 99, "t": "    steps:", "m": null}, {"n": 100, "t": "      - name: Checkout repository", "m": null}, {"n": 101, "t": "        uses: actions/checkout@v4", "m": 4}, {"n": 102, "t": "", "m": null}, {"n": 103, "t": "      - name: Pick the roles", "m": null}, {"n": 104, "t": "        id: setrole", "m": null}, {"n": 105, "t": "        run: |", "m": null}, {"n": 106, "t": "          # IMS sign-in: GitHub → iamr-<name> in IMS Root → the same-named role in the target account.", "m": null}, {"n": 107, "t": "          # Role names and account IDs as in iam-roles-template.yml / its params (plat-eng/AWS-Landing-Zone).", "m": null}, {"n": 108, "t": "          region_re='^[a-z]{2}(-[a-z]+)+-[0-9]+$'", "m": 5}, {"n": 109, "t": "          if [[ ! \"$REGION\" =~ $region_re ]]; then", "m": null}, {"n": 110, "t": "            if [ \"$REGION\" = other ]; then", "m": null}, {"n": 111, "t": "              msg=\"Choose a region, or type one under 'Custom region' (e.g. ap-south-1).\"", "m": null}, {"n": 112, "t": "            else", "m": null}, {"n": 113, "t": "              msg=\"'$REGION' is not a valid AWS region (e.g. eu-west-1).\"", "m": null}, {"n": 114, "t": "            fi", "m": null}, {"n": 115, "t": "            echo \"::error title=Invalid region::$msg\"", "m": 6}, {"n": 116, "t": "            exit 1", "m": null}, {"n": 117, "t": "          fi", "m": null}, {"n": 118, "t": "", "m": null}, {"n": 119, "t": "          case \"$ROLE_ALIAS\" in", "m": null}, {"n": 120, "t": "            NETWORK)     role=iamr-net-prd-deploy; account=584477831165 ;;", "m": 7}, {"n": 121, "t": "            PPE-NETWORK) role=iamr-net-ppe-deploy; account=097357356161 ;;", "m": null}, {"n": 122, "t": "            TST-NETWORK) role=iamr-net-tst-deploy; account=762649987860 ;;", "m": null}, {"n": 123, "t": "            # Add an account here (and to the roleAlias options) once iam-roles-template.yml has an iamr role for it", "m": null}, {"n": 124, "t": "            *)", "m": null}, {"n": 125, "t": "              echo \"::error title=Unknown role alias::No iamr role for alias '$ROLE_ALIAS'\"", "m": 8}, {"n": 126, "t": "              exit 1", "m": null}, {"n": 127, "t": "              ;;", "m": null}, {"n": 128, "t": "          esac", "m": null}, {"n": 129, "t": "          echo \"🔑 Role alias : $ROLE_ALIAS → $role in account $account (signed in through IMS Root $IMS_ROOT_ACCOUNT)\"", "m": 9}, {"n": 130, "t": "          {", "m": null}, {"n": 131, "t": "            echo \"broker_role=arn:aws:iam::$IMS_ROOT_ACCOUNT:role/$role\"", "m": 10}, {"n": 132, "t": "            echo \"target_role=arn:aws:iam::$account:role/$role\"", "m": null}, {"n": 133, "t": "            echo \"account=$account\"", "m": null}, {"n": 134, "t": "          } >> \"$GITHUB_OUTPUT\"", "m": null}], "tone": "new"}, "c_files": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 136, "t": "      - name: Find template and params", "m": null}, {"n": 137, "t": "        id: find_files", "m": null}, {"n": 138, "t": "        run: |", "m": null}, {"n": 139, "t": "          fail() { echo \"::error title=Prepare failed::$1\"; exit 1; }", "m": 1}, {"n": 140, "t": "", "m": null}, {"n": 141, "t": "          [[ \"$STACK_NAME\" =~ ^[A-Za-z][A-Za-z0-9-]{0,127}$ ]] ||", "m": 2}, {"n": 142, "t": "            fail \"'$STACK_NAME' is not a valid stack name (letters, digits and hyphens, starting with a letter).\"", "m": null}, {"n": 143, "t": "", "m": null}, {"n": 144, "t": "          dir=\"cloudformation/${FOLDER_PATH}\"", "m": null}, {"n": 145, "t": "          [ -d \"$dir\" ] || fail \"Folder $dir not found.\"", "m": 3}, {"n": 146, "t": "", "m": null}, {"n": 147, "t": "          # Template directly in the folder first; sub-folders only as a fallback (as before).", "m": null}, {"n": 148, "t": "          match=( -type f \\( -iname \"*-template.yaml\" -o -iname \"*-template.yml\" \\) )", "m": null}, {"n": 149, "t": "          mapfile -t found < <(find \"$dir\" -maxdepth 1 \"${match[@]}\" | sort)", "m": 4}, {"n": 150, "t": "          [ \"${#found[@]}\" -gt 0 ] || mapfile -t found < <(find \"$dir\" \"${match[@]}\" | sort)", "m": 5}, {"n": 151, "t": "          [ \"${#found[@]}\" -gt 0 ] || fail \"No template matching '*-template.y[a]ml' found in $dir\"", "m": null}, {"n": 152, "t": "          if [ \"${#found[@]}\" -gt 1 ]; then", "m": null}, {"n": 153, "t": "            echo \"::warning title=More than one template::${#found[@]} templates in $dir – using ${found[0]}\"", "m": 6}, {"n": 154, "t": "          fi", "m": null}, {"n": 155, "t": "          template_file=\"${found[0]}\"", "m": null}, {"n": 156, "t": "", "m": null}, {"n": 157, "t": "          params_file=\"$dir/params.json\"", "m": null}, {"n": 158, "t": "          [ -f \"$params_file\" ] || fail \"params.json not found in $dir\"", "m": 7}, {"n": 159, "t": "          jq -e 'type == \"array\"' \"$params_file\" > /dev/null ||", "m": 8}, {"n": 160, "t": "            fail \"$params_file must be a JSON list of ParameterKey/ParameterValue objects.\"", "m": null}, {"n": 161, "t": "", "m": null}, {"n": 162, "t": "          size=$(stat --format=%s \"$template_file\")", "m": null}, {"n": 163, "t": "          large=false", "m": null}, {"n": 164, "t": "          if [ \"$size\" -gt 51200 ]; then large=true; fi", "m": 9}, {"n": 165, "t": "", "m": null}, {"n": 166, "t": "          echo \"📄 Template   : $template_file ($size bytes)\"", "m": null}, {"n": 167, "t": "          echo \"📄 Parameters : $params_file ($(jq length \"$params_file\") entries)\"", "m": null}, {"n": 168, "t": "          if [ \"$large\" = true ]; then echo \"📦 Over 51,200 bytes – the template will go through S3.\"; fi", "m": null}, {"n": 169, "t": "          {", "m": null}, {"n": 170, "t": "            echo \"template_file=$template_file\"", "m": null}, {"n": 171, "t": "            echo \"params_file=$params_file\"", "m": null}, {"n": 172, "t": "            echo \"size=$size\"", "m": null}, {"n": 173, "t": "            echo \"large=$large\"", "m": null}, {"n": 174, "t": "          } >> \"$GITHUB_OUTPUT\"", "m": null}], "tone": "new"}, "c_stack": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 193, "t": "      - name: Check stack status", "m": null}, {"n": 194, "t": "        id: stack", "m": null}, {"n": 195, "t": "        env:", "m": null}, {"n": 196, "t": "          TEMPLATE_FILE: ${{ steps.find_files.outputs.template_file }}", "m": null}, {"n": 197, "t": "          PARAMS_FILE: ${{ steps.find_files.outputs.params_file }}", "m": null}, {"n": 198, "t": "          SIZE: ${{ steps.find_files.outputs.size }}", "m": null}, {"n": 199, "t": "          LARGE: ${{ steps.find_files.outputs.large }}", "m": null}, {"n": 200, "t": "          EXPECTED_ACCOUNT: ${{ steps.setrole.outputs.account }}", "m": null}, {"n": 201, "t": "          TARGET_ROLE: ${{ steps.setrole.outputs.target_role }}", "m": null}, {"n": 202, "t": "        run: |", "m": null}, {"n": 203, "t": "          account=$(aws sts get-caller-identity --query Account --output text)", "m": 1}, {"n": 204, "t": "          echo \"☁️  Account    : $account ($REGION) as ${TARGET_ROLE##*/}\"", "m": null}, {"n": 205, "t": "          if [ \"$account\" != \"$EXPECTED_ACCOUNT\" ]; then", "m": 2}, {"n": 206, "t": "            echo \"::error title=Wrong account::Signed in to $account, but $ROLE_ALIAS is account $EXPECTED_ACCOUNT.\"", "m": null}, {"n": 207, "t": "            exit 1", "m": null}, {"n": 208, "t": "          fi", "m": null}, {"n": 209, "t": "", "m": null}, {"n": 210, "t": "          if ! status=$(aws cloudformation describe-stacks --stack-name \"$STACK_NAME\" \\", "m": 3}, {"n": 211, "t": "                          --query 'Stacks[0].StackStatus' --output text 2> \"$RUNNER_TEMP/err\"); then", "m": null}, {"n": 212, "t": "            grep -q 'does not exist' \"$RUNNER_TEMP/err\" || { cat \"$RUNNER_TEMP/err\"; exit 1; }", "m": null}, {"n": 213, "t": "            status=NOT_FOUND", "m": null}, {"n": 214, "t": "          fi", "m": null}, {"n": 215, "t": "", "m": null}, {"n": 216, "t": "          case \"$status\" in", "m": null}, {"n": 217, "t": "            NOT_FOUND|REVIEW_IN_PROGRESS)", "m": 4}, {"n": 218, "t": "              mode=create", "m": null}, {"n": 219, "t": "              plan=\"🆕 New stack → CREATE change set (drift check not needed)\" ;;", "m": null}, {"n": 220, "t": "            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE|IMPORT_COMPLETE|IMPORT_ROLLBACK_COMPLETE)", "m": 5}, {"n": 221, "t": "              mode=update", "m": null}, {"n": 222, "t": "              plan=\"🔄 Exists ($status) → drift check, then UPDATE change set\" ;;", "m": null}, {"n": 223, "t": "            ROLLBACK_COMPLETE)", "m": 6}, {"n": 224, "t": "              echo \"::error title=Stack can't be updated::$STACK_NAME is in ROLLBACK_COMPLETE (its first create failed). Delete the stack in the console, then re-run.\"", "m": null}, {"n": 225, "t": "              exit 1 ;;", "m": null}, {"n": 226, "t": "            *_IN_PROGRESS)", "m": 7}, {"n": 227, "t": "              echo \"::error title=Stack is busy::$STACK_NAME is $status. Wait for it to finish, then re-run.\"", "m": null}, {"n": 228, "t": "              exit 1 ;;", "m": null}, {"n": 229, "t": "            *)", "m": null}, {"n": 230, "t": "              echo \"::error title=Stack can't be updated::$STACK_NAME is in $status. Fix it in the CloudFormation console, then re-run.\"", "m": null}, {"n": 231, "t": "              exit 1 ;;", "m": null}, {"n": 232, "t": "          esac", "m": null}, {"n": 233, "t": "          echo \"🏗️  Stack      : $STACK_NAME – $plan\"", "m": null}, {"n": 234, "t": "          if [ \"$DEPLOY\" = yes ]; then", "m": 8}, {"n": 235, "t": "            dep=\"🚀 yes – the change set is executed right after it is created\"", "m": null}, {"n": 236, "t": "          else", "m": null}, {"n": 237, "t": "            dep=\"✋ no – stops at the change set, you execute it in the console\"", "m": null}, {"n": 238, "t": "          fi", "m": null}, {"n": 239, "t": "          echo \"🚀 Deploy     : $dep\"", "m": null}, {"n": 240, "t": "          echo \"mode=$mode\" >> \"$GITHUB_OUTPUT\"", "m": null}, {"n": 241, "t": "", "m": null}, {"n": 242, "t": "          how=\"sent inline\"", "m": null}, {"n": 243, "t": "          if [ \"$LARGE\" = true ]; then how=\"uploaded to S3 – over 51,200 bytes\"; fi", "m": null}, {"n": 244, "t": "          {", "m": null}, {"n": 245, "t": "            echo \"### 🧰 Prepare\"", "m": 9}, {"n": 246, "t": "            echo \"| | |\"", "m": null}, {"n": 247, "t": "            echo \"|---|---|\"", "m": null}, {"n": 248, "t": "            printf '| **Stack** | `%s` |\\n' \"$STACK_NAME\"", "m": null}, {"n": 249, "t": "            printf '| **Account** | %s · `%s` · %s |\\n' \"$ROLE_ALIAS\" \"$account\" \"$REGION\"", "m": null}, {"n": 250, "t": "            printf '| **Signed in as** | `%s` (via IMS Root) |\\n' \"${TARGET_ROLE##*/}\"", "m": 10}, {"n": 251, "t": "            printf '| **Template** | `%s` (%s bytes, %s) |\\n' \"$TEMPLATE_FILE\" \"$SIZE\" \"$how\"", "m": null}, {"n": 252, "t": "            printf '| **Parameters** | `%s` |\\n' \"$PARAMS_FILE\"", "m": null}, {"n": 253, "t": "            printf '| **Plan** | %s |\\n' \"$plan\"", "m": null}, {"n": 254, "t": "            printf '| **Deploy** | %s |\\n' \"$dep\"", "m": null}, {"n": 255, "t": "          } >> \"$GITHUB_STEP_SUMMARY\"", "m": null}], "tone": "new"}, "c_drift": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 257, "t": "  # ── 2 · Drift check: existing stacks only – stop if anything drifted ──────────", "m": null}, {"n": 258, "t": "  drift:", "m": null}, {"n": 259, "t": "    name: 🔎 Drift check", "m": 1}, {"n": 260, "t": "    needs: prepare", "m": null}, {"n": 261, "t": "    if: needs.prepare.outputs.mode == 'update'", "m": 2}, {"n": 262, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 263, "t": "    steps:", "m": null}, {"gap": "the same two sign-in steps as Prepare"}, {"n": 281, "t": "      - name: Detect drift", "m": null}, {"n": 282, "t": "        run: |", "m": null}, {"n": 283, "t": "          echo \"🔎 Checking $STACK_NAME for drift (changes made outside CloudFormation)…\"", "m": null}, {"n": 284, "t": "          id=$(aws cloudformation detect-stack-drift --stack-name \"$STACK_NAME\" \\", "m": 3}, {"n": 285, "t": "                 --query StackDriftDetectionId --output text)", "m": null}, {"n": 286, "t": "          while :; do", "m": 4}, {"n": 287, "t": "            res=$(aws cloudformation describe-stack-drift-detection-status \\", "m": null}, {"n": 288, "t": "                    --stack-drift-detection-id \"$id\" --output json)", "m": null}, {"n": 289, "t": "            [ \"$(jq -r .DetectionStatus <<< \"$res\")\" = DETECTION_IN_PROGRESS ] || break", "m": null}, {"n": 290, "t": "            echo \"   … still checking\"", "m": null}, {"n": 291, "t": "            sleep 10", "m": null}, {"n": 292, "t": "          done", "m": null}, {"n": 293, "t": "          detection=$(jq -r .DetectionStatus <<< \"$res\")", "m": null}, {"n": 294, "t": "          drift=$(jq -r '.StackDriftStatus // \"UNKNOWN\"' <<< \"$res\")", "m": null}, {"n": 295, "t": "          count=$(jq -r '.DriftedStackResourceCount // 0' <<< \"$res\")", "m": null}, {"n": 296, "t": "          reason=$(jq -r '.DetectionStatusReason // \"\"' <<< \"$res\")", "m": null}, {"n": 297, "t": "", "m": null}, {"n": 298, "t": "          if [ \"$drift\" = DRIFTED ]; then", "m": 5}, {"gap": "collect the drifted resources and what changed in each"}, {"n": 315, "t": "            echo", "m": null}, {"n": 316, "t": "            echo \"❌ DRIFT FOUND – $count resource(s) no longer match the template:\"", "m": 6}, {"gap": "…print the table and the differences"}, {"n": 324, "t": "            echo", "m": null}, {"n": 325, "t": "            echo \"⛔ Stopping before the change set. Undo the manual change (or add it to the template), then re-run.\"", "m": 7}, {"gap": "write the same table to the Summary page"}, {"n": 341, "t": "            echo \"::error title=Drift detected::$count resource(s) in $STACK_NAME drifted from the template – stopped before the change set.\"", "m": null}, {"n": 342, "t": "            exit 1", "m": 8}, {"n": 343, "t": "          fi", "m": null}, {"n": 344, "t": "", "m": null}, {"n": 345, "t": "          if [ \"$drift\" = IN_SYNC ] && [ \"$detection\" = DETECTION_COMPLETE ]; then", "m": 9}, {"n": 346, "t": "            echo \"✅ No drift – every resource matches the template.\"", "m": null}, {"n": 347, "t": "            printf '### 🔎 Drift check\\n✅ No drift – the stack matches its template.\\n' >> \"$GITHUB_STEP_SUMMARY\"", "m": null}, {"n": 348, "t": "          else", "m": null}, {"n": 349, "t": "            msg=\"Drift check couldn't cover every resource ($detection, $drift)${reason:+: $reason}\"", "m": null}, {"n": 350, "t": "            echo \"⚠️  $msg – continuing.\"", "m": null}, {"n": 351, "t": "            echo \"::warning title=Drift check incomplete::$msg\"", "m": 10}, {"n": 352, "t": "            printf '### 🔎 Drift check\\n⚠️ %s – continuing.\\n' \"$msg\" >> \"$GITHUB_STEP_SUMMARY\"", "m": null}, {"n": 353, "t": "          fi", "m": null}], "tone": "new"}, "c_cshead": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 355, "t": "  # ── 3 · Change set: create it and show what will change ───────────────────────", "m": null}, {"n": 356, "t": "  changeset:", "m": null}, {"n": 357, "t": "    name: 📝 Change set", "m": 1}, {"n": 358, "t": "    needs: [prepare, drift]", "m": null}, {"n": 359, "t": "    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.drift.result == 'success' || needs.drift.result == 'skipped') }}", "m": 2}, {"n": 360, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 361, "t": "    outputs:", "m": 3}, {"n": 362, "t": "      has_changes: ${{ steps.cs.outputs.has_changes }}", "m": null}, {"n": 363, "t": "      change_set: ${{ steps.cs.outputs.change_set }}", "m": null}, {"n": 364, "t": "      stack_id: ${{ steps.cs.outputs.stack_id }}", "m": null}, {"n": 365, "t": "    env:", "m": 4}, {"n": 366, "t": "      TEMPLATE_FILE: ${{ needs.prepare.outputs.template_file }}", "m": null}, {"n": 367, "t": "      PARAMS_FILE: ${{ needs.prepare.outputs.params_file }}", "m": null}, {"n": 368, "t": "      MODE: ${{ needs.prepare.outputs.mode }}", "m": null}], "tone": "new"}, "c_s3": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 373, "t": "      - name: Configure AWS credentials for S3 upload", "m": null}, {"n": 374, "t": "        if: needs.prepare.outputs.large == 'true'", "m": 1}, {"n": 375, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 376, "t": "        with:", "m": null}, {"n": 377, "t": "          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}", "m": 2}, {"n": 378, "t": "          role-session-name: s3_upload", "m": null}, {"n": 379, "t": "          aws-region: ${{ env.REGION }}", "m": null}, {"n": 380, "t": "", "m": null}, {"n": 381, "t": "      - name: Generate pre-signed PUT/GET URLs and upload template", "m": null}, {"n": 382, "t": "        if: needs.prepare.outputs.large == 'true'", "m": null}, {"n": 383, "t": "        id: presign_upload", "m": null}, {"n": 384, "t": "        run: |", "m": null}, {"n": 385, "t": "          key=\"${STACK_NAME}-$(date +%s).yaml\"   # unique key per run", "m": 3}, {"n": 386, "t": "          echo \"📦 Uploading the large template to S3 as $key\"", "m": null}, {"n": 387, "t": "          pip install --quiet boto3", "m": null}, {"n": 388, "t": "          urls=$(python cloudformation/production/shared_services/Github_s3/presign.py \"$key\")", "m": 4}, {"n": 389, "t": "          put_url=$(grep '^put_url=' <<< \"$urls\" | cut -d'=' -f2- || true)", "m": null}, {"n": 390, "t": "          get_url=$(grep '^get_url=' <<< \"$urls\" | cut -d'=' -f2- || true)", "m": null}, {"n": 391, "t": "          if [ -z \"$put_url\" ] || [ -z \"$get_url\" ]; then", "m": null}, {"n": 392, "t": "            echo \"::error title=Upload failed::presign.py did not return put_url and get_url\"", "m": null}, {"n": 393, "t": "            exit 1", "m": null}, {"n": 394, "t": "          fi", "m": null}, {"n": 395, "t": "          curl --fail --silent --show-error -X PUT -T \"$TEMPLATE_FILE\" \"$put_url\" ||", "m": 5}, {"n": 396, "t": "            { echo \"::error title=Upload failed::Could not upload the template to S3\"; exit 1; }", "m": null}, {"n": 397, "t": "          echo \"✔ Uploaded\"", "m": null}, {"n": 398, "t": "          echo \"get_url=$get_url\" >> \"$GITHUB_OUTPUT\"", "m": 6}], "tone": "new"}, "c_params": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 417, "t": "      - name: Create change set", "m": null}, {"n": 418, "t": "        id: cs", "m": null}, {"n": 419, "t": "        env:", "m": null}, {"n": 420, "t": "          TEMPLATE_URL: ${{ steps.presign_upload.outputs.get_url }}", "m": null}, {"n": 421, "t": "        run: |", "m": null}, {"n": 422, "t": "          if [ -n \"$TEMPLATE_URL\" ]; then", "m": 1}, {"n": 423, "t": "            tpl=(--template-url \"$TEMPLATE_URL\")", "m": null}, {"n": 424, "t": "          else", "m": null}, {"n": 425, "t": "            tpl=(--template-body \"file://$TEMPLATE_FILE\")", "m": null}, {"n": 426, "t": "          fi", "m": null}, {"n": 427, "t": "", "m": null}, {"n": 428, "t": "          echo \"🧪 Checking template…\"", "m": null}, {"n": 429, "t": "          aws cloudformation get-template-summary \"${tpl[@]}\" --output json > \"$RUNNER_TEMP/template.json\"", "m": 2}, {"n": 430, "t": "          echo \"✔ Template OK – $(jq '.Parameters // [] | length' \"$RUNNER_TEMP/template.json\") parameter(s) declared\"", "m": null}, {"n": 431, "t": "", "m": null}, {"n": 432, "t": "          # Parameters follow the same rules as `aws cloudformation deploy`:", "m": 3}, {"n": 433, "t": "          #   • value from params.json when it's there", "m": null}, {"n": 434, "t": "          #   • not in params.json → existing stack keeps its current value, new stack uses the template default", "m": null}, {"n": 435, "t": "          #   • keys in params.json that the template doesn't declare are ignored (with a warning)", "m": null}, {"n": 436, "t": "          if [ \"$MODE\" = update ]; then", "m": 4}, {"n": 437, "t": "            aws cloudformation describe-stacks --stack-name \"$STACK_NAME\" \\", "m": null}, {"n": 438, "t": "              --query 'Stacks[0].Parameters[].ParameterKey' --output json > \"$RUNNER_TEMP/current.json\"", "m": null}, {"n": 439, "t": "          else", "m": null}, {"n": 440, "t": "            echo '[]' > \"$RUNNER_TEMP/current.json\"", "m": null}, {"n": 441, "t": "          fi", "m": null}, {"n": 442, "t": "          jq --slurpfile tpl \"$RUNNER_TEMP/template.json\" --slurpfile cur \"$RUNNER_TEMP/current.json\" '", "m": null}, {"n": 443, "t": "            . as $given", "m": null}, {"n": 444, "t": "            | ($cur[0] // []) as $current", "m": null}, {"n": 445, "t": "            | [ ($tpl[0].Parameters // [])[].ParameterKey as $k", "m": null}, {"n": 446, "t": "                | ([$given[] | select(.ParameterKey == $k)][0]) as $p", "m": null}, {"n": 447, "t": "                | if $p != null and ($p | has(\"ParameterValue\")) then", "m": 5}, {"n": 448, "t": "                    {ParameterKey: $k, ParameterValue: ($p.ParameterValue | if type == \"array\" then join(\",\") else tostring end)}", "m": null}, {"n": 449, "t": "                  elif ($current | index($k)) != null then", "m": null}, {"n": 450, "t": "                    {ParameterKey: $k, UsePreviousValue: true}", "m": 6}, {"n": 451, "t": "                  else empty end ]", "m": null}, {"n": 452, "t": "          ' \"$PARAMS_FILE\" > \"$RUNNER_TEMP/params.json\"", "m": null}, {"n": 453, "t": "", "m": null}, {"n": 454, "t": "          # NoEcho parameter values are masked everywhere in this log", "m": 7}, {"n": 455, "t": "          jq -r --slurpfile tpl \"$RUNNER_TEMP/template.json\" '", "m": null}, {"n": 456, "t": "            [($tpl[0].Parameters // [])[] | select(.NoEcho) | .ParameterKey] as $hidden", "m": null}, {"n": 457, "t": "            | .[] | select(.ParameterKey as $k | $hidden | index($k) != null)", "m": null}, {"n": 458, "t": "            | .ParameterValue // empty | select(length > 0)", "m": null}, {"n": 459, "t": "          ' \"$RUNNER_TEMP/params.json\" | while IFS= read -r value; do echo \"::add-mask::$value\"; done", "m": null}, {"n": 460, "t": "", "m": null}, {"n": 461, "t": "          jq -r --slurpfile tpl \"$RUNNER_TEMP/template.json\" '", "m": null}, {"n": 462, "t": "            (($tpl[0].Parameters // []) | map(.ParameterKey)) as $declared", "m": null}, {"n": 463, "t": "            | .[].ParameterKey | select(. as $k | $declared | index($k) == null)", "m": null}, {"n": 464, "t": "          ' \"$PARAMS_FILE\" | while read -r key; do", "m": null}, {"n": 465, "t": "            echo \"::warning title=Unused parameter::'$key' is in params.json but not in the template – ignored\"", "m": 8}, {"n": 466, "t": "          done", "m": null}], "tone": "new"}, "c_create": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 478, "t": "          params=()", "m": null}, {"n": 479, "t": "          if [ \"$(jq length \"$RUNNER_TEMP/params.json\")\" -gt 0 ]; then", "m": null}, {"n": 480, "t": "            params=(--parameters \"file://$RUNNER_TEMP/params.json\")", "m": null}, {"n": 481, "t": "          fi", "m": null}, {"n": 482, "t": "", "m": null}, {"n": 483, "t": "          cs_name=\"gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"", "m": 1}, {"n": 484, "t": "          cs_type=UPDATE", "m": null}, {"n": 485, "t": "          if [ \"$MODE\" = create ]; then cs_type=CREATE; fi", "m": 2}, {"n": 486, "t": "          echo \"📝 Creating $cs_type change set $cs_name…\"", "m": null}, {"n": 487, "t": "          if ! created=$(aws cloudformation create-change-set \\", "m": 3}, {"n": 488, "t": "                           --stack-name \"$STACK_NAME\" \\", "m": null}, {"n": 489, "t": "                           --change-set-name \"$cs_name\" \\", "m": null}, {"n": 490, "t": "                           --change-set-type \"$cs_type\" \\", "m": null}, {"n": 491, "t": "                           \"${tpl[@]}\" \"${params[@]}\" \\", "m": null}, {"n": 492, "t": "                           --capabilities CAPABILITY_NAMED_IAM \\", "m": 4}, {"n": 493, "t": "                           --description \"GitHub Actions run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}\" \\", "m": 5}, {"n": 494, "t": "                           --output json); then", "m": null}, {"n": 495, "t": "            echo \"::error title=Change set failed::CloudFormation rejected the change set – see the error above.\"", "m": null}, {"n": 496, "t": "            exit 1", "m": null}, {"n": 497, "t": "          fi", "m": null}, {"n": 498, "t": "          cs_id=$(jq -r .Id <<< \"$created\")", "m": null}, {"n": 499, "t": "          stack_id=$(jq -r .StackId <<< \"$created\")", "m": null}, {"n": 500, "t": "", "m": null}, {"n": 501, "t": "          while :; do", "m": 6}, {"n": 502, "t": "            cs=$(aws cloudformation describe-change-set --stack-name \"$STACK_NAME\" \\", "m": null}, {"n": 503, "t": "                   --change-set-name \"$cs_name\" --include-property-values --output json)", "m": null}, {"n": 504, "t": "            status=$(jq -r .Status <<< \"$cs\")", "m": null}, {"n": 505, "t": "            case \"$status\" in", "m": null}, {"n": 506, "t": "              CREATE_PENDING|CREATE_IN_PROGRESS) sleep 5 ;;", "m": null}, {"n": 507, "t": "              *) break ;;", "m": null}, {"n": 508, "t": "            esac", "m": null}, {"n": 509, "t": "          done", "m": null}, {"n": 510, "t": "          reason=$(jq -r '.StatusReason // \"\"' <<< \"$cs\")", "m": null}, {"n": 511, "t": "", "m": null}, {"n": 512, "t": "          # Nothing to change → this stage passes and there is nothing to execute", "m": null}, {"n": 513, "t": "          if [ \"$status\" = FAILED ] && grep -qE \"didn't contain changes|No updates are to be performed\" <<< \"$reason\"; then", "m": 7}, {"n": 514, "t": "            echo \"✅ No changes – the stack already matches this template and these parameters. Nothing to execute.\"", "m": null}, {"n": 515, "t": "            aws cloudformation delete-change-set --stack-name \"$STACK_NAME\" --change-set-name \"$cs_name\" || true", "m": 8}, {"n": 516, "t": "            printf '### 📝 Change set\\n✅ No changes – the stack is already up to date. Nothing to execute.\\n' >> \"$GITHUB_STEP_SUMMARY\"", "m": null}, {"n": 517, "t": "            echo \"has_changes=false\" >> \"$GITHUB_OUTPUT\"", "m": null}, {"n": 518, "t": "            exit 0", "m": null}, {"n": 519, "t": "          fi", "m": null}, {"n": 520, "t": "", "m": null}, {"n": 521, "t": "          if [ \"$status\" != CREATE_COMPLETE ]; then", "m": 9}, {"n": 522, "t": "            echo \"❌ Change set $status: $reason\"", "m": null}, {"n": 523, "t": "            echo \"::error title=Change set failed::$reason\"", "m": null}, {"n": 524, "t": "            printf '### 📝 Change set\\n❌ **%s** – %s\\n' \"$status\" \"$reason\" >> \"$GITHUB_STEP_SUMMARY\"", "m": null}, {"n": 525, "t": "            exit 1", "m": null}, {"n": 526, "t": "          fi", "m": null}], "tone": "new"}, "c_show": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 528, "t": "          # ── What will change: one line per resource, then each property with before → after ──", "m": null}, {"n": 529, "t": "          read -r n_all n_add n_mod n_del n_rep <<< \"$(jq -r '", "m": 1}, {"n": 530, "t": "            [.Changes[]?.ResourceChange // empty]", "m": null}, {"n": 531, "t": "            | [., map(select(.Action == \"Add\")), map(select(.Action == \"Modify\")),", "m": null}, {"n": 532, "t": "               map(select(.Action == \"Remove\")), map(select(.Replacement == \"True\"))]", "m": null}, {"n": 533, "t": "            | map(length) | @tsv' <<< \"$cs\")\"", "m": null}, {"gap": "turn the change set into one line per resource and one per property"}, {"n": 573, "t": "          echo \"📋 Planned changes: $n_add to add · $n_mod to modify · $n_del to remove\"", "m": 2}, {"n": 574, "t": "          echo", "m": null}, {"n": 575, "t": "          cat \"$RUNNER_TEMP/changes.txt\"", "m": null}, {"n": 576, "t": "          echo", "m": null}, {"n": 577, "t": "          if [ \"$n_rep\" -gt 0 ]; then", "m": null}, {"n": 578, "t": "            echo \"::warning title=Replacement::$n_rep resource(s) will be REPLACED (deleted and re-created) if you execute this change set\"", "m": 3}, {"n": 579, "t": "          fi", "m": null}, {"n": 580, "t": "          if [ \"$n_del\" -gt 0 ]; then", "m": null}, {"n": 581, "t": "            echo \"::warning title=Removal::$n_del resource(s) will be removed if you execute this change set\"", "m": 4}, {"n": 582, "t": "          fi", "m": null}, {"n": 583, "t": "", "m": null}, {"n": 584, "t": "          # Older pipeline change sets still waiting on this stack could be executed by mistake", "m": null}, {"n": 585, "t": "          others=$(aws cloudformation list-change-sets --stack-name \"$STACK_NAME\" --output json 2> /dev/null |", "m": 5}, {"n": 586, "t": "                     jq -r --arg me \"$cs_name\" '[.Summaries[]? | select(.ChangeSetName != $me and .ExecutionStatus == \"AVAILABLE\") | .ChangeSetName] | join(\", \")' || true)", "m": null}, {"n": 587, "t": "          if [ -n \"$others\" ]; then", "m": null}, {"n": 588, "t": "            echo \"::warning title=Older change sets waiting::$STACK_NAME also has older change sets ready: $others. Don't execute them by mistake – delete any you no longer need.\"", "m": null}, {"n": 589, "t": "          fi", "m": null}, {"n": 590, "t": "", "m": null}, {"n": 591, "t": "          # Direct link to this change set in the console", "m": null}, {"n": 592, "t": "          account=$(cut -d: -f5 <<< \"$stack_id\")", "m": null}, {"n": 593, "t": "          enc() { jq -rn --arg v \"$1\" '$v | @uri'; }", "m": null}, {"n": 594, "t": "          console=\"https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/changesets/changes?stackId=$(enc \"$stack_id\")&changeSetId=$(enc \"$cs_id\")\"", "m": 6}, {"gap": "record the outputs for Deploy"}, {"n": 602, "t": "          if [ \"$DEPLOY\" = yes ]; then", "m": 7}, {"n": 603, "t": "            echo \"✅ Change set $cs_name is ready. Deploy = yes → the next stage executes it.\"", "m": null}, {"n": 604, "t": "            echo \"   Follow it in the AWS console too (account $account · $ROLE_ALIAS · $REGION):\"", "m": null}, {"n": 605, "t": "            echo \"   $console\"", "m": null}, {"n": 606, "t": "            echo \"::notice title=Change set ready – deploying next::$cs_name is executed by the Deploy stage (account $account, $REGION).\"", "m": null}, {"n": 607, "t": "            heading=\"### 📝 Change set ready – deploying next\"", "m": null}, {"n": 608, "t": "            next=$(printf '🚀 **Deploy = yes** – the next stage executes this change set. [Open it in the AWS console](%s)' \"$console\")", "m": null}, {"n": 609, "t": "          else", "m": null}, {"n": 610, "t": "            echo \"✅ Change set $cs_name is ready. Nothing has been deployed.\"", "m": null}, {"n": 611, "t": "            echo \"👉 Review and execute it in the AWS console (account $account · $ROLE_ALIAS · $REGION):\"", "m": 8}, {"n": 612, "t": "            echo \"   $console\"", "m": null}, {"n": 613, "t": "            echo \"::notice title=Change set ready – not deployed::Review and execute $cs_name in the AWS console (account $account, $REGION). The link is in the log and the run summary.\"", "m": null}, {"n": 614, "t": "            heading=\"### 📝 Change set ready for review – nothing deployed yet\"", "m": null}, {"n": 615, "t": "            next=$(printf '👉 **[Review and execute it in the AWS console](%s)**' \"$console\")", "m": null}, {"n": 616, "t": "          fi", "m": null}], "tone": "new"}, "x_changes": {"file": "Run log · 📝 Change set", "sub": "example, made by the pipeline’s own code", "lang": "plain", "rows": [{"n": null, "t": "📋 Planned changes: 1 to add · 2 to modify · 0 to remove", "m": null}, {"n": null, "t": "", "m": null}, {"n": null, "t": "   ➕ Add      FlowLogGroup                           AWS::Logs::LogGroup", "m": null}, {"n": null, "t": "   🔧 Modify   Vpc                                    AWS::EC2::VPC", "m": null}, {"n": null, "t": "        ~ /Properties/Tags/1/Value                   \"dev\" → \"prd\"", "m": null}, {"n": null, "t": "   🔄 Modify   PrivateSubnetA                         AWS::EC2::Subnet                           ⚠ REPLACEMENT", "m": null}, {"n": null, "t": "        ~ /Properties/CidrBlock                      \"10.20.1.0/24\" → \"10.20.4.0/24\"   ⚠ forces replacement", "m": null}], "tone": ""}, "c_deploy": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 638, "t": "  # ── 4 · Deploy: only when Deploy = yes – execute the change set and follow it ──", "m": null}, {"n": 639, "t": "  deploy:", "m": null}, {"n": 640, "t": "    name: 🚀 Deploy", "m": null}, {"n": 641, "t": "    needs: [prepare, changeset]", "m": null}, {"n": 642, "t": "    if: ${{ !cancelled() && inputs.deploy == 'yes' && needs.changeset.result == 'success' && needs.changeset.outputs.has_changes == 'true' }}", "m": 1}, {"n": 643, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 644, "t": "    env:", "m": null}, {"n": 645, "t": "      CHANGE_SET: ${{ needs.changeset.outputs.change_set }}", "m": null}, {"n": 646, "t": "      STACK_ID: ${{ needs.changeset.outputs.stack_id }}", "m": null}, {"n": 647, "t": "      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}", "m": 2}, {"gap": "the same two sign-in steps as Prepare"}, {"n": 666, "t": "      - name: Execute change set and follow the stack events", "m": null}, {"n": 667, "t": "        run: |", "m": null}, {"n": 668, "t": "          fail() { echo \"::error title=$1::$2\"; exit 1; }", "m": null}, {"n": 669, "t": "          lost=\"Could not read the stack from CloudFormation (the sign-in may have expired). The deployment is NOT cancelled – it keeps running in AWS, follow it in the console.\"", "m": null}, {"n": 670, "t": "", "m": null}, {"n": 671, "t": "          if [ \"$GITHUB_REF_NAME\" != \"$DEFAULT_BRANCH\" ]; then", "m": 3}, {"n": 672, "t": "            echo \"::warning title=Deploying from a branch::This run is on '$GITHUB_REF_NAME', not '$DEFAULT_BRANCH' – you are deploying code that is not merged yet.\"", "m": null}, {"n": 673, "t": "          fi", "m": null}, {"gap": "remember the events the stack already has"}, {"n": 685, "t": "          echo \"🚀 Executing change set $CHANGE_SET on $STACK_NAME …\"", "m": null}, {"n": 686, "t": "          aws cloudformation execute-change-set --stack-name \"$STACK_NAME\" --change-set-name \"$CHANGE_SET\" ||", "m": 4}, {"n": 687, "t": "            fail \"Execute failed\" \"CloudFormation did not start the change set (see the error above) – nothing was deployed. The role needs cloudformation:ExecuteChangeSet.\"", "m": null}, {"n": 688, "t": "          echo \"▶ Started – following the stack events (checked every 15 s)\"", "m": 5}, {"n": 689, "t": "          echo", "m": null}, {"n": 690, "t": "", "m": null}, {"n": 691, "t": "          deadline=$((SECONDS + 3300))   # the sign-in lasts about an hour, so stop following after 55 minutes", "m": 6}, {"n": 692, "t": "          while :; do", "m": null}, {"n": 693, "t": "            status=$(aws cloudformation describe-stacks --stack-name \"$STACK_NAME\" \\", "m": 7}, {"n": 694, "t": "                       --query 'Stacks[0].StackStatus' --output text) || fail \"Lost contact\" \"$lost\"", "m": null}, {"n": 695, "t": "            cs_state=$(aws cloudformation describe-change-set --stack-name \"$STACK_NAME\" --change-set-name \"$CHANGE_SET\" \\", "m": null}, {"n": 696, "t": "                         --query ExecutionStatus --output text 2> /dev/null) || cs_state=UNKNOWN", "m": null}, {"n": 697, "t": "            events=$(aws cloudformation describe-stack-events --stack-name \"$STACK_NAME\" --max-items 100 --output json) ||", "m": null}, {"n": 698, "t": "              fail \"Lost contact\" \"$lost\"", "m": null}, {"n": 699, "t": "", "m": null}, {"gap": "print the new events and note any failures"}, {"n": 715, "t": "            # Finished = the stack is no longer busy AND the change set has left AVAILABLE / EXECUTE_IN_PROGRESS", "m": null}, {"n": 716, "t": "            case \"$status\" in", "m": null}, {"n": 717, "t": "              *_IN_PROGRESS) ;;", "m": null}, {"n": 718, "t": "              *) case \"$cs_state\" in AVAILABLE|EXECUTE_IN_PROGRESS) ;; *) break ;; esac ;;", "m": 8}, {"n": 719, "t": "            esac", "m": null}, {"n": 720, "t": "            [ \"$SECONDS\" -lt \"$deadline\" ] ||", "m": null}, {"n": 721, "t": "              fail \"Still running\" \"$STACK_NAME is still $status after 55 minutes. The deployment is NOT cancelled – follow it in the AWS console: $console\"", "m": 9}, {"n": 722, "t": "            sleep 15", "m": null}, {"n": 723, "t": "          done", "m": null}], "tone": "new"}, "c_verdict": {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 725, "t": "          # ── Verdict ──", "m": null}, {"n": 726, "t": "          msg=\"\"", "m": null}, {"n": 727, "t": "          if [ \"$cs_state\" = OBSOLETE ]; then", "m": 1}, {"n": 728, "t": "            msg=\"The change set became obsolete – another change reached the stack first, so this one was not deployed. Run the pipeline again.\"", "m": null}, {"n": 729, "t": "          else", "m": null}, {"n": 730, "t": "            case \"$status\" in", "m": null}, {"n": 731, "t": "              CREATE_COMPLETE|UPDATE_COMPLETE) ;;", "m": 2}, {"n": 732, "t": "              UPDATE_ROLLBACK_COMPLETE)", "m": 3}, {"n": 733, "t": "                msg=\"The update failed and CloudFormation rolled the stack back to its previous state.\" ;;", "m": null}, {"n": 734, "t": "              ROLLBACK_COMPLETE)", "m": 4}, {"n": 735, "t": "                msg=\"The create failed and the stack was rolled back. Delete the stack in the CloudFormation console before running again.\" ;;", "m": null}, {"n": 736, "t": "              UPDATE_ROLLBACK_FAILED)", "m": 5}, {"n": 737, "t": "                msg=\"The update failed and so did the rollback. In the console use Stack actions → Continue update rollback.\" ;;", "m": null}, {"n": 738, "t": "              ROLLBACK_FAILED)", "m": 6}, {"n": 739, "t": "                msg=\"The create failed and so did the rollback. Delete the stack in the console (retain the resources that block it).\" ;;", "m": null}, {"n": 740, "t": "              *)", "m": null}, {"n": 741, "t": "                msg=\"The stack ended as $status.\" ;;", "m": null}, {"n": 742, "t": "            esac", "m": null}, {"n": 743, "t": "          fi", "m": null}, {"gap": "write the result, the console link, what failed and every event to the Summary page"}, {"n": 759, "t": "          echo", "m": null}, {"n": 760, "t": "          if [ -z \"$msg\" ]; then", "m": null}, {"n": 761, "t": "            echo \"✅ Deployed – $STACK_NAME is $status.\"", "m": null}, {"n": 762, "t": "            echo \"::notice title=Deployed::$STACK_NAME finished as $status\"", "m": 7}, {"n": 763, "t": "            exit 0", "m": null}, {"n": 764, "t": "          fi", "m": null}, {"n": 765, "t": "          echo \"❌ $msg\"", "m": null}, {"n": 766, "t": "          if [ -s \"$RUNNER_TEMP/failed.txt\" ]; then", "m": null}, {"n": 767, "t": "            echo \"What failed:\"", "m": null}, {"n": 768, "t": "            sed 's/^/   • /' \"$RUNNER_TEMP/failed.txt\"", "m": null}, {"n": 769, "t": "          fi", "m": null}, {"n": 770, "t": "          echo \"::error title=Deploy failed::$msg\"", "m": 8}, {"n": 771, "t": "          exit 1", "m": null}], "tone": "new"}, "x_tree": {"file": "The trust store files in the repo", "sub": "folder layout", "lang": "plain", "rows": [{"n": null, "t": "cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/", "m": null}, {"n": null, "t": "├── scripts/", "m": null}, {"n": null, "t": "│   ├── validate-truststore.sh      the team’s own check (unchanged)", "m": null}, {"n": null, "t": "│   └── truststore_update.py        CloudFront’s rules, compare with S3, apply", "m": null}, {"n": null, "t": "└── truststore/", "m": null}, {"n": null, "t": "    ├── tst/", "m": null}, {"n": null, "t": "    │   ├── truststore.pem          the CA certificates, one after another", "m": null}, {"n": null, "t": "    │   └── truststore.json         which trust store, and where its file is in S3", "m": null}, {"n": null, "t": "    ├── ppe/   (the same two files)", "m": null}, {"n": null, "t": "    └── prd/   (the same two files)", "m": null}], "tone": ""}, "t_json": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 16, "t": "#   Each truststore/<env>/ folder holds truststore.pem and truststore.json:", "m": null}, {"n": 17, "t": "#     { \"account_id\": \"123456789012\", \"trust_store\": \"<trust store name, ID or ARN>\",", "m": 1}, {"n": 18, "t": "#       \"bucket\": \"<S3 bucket>\", \"key\": \"<S3 key of the PEM>\", \"region\": \"<bucket region>\" }", "m": 2}], "tone": "new"}, "t_triggers": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 26, "t": "name: Trust store", "m": 1}, {"n": 27, "t": "run-name: \"${{ github.event_name == 'pull_request' && format('🧪 Trust store check · PR #{0}', github.event.pull_request.number) || format('{0} Trust store · {1}', inputs.apply == 'yes' && '🚀' || '🔍', inputs.env) }}\"", "m": 2}, {"n": 28, "t": "", "m": null}, {"n": 29, "t": "on:", "m": null}, {"n": 30, "t": "  pull_request:", "m": 3}, {"n": 31, "t": "    paths:", "m": null}, {"n": 32, "t": "      - .github/workflows/validate-trust-store.yaml", "m": null}, {"n": 33, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh", "m": null}, {"n": 34, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/truststore_update.py", "m": null}, {"n": 35, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.pem", "m": 4}, {"n": 36, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.json", "m": null}, {"n": 37, "t": "  workflow_dispatch:", "m": 5}, {"n": 38, "t": "    inputs:", "m": null}, {"n": 39, "t": "      env:", "m": 6}, {"n": 40, "t": "        description: Environment (folder under truststore/)", "m": null}, {"n": 41, "t": "        required: true", "m": null}, {"n": 42, "t": "        type: choice", "m": null}, {"n": 43, "t": "        default: tst", "m": null}, {"n": 44, "t": "        options:", "m": null}, {"n": 45, "t": "          - tst", "m": null}, {"n": 46, "t": "          - ppe", "m": null}, {"n": 47, "t": "          - prd", "m": null}, {"n": 48, "t": "      apply:", "m": 7}, {"n": 49, "t": "        description: \"Upload truststore.pem to S3 and update the trust store after the comparison? 'no' = stop after Compare\"", "m": null}, {"n": 50, "t": "        required: false", "m": null}, {"n": 51, "t": "        type: choice", "m": null}, {"n": 52, "t": "        default: 'no'", "m": null}, {"n": 53, "t": "        options:", "m": null}, {"n": 54, "t": "          - 'no'", "m": null}, {"n": 55, "t": "          - 'yes'", "m": null}], "tone": "new"}, "t_settings": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 57, "t": "permissions:", "m": null}, {"n": 58, "t": "  contents: read", "m": 1}, {"n": 59, "t": "", "m": null}, {"n": 60, "t": "# One run per environment at a time (a second run waits); a newer push to a pull request", "m": null}, {"n": 61, "t": "# cancels the older check.", "m": null}, {"n": 62, "t": "concurrency:", "m": null}, {"n": 63, "t": "  group: ${{ github.event_name == 'pull_request' && format('truststore-pr-{0}', github.ref) || format('truststore-{0}', inputs.env) }}", "m": 2}, {"n": 64, "t": "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "m": 3}, {"n": 65, "t": "", "m": null}, {"n": 66, "t": "env:", "m": null}, {"n": 67, "t": "  BASE_DIR: cloudformation/deamon/ims-app-identity-main/ims-app-identity-main", "m": 4}, {"n": 68, "t": "  IMS_ROOT_ACCOUNT: \"390403857119\"   # where GitHub signs in; the iamr roles there switch into the network accounts", "m": 5}, {"n": 69, "t": "  ENV_NAME: ${{ inputs.env }}", "m": null}, {"n": 70, "t": "  APPLY: ${{ inputs.apply }}", "m": null}, {"n": 71, "t": "", "m": null}, {"n": 72, "t": "defaults:", "m": null}, {"n": 73, "t": "  run:", "m": null}, {"n": 74, "t": "    shell: bash   # runs as bash -eo pipefail: any failing command fails the stage", "m": null}], "tone": "new"}, "t_plan": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 78, "t": "  validate:", "m": null}, {"n": 79, "t": "    name: 🧪 Validate · ${{ github.event_name == 'pull_request' && 'pull request' || inputs.env }}", "m": 1}, {"n": 80, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 81, "t": "    outputs:", "m": 2}, {"n": 82, "t": "      broker_role: ${{ steps.plan.outputs.broker_role }}", "m": null}, {"n": 83, "t": "      target_role: ${{ steps.plan.outputs.target_role }}", "m": null}, {"n": 84, "t": "      pem: ${{ steps.settings.outputs.pem }}", "m": null}, {"n": 85, "t": "      region: ${{ steps.settings.outputs.region }}", "m": null}, {"n": 86, "t": "    steps:", "m": null}, {"n": 87, "t": "      - name: Checkout", "m": null}, {"n": 88, "t": "        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", "m": 3}, {"n": 89, "t": "        with:", "m": null}, {"n": 90, "t": "          fetch-depth: 0", "m": 4}, {"n": 91, "t": "          persist-credentials: false", "m": null}, {"n": 92, "t": "", "m": null}, {"n": 93, "t": "      - name: Pick environment and role", "m": null}, {"n": 94, "t": "        id: plan", "m": null}, {"n": 95, "t": "        env:", "m": null}, {"n": 96, "t": "          BASE_REF: ${{ github.base_ref }}", "m": null}, {"n": 97, "t": "        run: |", "m": null}, {"n": 98, "t": "          fail() { echo \"::error title=Validate failed::$1\"; exit 1; }", "m": null}, {"n": 99, "t": "          store=\"$BASE_DIR/truststore\"", "m": null}, {"n": 100, "t": "          [ -d \"$store\" ] || fail \"Folder $store not found.\"", "m": null}, {"n": 101, "t": "", "m": null}, {"n": 102, "t": "          if [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then", "m": 5}, {"n": 103, "t": "            envs=\"$ENV_NAME\"", "m": null}, {"n": 104, "t": "            # Each environment's trust store lives in its network services account. IMS sign-in:", "m": null}, {"n": 105, "t": "            # GitHub → iamr-net-<env>-deploy in IMS Root → the same-named role in that account.", "m": null}, {"n": 106, "t": "            case \"$ENV_NAME\" in", "m": null}, {"n": 107, "t": "              prd) alias=NETWORK;     role=iamr-net-prd-deploy; role_account=584477831165 ;;", "m": 6}, {"n": 108, "t": "              ppe) alias=PPE-NETWORK; role=iamr-net-ppe-deploy; role_account=097357356161 ;;", "m": null}, {"n": 109, "t": "              tst) alias=TST-NETWORK; role=iamr-net-tst-deploy; role_account=762649987860 ;;", "m": null}, {"n": 110, "t": "              *)   fail \"No iamr role for environment '$ENV_NAME' – add it to the list in this step.\" ;;", "m": 7}, {"n": 111, "t": "            esac", "m": null}, {"n": 112, "t": "            echo \"🔑 Environment $ENV_NAME → $role in account $role_account (signed in through IMS Root $IMS_ROOT_ACCOUNT)\"", "m": null}, {"n": 113, "t": "            {", "m": null}, {"n": 114, "t": "              echo \"broker_role=arn:aws:iam::$IMS_ROOT_ACCOUNT:role/$role\"", "m": 8}, {"n": 115, "t": "              echo \"target_role=arn:aws:iam::$role_account:role/$role\"", "m": null}, {"n": 116, "t": "              echo \"role_account=$role_account\"", "m": null}, {"n": 117, "t": "              echo \"role_alias=$alias\"", "m": null}, {"n": 118, "t": "            } >> \"$GITHUB_OUTPUT\"", "m": null}, {"gap": "read truststore.json and write the 🧭 Plan table (lines 120–149)"}, {"n": 150, "t": "          else", "m": null}, {"n": 151, "t": "            # Pull request: the environments whose truststore.pem or truststore.json it changes", "m": null}, {"n": 152, "t": "            envs=$(git diff --name-only \"origin/$BASE_REF...HEAD\" -- \"$store/*/truststore.pem\" \"$store/*/truststore.json\" |", "m": 9}, {"n": 153, "t": "                     sed -E \"s#^$store/([^/]+)/.*#\\1#\" | sort -u | tr '\\n' ' ')", "m": null}, {"n": 154, "t": "            if [ -z \"${envs// /}\" ]; then", "m": null}, {"n": 155, "t": "              # Only the workflow or a script changed: check every environment", "m": null}, {"n": 156, "t": "              envs=$(find \"$store\" -mindepth 2 -maxdepth 2 -name truststore.pem |", "m": 10}, {"n": 157, "t": "                       sed -E \"s#^$store/([^/]+)/.*#\\1#\" | sort -u | tr '\\n' ' ')", "m": null}, {"n": 158, "t": "              echo \"ℹ️  No truststore file changed – checking every environment: $envs\"", "m": null}, {"n": 159, "t": "            else", "m": null}, {"n": 160, "t": "              echo \"📝 Environment(s) changed in this pull request: $envs\"", "m": null}, {"n": 161, "t": "            fi", "m": null}, {"n": 162, "t": "          fi", "m": null}, {"n": 163, "t": "          [ -n \"${envs// /}\" ] || fail \"No truststore.pem found under $store.\"", "m": 11}, {"n": 164, "t": "          echo \"envs=$envs\" >> \"$GITHUB_OUTPUT\"", "m": null}], "tone": "new"}, "t_validate": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 166, "t": "      - name: Validate truststore.pem", "m": null}, {"n": 167, "t": "        env:", "m": null}, {"n": 168, "t": "          ENVS: ${{ steps.plan.outputs.envs }}", "m": null}, {"n": 169, "t": "          BASE_REF: ${{ github.base_ref }}", "m": null}, {"n": 170, "t": "        run: |", "m": null}, {"n": 171, "t": "          tool=\"$BASE_DIR/scripts/truststore_update.py\"", "m": 1}, {"n": 172, "t": "          team=\"$BASE_DIR/scripts/validate-truststore.sh\"", "m": 2}, {"n": 173, "t": "          [ -f \"$tool\" ] || { echo \"::error title=Validate failed::$tool not found – commit truststore_update.py next to validate-truststore.sh.\"; exit 1; }", "m": 3}, {"n": 174, "t": "          esc=$'\\033'", "m": null}, {"n": 175, "t": "          status=0", "m": null}, {"n": 176, "t": "          for env in $ENVS; do", "m": 4}, {"n": 177, "t": "            pem=\"$BASE_DIR/truststore/$env/truststore.pem\"", "m": null}, {"n": 178, "t": "            echo \"═══════════════ $env ═══════════════\"", "m": null}, {"n": 179, "t": "            if [ ! -f \"$pem\" ]; then", "m": null}, {"n": 180, "t": "              echo \"::error title=Trust store $env::$pem not found.\"", "m": 5}, {"n": 181, "t": "              status=1", "m": null}, {"n": 182, "t": "              continue", "m": null}, {"n": 183, "t": "            fi", "m": null}, {"n": 184, "t": "", "m": null}, {"n": 185, "t": "            # 1) validate-truststore.sh, as before", "m": 6}, {"n": 186, "t": "            team_out=\"\"", "m": null}, {"n": 187, "t": "            team_result=\"➖ not run (script not found)\"", "m": null}, {"n": 188, "t": "            if [ -f \"$team\" ]; then", "m": null}, {"n": 189, "t": "              echo \"::group::🧪 $env · validate-truststore.sh\"", "m": 7}, {"n": 190, "t": "              if team_out=$(bash \"$team\" \"$env\" 2>&1); then", "m": null}, {"n": 191, "t": "                team_result=\"✅ passed\"", "m": null}, {"n": 192, "t": "              else", "m": null}, {"n": 193, "t": "                team_result=\"❌ failed\"", "m": null}, {"n": 194, "t": "                status=1", "m": null}, {"n": 195, "t": "              fi", "m": null}, {"n": 196, "t": "              printf '%s\\n' \"$team_out\"", "m": null}, {"n": 197, "t": "              echo \"::endgroup::\"", "m": null}, {"n": 198, "t": "              echo \"validate-truststore.sh: $team_result\"", "m": null}, {"n": 199, "t": "              if [ \"$team_result\" = \"❌ failed\" ]; then", "m": null}, {"n": 200, "t": "                echo \"::error title=Trust store $env::validate-truststore.sh failed – its output is in the log and the run summary.\"", "m": null}, {"n": 201, "t": "              fi", "m": null}, {"n": 202, "t": "            fi", "m": null}, {"n": 203, "t": "", "m": null}, {"n": 204, "t": "            # 2) CloudFront's rules for a CA bundle; on a pull request also what the PR changes", "m": 8}, {"n": 205, "t": "            echo \"🧪 $env · CloudFront rules\"", "m": null}, {"n": 206, "t": "            compare=()", "m": null}, {"n": 207, "t": "            if [ \"$GITHUB_EVENT_NAME\" = pull_request ] &&", "m": 9}, {"n": 208, "t": "               git show \"origin/$BASE_REF:$pem\" > \"$RUNNER_TEMP/$env-base.pem\" 2> /dev/null; then", "m": null}, {"n": 209, "t": "              compare=(--compare-with \"$RUNNER_TEMP/$env-base.pem\" --compare-label \"$BASE_REF\")", "m": null}, {"n": 210, "t": "            fi", "m": null}, {"n": 211, "t": "            python3 \"$tool\" \"$pem\" --validate-only \"${compare[@]}\" --github || status=1", "m": 10}, {"gap": "write each environment’s result to the Summary page"}, {"n": 224, "t": "          done", "m": null}, {"n": 225, "t": "          exit \"$status\"", "m": 11}], "tone": "new"}, "t_cfg": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 227, "t": "      - name: Check settings and role", "m": null}, {"n": 228, "t": "        id: settings", "m": null}, {"n": 229, "t": "        if: github.event_name == 'workflow_dispatch'", "m": 1}, {"n": 230, "t": "        env:", "m": null}, {"n": 231, "t": "          ROLE_ACCOUNT: ${{ steps.plan.outputs.role_account }}", "m": null}, {"n": 232, "t": "          ROLE_ALIAS: ${{ steps.plan.outputs.role_alias }}", "m": null}, {"n": 233, "t": "        run: |", "m": null}, {"n": 234, "t": "          fail() { echo \"::error title=Settings::$1\"; exit 1; }", "m": null}, {"n": 235, "t": "          dir=\"$BASE_DIR/truststore/$ENV_NAME\"", "m": null}, {"n": 236, "t": "          pem=\"$dir/truststore.pem\"", "m": null}, {"n": 237, "t": "          cfg=\"$dir/truststore.json\"", "m": null}, {"n": 238, "t": "          [ -f \"$cfg\" ] ||", "m": 2}, {"n": 239, "t": "            fail \"$cfg not found. Create it next to truststore.pem with account_id, trust_store, bucket, key and region (see the top of this workflow).\"", "m": null}, {"n": 240, "t": "          jq -e '(.account_id | tostring | test(\"^[0-9]{12}$\"))", "m": 3}, {"n": 241, "t": "                 and ([.trust_store, .bucket, .key, .region] | all(type == \"string\" and length > 0 and (startswith(\"<\") | not)))' \\", "m": null}, {"n": 242, "t": "            \"$cfg\" > /dev/null ||", "m": null}, {"n": 243, "t": "            fail \"$cfg needs account_id (12 digits, in quotes), trust_store, bucket, key and region – fill in every value.\"", "m": null}, {"n": 244, "t": "          cfg_account=$(jq -r '.account_id | tostring' \"$cfg\")", "m": null}, {"n": 245, "t": "          [ \"$cfg_account\" = \"$ROLE_ACCOUNT\" ] ||", "m": 4}, {"n": 246, "t": "            fail \"$cfg says account $cfg_account, but $ENV_NAME signs in to $ROLE_ALIAS ($ROLE_ACCOUNT) – fix account_id.\"", "m": null}, {"n": 247, "t": "          echo \"✅ $cfg is complete and is for account $ROLE_ACCOUNT ($ROLE_ALIAS).\"", "m": null}, {"n": 248, "t": "          { echo \"pem=$pem\"; echo \"region=$(jq -r .region \"$cfg\")\"; } >> \"$GITHUB_OUTPUT\"", "m": 5}], "tone": "new"}, "t_compare": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 250, "t": "  # ── 2 · Compare with S3: what the trust store's bucket has vs. truststore.pem ─", "m": null}, {"n": 251, "t": "  compare:", "m": null}, {"n": 252, "t": "    name: 🔍 Compare with S3${{ inputs.env && format(' · {0}', inputs.env) || '' }}", "m": 1}, {"n": 253, "t": "    needs: validate", "m": null}, {"n": 254, "t": "    if: github.event_name == 'workflow_dispatch'", "m": 2}, {"n": 255, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 256, "t": "    permissions:", "m": null}, {"n": 257, "t": "      id-token: write", "m": 3}, {"n": 258, "t": "      contents: read", "m": null}, {"n": 259, "t": "    outputs:", "m": null}, {"n": 260, "t": "      has_changes: ${{ steps.compare.outputs.has_changes }}", "m": null}, {"n": 261, "t": "    env:", "m": null}, {"n": 262, "t": "      PEM: ${{ needs.validate.outputs.pem }}", "m": null}, {"gap": "checkout, Python and boto3, then the two sign-in steps (session name truststore-compare-…)"}, {"n": 294, "t": "      - name: Compare truststore.pem with the bundle in S3", "m": null}, {"n": 295, "t": "        id: compare", "m": null}, {"n": 296, "t": "        run: python3 \"$BASE_DIR/scripts/truststore_update.py\" \"$PEM\" --diff-only --github", "m": 4}, {"n": 297, "t": "", "m": null}, {"n": 298, "t": "      - name: What happens next", "m": null}, {"n": 299, "t": "        env:", "m": null}, {"n": 300, "t": "          HAS_CHANGES: ${{ steps.compare.outputs.has_changes }}", "m": null}, {"n": 301, "t": "        run: |", "m": null}, {"n": 302, "t": "          if [ \"$HAS_CHANGES\" != true ]; then", "m": 5}, {"n": 303, "t": "            next=\"✅ Nothing to apply – the Apply stage is skipped.\"", "m": null}, {"n": 304, "t": "          elif [ \"$APPLY\" = yes ]; then", "m": 6}, {"n": 305, "t": "            next=\"🚀 **Apply = yes** – the next stage uploads truststore.pem and updates the trust store.\"", "m": null}, {"n": 306, "t": "          else", "m": null}, {"n": 307, "t": "            next=\"✋ **Apply = no** – nothing was uploaded. To apply these changes, run this workflow again for $ENV_NAME with Apply = yes.\"", "m": 7}, {"n": 308, "t": "            echo \"::notice title=Not applied::Run the workflow again for $ENV_NAME with Apply = yes to upload truststore.pem and update the trust store.\"", "m": null}, {"n": 309, "t": "          fi", "m": null}, {"n": 310, "t": "          echo \"${next//\\*\\*/}\"", "m": null}, {"n": 311, "t": "          printf '\\n%s\\n' \"$next\" >> \"$GITHUB_STEP_SUMMARY\"", "m": null}], "tone": "new"}, "t_apply": {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 313, "t": "  # ── 3 · Apply: only when Apply = yes and Compare found something to apply ─────", "m": null}, {"n": 314, "t": "  apply:", "m": null}, {"n": 315, "t": "    name: 🚀 Apply${{ inputs.env && format(' · {0}', inputs.env) || '' }}", "m": null}, {"n": 316, "t": "    needs: [validate, compare]", "m": null}, {"n": 317, "t": "    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.apply == 'yes' && needs.compare.result == 'success' && needs.compare.outputs.has_changes == 'true' }}", "m": 1}, {"n": 318, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 319, "t": "    permissions:", "m": null}, {"n": 320, "t": "      id-token: write", "m": null}, {"n": 321, "t": "      contents: read", "m": null}, {"n": 322, "t": "    env:", "m": null}, {"n": 323, "t": "      PEM: ${{ needs.validate.outputs.pem }}", "m": null}, {"n": 324, "t": "      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}", "m": null}, {"n": 325, "t": "      ARTIFACT: truststore-backup-${{ inputs.env }}-${{ github.run_id }}", "m": 2}, {"n": 326, "t": "    steps:", "m": null}, {"gap": "checkout, Python, boto3, and the two sign-in steps (session name truststore-apply-…)"}, {"n": 357, "t": "      # Compares once more, saves the current S3 file, uploads truststore.pem (and reads it", "m": 3}, {"n": 358, "t": "      # back), points the trust store at the new S3 version and waits until it is active.", "m": null}, {"n": 359, "t": "      - name: Upload truststore.pem and update the trust store", "m": null}, {"n": 360, "t": "        run: python3 \"$BASE_DIR/scripts/truststore_update.py\" \"$PEM\" --yes --github --backup-dir \"$RUNNER_TEMP/truststore-backup\"", "m": 4}, {"n": 361, "t": "", "m": null}, {"n": 362, "t": "      - name: Keep the previous S3 file", "m": null}, {"n": 363, "t": "        if: always()", "m": 5}, {"n": 364, "t": "        uses: actions/upload-artifact@v4", "m": null}, {"n": 365, "t": "        with:", "m": null}, {"n": 366, "t": "          name: ${{ env.ARTIFACT }}", "m": 6}, {"n": 367, "t": "          path: ${{ runner.temp }}/truststore-backup/", "m": null}, {"n": 368, "t": "          if-no-files-found: ignore", "m": null}, {"n": 369, "t": "", "m": null}, {"n": 370, "t": "      - name: Note the backup in the summary", "m": null}, {"n": 371, "t": "        if: always()", "m": null}, {"n": 372, "t": "        run: |", "m": null}, {"n": 373, "t": "          if compgen -G \"$RUNNER_TEMP/truststore-backup/*.pem\" > /dev/null; then", "m": null}, {"n": 374, "t": "            echo \"📦 The previous S3 file is kept as the run artifact $ARTIFACT.\"", "m": null}, {"n": 375, "t": "            printf '\\n📦 The previous S3 file is kept as the run artifact **%s** (download it from this run).\\n' \"$ARTIFACT\" >> \"$GITHUB_STEP_SUMMARY\"", "m": 7}, {"n": 376, "t": "          fi", "m": null}], "tone": "new"}}, "players": {"cfn": {"variants": [{"label": "", "steps": [{"title": "You start the run", "parts": ["start"], "text": "In the repo’s <b>Actions<\/b> tab, pick <b>CloudFormation Stack using S3 as required<\/b>, click <b>Run workflow<\/b> and fill in the form. The run gets a title made from your answers: 🚀 when Deploy = yes, 📝 when it is no.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 20, "t": "run-name: \"${{ inputs.deploy == 'yes' && '🚀' || '📝' }} ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}\"", "m": 1}, {"gap": "the questions: folder, stack, account, region…"}, {"n": 53, "t": "      deploy:", "m": null}, {"n": 54, "t": "        description: \"Deploy the change set once it is created? 'no' = stop at the change set (you execute it in the console)\"", "m": null}, {"n": 55, "t": "        required: false", "m": null}, {"n": 56, "t": "        type: choice", "m": null}, {"n": 57, "t": "        default: 'no'", "m": 2}, {"n": 58, "t": "        options:", "m": null}, {"n": 59, "t": "          - 'no'", "m": null}, {"n": 60, "t": "          - 'yes'", "m": null}], "tone": "new"}]}, {"title": "Prepare works out the roles", "parts": ["j1"], "text": "The first box starts on a fresh GitHub computer and copies your repo. It turns the account you picked into two role names: one in IMS Root and one in the network account. No secret is involved.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 119, "t": "          case \"$ROLE_ALIAS\" in", "m": null}, {"n": 120, "t": "            NETWORK)     role=iamr-net-prd-deploy; account=584477831165 ;;", "m": 1}, {"n": 121, "t": "            PPE-NETWORK) role=iamr-net-ppe-deploy; account=097357356161 ;;", "m": null}, {"n": 122, "t": "            TST-NETWORK) role=iamr-net-tst-deploy; account=762649987860 ;;", "m": null}, {"gap": "the error case"}, {"n": 128, "t": "          esac", "m": null}, {"n": 129, "t": "          echo \"🔑 Role alias : $ROLE_ALIAS → $role in account $account (signed in through IMS Root $IMS_ROOT_ACCOUNT)\"", "m": null}, {"n": 130, "t": "          {", "m": null}, {"n": 131, "t": "            echo \"broker_role=arn:aws:iam::$IMS_ROOT_ACCOUNT:role/$role\"", "m": 2}, {"n": 132, "t": "            echo \"target_role=arn:aws:iam::$account:role/$role\"", "m": 3}, {"n": 133, "t": "            echo \"account=$account\"", "m": null}, {"n": 134, "t": "          } >> \"$GITHUB_OUTPUT\"", "m": null}], "tone": "new"}]}, {"title": "Prepare finds your files", "parts": ["j1"], "text": "It looks in <code>cloudformation/&lt;folder&gt;/<\/code> for the template and <code>params.json<\/code>, and checks the stack name. A template over 51,200 bytes will go through S3 later.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 144, "t": "          dir=\"cloudformation/${FOLDER_PATH}\"", "m": 1}, {"n": 145, "t": "          [ -d \"$dir\" ] || fail \"Folder $dir not found.\"", "m": null}, {"n": 146, "t": "", "m": null}, {"n": 147, "t": "          # Template directly in the folder first; sub-folders only as a fallback (as before).", "m": null}, {"n": 148, "t": "          match=( -type f \\( -iname \"*-template.yaml\" -o -iname \"*-template.yml\" \\) )", "m": null}, {"n": 149, "t": "          mapfile -t found < <(find \"$dir\" -maxdepth 1 \"${match[@]}\" | sort)", "m": 2}, {"n": 150, "t": "          [ \"${#found[@]}\" -gt 0 ] || mapfile -t found < <(find \"$dir\" \"${match[@]}\" | sort)", "m": null}, {"n": 151, "t": "          [ \"${#found[@]}\" -gt 0 ] || fail \"No template matching '*-template.y[a]ml' found in $dir\"", "m": null}, {"n": 152, "t": "          if [ \"${#found[@]}\" -gt 1 ]; then", "m": null}, {"n": 153, "t": "            echo \"::warning title=More than one template::${#found[@]} templates in $dir – using ${found[0]}\"", "m": null}, {"n": 154, "t": "          fi", "m": null}, {"n": 155, "t": "          template_file=\"${found[0]}\"", "m": null}, {"n": 156, "t": "", "m": null}, {"n": 157, "t": "          params_file=\"$dir/params.json\"", "m": 3}, {"n": 158, "t": "          [ -f \"$params_file\" ] || fail \"params.json not found in $dir\"", "m": null}, {"n": 159, "t": "          jq -e 'type == \"array\"' \"$params_file\" > /dev/null ||", "m": null}, {"n": 160, "t": "            fail \"$params_file must be a JSON list of ParameterKey/ParameterValue objects.\"", "m": null}, {"n": 161, "t": "", "m": null}, {"n": 162, "t": "          size=$(stat --format=%s \"$template_file\")", "m": null}, {"n": 163, "t": "          large=false", "m": null}, {"n": 164, "t": "          if [ \"$size\" -gt 51200 ]; then large=true; fi", "m": 4}], "tone": "new"}]}, {"title": "Prepare signs in through IMS Root", "parts": ["j1", "root", "net"], "text": "Two steps: GitHub’s signed note gets the run into IMS Root, then it swaps that role for the deploy role in network prd. The keys last an hour.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 176, "t": "      - name: Sign in to IMS Root", "m": 1}, {"n": 177, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 178, "t": "        with:", "m": null}, {"n": 179, "t": "          role-to-assume: ${{ steps.setrole.outputs.broker_role }}", "m": null}, {"n": 180, "t": "          role-session-name: ims-root-${{ github.run_id }}", "m": null}, {"n": 181, "t": "          aws-region: ${{ env.REGION }}", "m": null}, {"n": 182, "t": "", "m": null}, {"n": 183, "t": "      - name: Switch to the deploy role in the target account", "m": 2}, {"n": 184, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 185, "t": "        with:", "m": null}, {"n": 186, "t": "          role-chaining: true", "m": 3}, {"n": 187, "t": "          role-to-assume: ${{ steps.setrole.outputs.target_role }}", "m": null}, {"n": 188, "t": "          role-session-name: cft-${{ github.run_id }}", "m": null}, {"n": 189, "t": "          role-duration-seconds: 3600", "m": null}, {"n": 190, "t": "          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession", "m": null}, {"n": 191, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "new"}]}, {"title": "Prepare checks the account and the stack", "parts": ["j1", "net", "stack"], "text": "It makes sure AWS signed it in to the account you picked, then asks CloudFormation about the stack: new → create, existing and settled → update, broken or busy → stop with a clear message. The log shows the plan (example):", "code": [{"file": "Run log · 🧰 Prepare", "sub": "example", "lang": "plain", "rows": [{"n": null, "t": "🔑 Role alias : NETWORK → iamr-net-prd-deploy in account 584477831165 (signed in through IMS Root 390403857119)", "m": null}, {"n": null, "t": "📄 Template   : cloudformation/vpc/vpc-template.yaml (8412 bytes)", "m": null}, {"n": null, "t": "📄 Parameters : cloudformation/vpc/params.json (6 entries)", "m": null}, {"n": null, "t": "☁️  Account    : 584477831165 (eu-west-1) as iamr-net-prd-deploy", "m": 1}, {"n": null, "t": "🏗️  Stack      : my-vpc – 🔄 Exists (UPDATE_COMPLETE) → drift check, then UPDATE change set", "m": 2}, {"n": null, "t": "🚀 Deploy     : ✋ no – stops at the change set, you execute it in the console", "m": null}], "tone": ""}]}, {"title": "Drift check (existing stacks only)", "parts": ["j2", "root", "net", "stack"], "text": "The second box signs in again and asks CloudFormation whether anyone changed the stack’s resources by hand. If so, it lists them and stops the run before any change set exists. For a new stack this box is grey.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 284, "t": "          id=$(aws cloudformation detect-stack-drift --stack-name \"$STACK_NAME\" \\", "m": 1}, {"n": 285, "t": "                 --query StackDriftDetectionId --output text)", "m": null}, {"n": 286, "t": "          while :; do", "m": null}, {"gap": "…"}, {"n": 298, "t": "          if [ \"$drift\" = DRIFTED ]; then", "m": 2}, {"gap": "list what drifted"}, {"n": 325, "t": "            echo \"⛔ Stopping before the change set. Undo the manual change (or add it to the template), then re-run.\"", "m": 3}], "tone": "new"}]}, {"title": "Change set: a large template goes to S3", "parts": ["j3", "s3"], "text": "Only when the template is over 51,200 bytes. The third box signs in with the separate S3 role (still a secret), uploads the template with a short-lived link, and keeps a read link for CloudFormation.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 373, "t": "      - name: Configure AWS credentials for S3 upload", "m": null}, {"n": 374, "t": "        if: needs.prepare.outputs.large == 'true'", "m": 1}, {"n": 375, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 376, "t": "        with:", "m": null}, {"n": 377, "t": "          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}", "m": 2}, {"gap": "…"}, {"n": 388, "t": "          urls=$(python cloudformation/production/shared_services/Github_s3/presign.py \"$key\")", "m": 3}, {"n": 389, "t": "          put_url=$(grep '^put_url=' <<< \"$urls\" | cut -d'=' -f2- || true)", "m": null}, {"n": 390, "t": "          get_url=$(grep '^get_url=' <<< \"$urls\" | cut -d'=' -f2- || true)", "m": null}, {"n": 391, "t": "          if [ -z \"$put_url\" ] || [ -z \"$get_url\" ]; then", "m": null}, {"n": 392, "t": "            echo \"::error title=Upload failed::presign.py did not return put_url and get_url\"", "m": null}, {"n": 393, "t": "            exit 1", "m": null}, {"n": 394, "t": "          fi", "m": null}, {"n": 395, "t": "          curl --fail --silent --show-error -X PUT -T \"$TEMPLATE_FILE\" \"$put_url\" ||", "m": null}], "tone": "new"}]}, {"title": "Change set: create it", "parts": ["j3", "root", "net", "stack"], "text": "The box signs in to the network account, checks the template, works out the parameters, and asks CloudFormation for a change set: a preview of exactly what would change. Nothing changes in AWS yet.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 483, "t": "          cs_name=\"gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"", "m": 1}, {"n": 484, "t": "          cs_type=UPDATE", "m": null}, {"n": 485, "t": "          if [ \"$MODE\" = create ]; then cs_type=CREATE; fi", "m": 2}, {"n": 486, "t": "          echo \"📝 Creating $cs_type change set $cs_name…\"", "m": null}, {"n": 487, "t": "          if ! created=$(aws cloudformation create-change-set \\", "m": 3}, {"n": 488, "t": "                           --stack-name \"$STACK_NAME\" \\", "m": null}, {"n": 489, "t": "                           --change-set-name \"$cs_name\" \\", "m": null}, {"n": 490, "t": "                           --change-set-type \"$cs_type\" \\", "m": null}, {"n": 491, "t": "                           \"${tpl[@]}\" \"${params[@]}\" \\", "m": null}, {"n": 492, "t": "                           --capabilities CAPABILITY_NAMED_IAM \\", "m": null}, {"n": 493, "t": "                           --description \"GitHub Actions run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}\" \\", "m": null}, {"n": 494, "t": "                           --output json); then", "m": null}], "tone": "new"}]}, {"title": "Change set: what will change", "parts": ["j3", "net", "stack"], "text": "The log lists every resource and property that would change, before → after, and warns about replacements and removals. With Deploy = no the run ends here: open the console link from the summary, review, and execute it yourself.", "code": [{"file": "Run log · 📝 Change set", "sub": "example, made by the pipeline’s own code", "lang": "plain", "rows": [{"n": null, "t": "📋 Planned changes: 1 to add · 2 to modify · 0 to remove", "m": 1}, {"n": null, "t": "", "m": null}, {"n": null, "t": "   ➕ Add      FlowLogGroup                           AWS::Logs::LogGroup", "m": null}, {"n": null, "t": "   🔧 Modify   Vpc                                    AWS::EC2::VPC", "m": null}, {"n": null, "t": "        ~ /Properties/Tags/1/Value                   \"dev\" → \"prd\"", "m": null}, {"n": null, "t": "   🔄 Modify   PrivateSubnetA                         AWS::EC2::Subnet                           ⚠ REPLACEMENT", "m": 2}, {"n": null, "t": "        ~ /Properties/CidrBlock                      \"10.20.1.0/24\" → \"10.20.4.0/24\"   ⚠ forces replacement", "m": null}], "tone": ""}, {"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 609, "t": "          else", "m": null}, {"n": 610, "t": "            echo \"✅ Change set $cs_name is ready. Nothing has been deployed.\"", "m": null}, {"n": 611, "t": "            echo \"👉 Review and execute it in the AWS console (account $account · $ROLE_ALIAS · $REGION):\"", "m": 3}], "tone": "new"}]}, {"title": "Deploy: execute and follow", "parts": ["j4", "root", "net", "stack"], "text": "Only with Deploy = yes and something to change. The fourth box signs in once more, executes the change set, and prints the stack’s events every 15 seconds until CloudFormation finishes.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 685, "t": "          echo \"🚀 Executing change set $CHANGE_SET on $STACK_NAME …\"", "m": null}, {"n": 686, "t": "          aws cloudformation execute-change-set --stack-name \"$STACK_NAME\" --change-set-name \"$CHANGE_SET\" ||", "m": 1}, {"n": 687, "t": "            fail \"Execute failed\" \"CloudFormation did not start the change set (see the error above) – nothing was deployed. The role needs cloudformation:ExecuteChangeSet.\"", "m": null}, {"n": 688, "t": "          echo \"▶ Started – following the stack events (checked every 15 s)\"", "m": null}, {"gap": "…"}, {"n": 691, "t": "          deadline=$((SECONDS + 3300))   # the sign-in lasts about an hour, so stop following after 55 minutes", "m": 2}], "tone": "new"}]}, {"title": "The result", "parts": ["start", "j1", "j2", "j3", "j4", "stack"], "text": "Green boxes and a ✅ Deployed notice, or a red box saying what failed and what to do. If an update fails, CloudFormation puts the stack back as it was. The Summary page keeps the plan, the drift check, the change list and every stack event.", "code": [{"file": "latest_cft_deployment.yml", "sub": "CloudFormation pipeline", "lang": "yaml", "rows": [{"n": 727, "t": "          if [ \"$cs_state\" = OBSOLETE ]; then", "m": 1}, {"n": 728, "t": "            msg=\"The change set became obsolete – another change reached the stack first, so this one was not deployed. Run the pipeline again.\"", "m": null}, {"n": 729, "t": "          else", "m": null}, {"n": 730, "t": "            case \"$status\" in", "m": null}, {"n": 731, "t": "              CREATE_COMPLETE|UPDATE_COMPLETE) ;;", "m": 2}, {"n": 732, "t": "              UPDATE_ROLLBACK_COMPLETE)", "m": 3}, {"n": 733, "t": "                msg=\"The update failed and CloudFormation rolled the stack back to its previous state.\" ;;", "m": null}, {"n": 734, "t": "              ROLLBACK_COMPLETE)", "m": null}, {"n": 735, "t": "                msg=\"The create failed and the stack was rolled back. Delete the stack in the CloudFormation console before running again.\" ;;", "m": null}], "tone": "new"}]}], "caption": "One run of the CloudFormation pipeline for NETWORK (network prd). The top row is the run page; the bottom row is what each box touches in AWS."}]}, "ts": {"variants": [{"label": "Run workflow", "steps": [{"title": "You start the run", "parts": ["start"], "text": "Actions tab → <b>Trust store<\/b> → <b>Run workflow<\/b> (branch main). Pick the environment, and Apply: <b>no<\/b> to only compare, <b>yes<\/b> to put the file live.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 39, "t": "      env:", "m": 1}, {"n": 40, "t": "        description: Environment (folder under truststore/)", "m": null}, {"n": 41, "t": "        required: true", "m": null}, {"n": 42, "t": "        type: choice", "m": null}, {"n": 43, "t": "        default: tst", "m": null}, {"n": 44, "t": "        options:", "m": null}, {"n": 45, "t": "          - tst", "m": null}, {"n": 46, "t": "          - ppe", "m": null}, {"n": 47, "t": "          - prd", "m": null}, {"n": 48, "t": "      apply:", "m": 2}, {"n": 49, "t": "        description: \"Upload truststore.pem to S3 and update the trust store after the comparison? 'no' = stop after Compare\"", "m": null}, {"n": 50, "t": "        required: false", "m": null}, {"n": 51, "t": "        type: choice", "m": null}, {"n": 52, "t": "        default: 'no'", "m": null}, {"n": 53, "t": "        options:", "m": null}, {"n": 54, "t": "          - 'no'", "m": null}, {"n": 55, "t": "          - 'yes'", "m": null}], "tone": "new"}]}, {"title": "Validate picks the role", "parts": ["j1"], "text": "The first box works out the network account and the role for that environment, and writes a 🧭 Plan table from <code>truststore.json<\/code>, the file that says which trust store and which S3 file belong to the environment.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 106, "t": "            case \"$ENV_NAME\" in", "m": null}, {"n": 107, "t": "              prd) alias=NETWORK;     role=iamr-net-prd-deploy; role_account=584477831165 ;;", "m": 1}, {"n": 108, "t": "              ppe) alias=PPE-NETWORK; role=iamr-net-ppe-deploy; role_account=097357356161 ;;", "m": null}, {"n": 109, "t": "              tst) alias=TST-NETWORK; role=iamr-net-tst-deploy; role_account=762649987860 ;;", "m": null}, {"n": 110, "t": "              *)   fail \"No iamr role for environment '$ENV_NAME' – add it to the list in this step.\" ;;", "m": null}], "tone": "new"}, {"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 16, "t": "#   Each truststore/<env>/ folder holds truststore.pem and truststore.json:", "m": null}, {"n": 17, "t": "#     { \"account_id\": \"123456789012\", \"trust_store\": \"<trust store name, ID or ARN>\",", "m": 2}, {"n": 18, "t": "#       \"bucket\": \"<S3 bucket>\", \"key\": \"<S3 key of the PEM>\", \"region\": \"<bucket region>\" }", "m": null}], "tone": "new"}]}, {"title": "Validate checks the PEM file", "parts": ["j1"], "text": "It runs the team’s <code>validate-truststore.sh<\/code> as before, then <code>truststore_update.py<\/code> checks the file against CloudFront’s rules: real CA certificates, allowed key types, at most 25 certificates, and so on. No AWS yet.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 185, "t": "            # 1) validate-truststore.sh, as before", "m": null}, {"n": 186, "t": "            team_out=\"\"", "m": null}, {"n": 187, "t": "            team_result=\"➖ not run (script not found)\"", "m": null}, {"n": 188, "t": "            if [ -f \"$team\" ]; then", "m": null}, {"n": 189, "t": "              echo \"::group::🧪 $env · validate-truststore.sh\"", "m": null}, {"n": 190, "t": "              if team_out=$(bash \"$team\" \"$env\" 2>&1); then", "m": 1}, {"gap": "…"}, {"n": 204, "t": "            # 2) CloudFront's rules for a CA bundle; on a pull request also what the PR changes", "m": null}, {"n": 205, "t": "            echo \"🧪 $env · CloudFront rules\"", "m": null}, {"gap": "…"}, {"n": 211, "t": "            python3 \"$tool\" \"$pem\" --validate-only \"${compare[@]}\" --github || status=1", "m": 2}], "tone": "new"}]}, {"title": "Validate checks truststore.json", "parts": ["j1"], "text": "Every value must be filled in, and <code>account_id<\/code> must be the account this environment signs in to. A wrong account stops the run here.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 240, "t": "          jq -e '(.account_id | tostring | test(\"^[0-9]{12}$\"))", "m": 1}, {"n": 241, "t": "                 and ([.trust_store, .bucket, .key, .region] | all(type == \"string\" and length > 0 and (startswith(\"<\") | not)))' \\", "m": null}, {"n": 242, "t": "            \"$cfg\" > /dev/null ||", "m": null}, {"n": 243, "t": "            fail \"$cfg needs account_id (12 digits, in quotes), trust_store, bucket, key and region – fill in every value.\"", "m": null}, {"n": 244, "t": "          cfg_account=$(jq -r '.account_id | tostring' \"$cfg\")", "m": null}, {"n": 245, "t": "          [ \"$cfg_account\" = \"$ROLE_ACCOUNT\" ] ||", "m": 2}, {"n": 246, "t": "            fail \"$cfg says account $cfg_account, but $ENV_NAME signs in to $ROLE_ALIAS ($ROLE_ACCOUNT) – fix account_id.\"", "m": null}, {"n": 247, "t": "          echo \"✅ $cfg is complete and is for account $ROLE_ACCOUNT ($ROLE_ALIAS).\"", "m": null}], "tone": "new"}]}, {"title": "Compare signs in", "parts": ["j2", "root", "net"], "text": "The second box is the first one allowed to ask GitHub for a signed note. It checks in at IMS Root and swaps for the network account’s deploy role.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 256, "t": "    permissions:", "m": null}, {"n": 257, "t": "      id-token: write", "m": 1}, {"n": 258, "t": "      contents: read", "m": null}, {"gap": "…"}, {"n": 277, "t": "      - name: Sign in to IMS Root", "m": 2}, {"n": 278, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 279, "t": "        with:", "m": null}, {"n": 280, "t": "          role-to-assume: ${{ needs.validate.outputs.broker_role }}", "m": null}, {"n": 281, "t": "          role-session-name: ims-root-${{ github.run_id }}", "m": null}, {"n": 282, "t": "          aws-region: ${{ needs.validate.outputs.region }}", "m": null}, {"n": 283, "t": "", "m": null}, {"n": 284, "t": "      - name: Switch to the network account role", "m": null}, {"n": 285, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 286, "t": "        with:", "m": null}, {"n": 287, "t": "          role-chaining: true", "m": 3}, {"n": 288, "t": "          role-to-assume: ${{ needs.validate.outputs.target_role }}", "m": null}, {"n": 289, "t": "          role-session-name: truststore-compare-${{ github.run_id }}", "m": null}, {"n": 290, "t": "          role-duration-seconds: 3600", "m": null}, {"n": 291, "t": "          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession", "m": null}, {"n": 292, "t": "          aws-region: ${{ needs.validate.outputs.region }}", "m": null}], "tone": "new"}]}, {"title": "Compare: your file against S3", "parts": ["j2", "s3", "ts"], "text": "The script reads the trust store and downloads the file it was built from, then lists the certificates added, removed, replaced and unchanged. It changes nothing. With Apply = no the run ends here.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 294, "t": "      - name: Compare truststore.pem with the bundle in S3", "m": null}, {"n": 295, "t": "        id: compare", "m": null}, {"n": 296, "t": "        run: python3 \"$BASE_DIR/scripts/truststore_update.py\" \"$PEM\" --diff-only --github", "m": 1}, {"gap": "…"}, {"n": 302, "t": "          if [ \"$HAS_CHANGES\" != true ]; then", "m": 2}, {"n": 303, "t": "            next=\"✅ Nothing to apply – the Apply stage is skipped.\"", "m": null}, {"n": 304, "t": "          elif [ \"$APPLY\" = yes ]; then", "m": 3}, {"n": 305, "t": "            next=\"🚀 **Apply = yes** – the next stage uploads truststore.pem and updates the trust store.\"", "m": null}, {"n": 306, "t": "          else", "m": null}, {"n": 307, "t": "            next=\"✋ **Apply = no** – nothing was uploaded. To apply these changes, run this workflow again for $ENV_NAME with Apply = yes.\"", "m": null}], "tone": "new"}]}, {"title": "Apply: upload and update", "parts": ["j3", "root", "net", "s3", "ts"], "text": "Only with Apply = yes and something to apply. The third box signs in, saves the current S3 file, uploads yours (and reads it back), points the trust store at the new version, and waits until CloudFront says it is active.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 317, "t": "    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.apply == 'yes' && needs.compare.result == 'success' && needs.compare.outputs.has_changes == 'true' }}", "m": 1}, {"gap": "…"}, {"n": 357, "t": "      # Compares once more, saves the current S3 file, uploads truststore.pem (and reads it", "m": null}, {"n": 358, "t": "      # back), points the trust store at the new S3 version and waits until it is active.", "m": null}, {"n": 359, "t": "      - name: Upload truststore.pem and update the trust store", "m": null}, {"n": 360, "t": "        run: python3 \"$BASE_DIR/scripts/truststore_update.py\" \"$PEM\" --yes --github --backup-dir \"$RUNNER_TEMP/truststore-backup\"", "m": 2}], "tone": "new"}]}, {"title": "Apply keeps the old file", "parts": ["j3"], "text": "Even if something failed, the previous S3 file is kept as a download on the run page (an artifact), so you can always put it back.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 362, "t": "      - name: Keep the previous S3 file", "m": null}, {"n": 363, "t": "        if: always()", "m": 1}, {"n": 364, "t": "        uses: actions/upload-artifact@v4", "m": null}, {"n": 365, "t": "        with:", "m": null}, {"n": 366, "t": "          name: ${{ env.ARTIFACT }}", "m": 2}, {"n": 367, "t": "          path: ${{ runner.temp }}/truststore-backup/", "m": null}, {"n": 368, "t": "          if-no-files-found: ignore", "m": null}], "tone": "new"}]}], "caption": "A manual run for prd with Apply = yes. ppe and tst work the same way, with their own role and account."}, {"label": "Pull request", "steps": [{"title": "You open a pull request", "parts": ["start"], "text": "In a branch, change an environment’s <code>truststore.pem<\/code> (for example, add a partner’s CA certificate) and open a pull request to main. The check starts by itself.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 29, "t": "on:", "m": null}, {"n": 30, "t": "  pull_request:", "m": 1}, {"n": 31, "t": "    paths:", "m": null}, {"n": 32, "t": "      - .github/workflows/validate-trust-store.yaml", "m": null}, {"n": 33, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/validate-truststore.sh", "m": null}, {"n": 34, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/scripts/truststore_update.py", "m": null}, {"n": 35, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.pem", "m": 2}, {"n": 36, "t": "      - cloudformation/deamon/ims-app-identity-main/ims-app-identity-main/truststore/*/truststore.json", "m": null}], "tone": "new"}]}, {"title": "Validate finds what changed", "parts": ["j1"], "text": "It compares your branch with main to see which environments’ files changed. If only the workflow or a script changed, it checks every environment.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 151, "t": "            # Pull request: the environments whose truststore.pem or truststore.json it changes", "m": null}, {"n": 152, "t": "            envs=$(git diff --name-only \"origin/$BASE_REF...HEAD\" -- \"$store/*/truststore.pem\" \"$store/*/truststore.json\" |", "m": 1}, {"n": 153, "t": "                     sed -E \"s#^$store/([^/]+)/.*#\\1#\" | sort -u | tr '\\n' ' ')", "m": null}, {"n": 154, "t": "            if [ -z \"${envs// /}\" ]; then", "m": null}, {"n": 155, "t": "              # Only the workflow or a script changed: check every environment", "m": null}, {"n": 156, "t": "              envs=$(find \"$store\" -mindepth 2 -maxdepth 2 -name truststore.pem |", "m": 2}, {"n": 157, "t": "                       sed -E \"s#^$store/([^/]+)/.*#\\1#\" | sort -u | tr '\\n' ' ')", "m": null}, {"n": 158, "t": "              echo \"ℹ️  No truststore file changed – checking every environment: $envs\"", "m": null}], "tone": "new"}]}, {"title": "Validate checks each changed file", "parts": ["j1"], "text": "The same checks as a manual run, plus a list of the certificates your pull request adds and removes compared with main. Problems show up on the exact lines of the file in the pull request. Real output for a file with one new CA:", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 207, "t": "            if [ \"$GITHUB_EVENT_NAME\" = pull_request ] &&", "m": 1}, {"n": 208, "t": "               git show \"origin/$BASE_REF:$pem\" > \"$RUNNER_TEMP/$env-base.pem\" 2> /dev/null; then", "m": null}, {"n": 209, "t": "              compare=(--compare-with \"$RUNNER_TEMP/$env-base.pem\" --compare-label \"$BASE_REF\")", "m": null}, {"n": 210, "t": "            fi", "m": null}, {"n": 211, "t": "            python3 \"$tool\" \"$pem\" --validate-only \"${compare[@]}\" --github || status=1", "m": 2}], "tone": "new"}, {"file": "Run log · 🧪 Validate on a pull request", "sub": "real output for example certificates", "lang": "plain", "rows": [{"n": null, "t": "Your file: truststore/tst/truststore.pem, 3 certificate(s), 3,743 bytes", "m": null}, {"n": null, "t": "", "m": null}, {"n": null, "t": "Changes from main to your file:", "m": null}, {"n": null, "t": "  + ADDED      CN=Example Partner Root CA 2026, O=Example Ltd", "m": 3}, {"n": null, "t": "               root CA", "m": null}, {"n": null, "t": "               RSA 2048, sha256WithRSAEncryption, valid 2026-10-31 to 2029-10-30", "m": null}, {"n": null, "t": "               SHA-256 E2:CB:BA:B8:64:28:F2:8A:82:A4:68:BF:1E:DB:7A:E4:5E:A2:32:F3:10:C1:61:FE:2B:35:A4:8C:3E:2B:DF:9A", "m": null}, {"n": null, "t": "               # Example Partner Root CA 2026", "m": null}, {"n": null, "t": "  = 2 unchanged:", "m": null}, {"n": null, "t": "      CN=Example Payments Root CA, O=Example Ltd (to 2029-10-30)", "m": null}, {"n": null, "t": "      CN=Example Partner Issuing CA, O=Example Ltd (to 2029-10-30)", "m": null}, {"n": null, "t": "", "m": null}, {"n": null, "t": "Checks:", "m": null}, {"n": null, "t": "  all passed: CloudFront format rules, key types, signatures, CA flags, expiry dates", "m": 4}, {"n": null, "t": "", "m": null}, {"n": null, "t": "Summary: 1 added, 0 removed, 0 replaced, 2 unchanged (2 -> 3 certificates).", "m": null}, {"n": null, "t": "", "m": null}, {"n": null, "t": "Valid for a CloudFront trust store.", "m": null}], "tone": ""}]}, {"title": "Compare and Apply are skipped", "parts": ["j1"], "text": "They only run for Run workflow, so on a pull request their boxes are grey. A pull request can’t even ask GitHub for a signed note: the workflow gives that permission only to Compare and Apply.", "code": [{"file": "validate-trust-store.yaml", "sub": "trust store pipeline", "lang": "yaml", "rows": [{"n": 57, "t": "permissions:", "m": null}, {"n": 58, "t": "  contents: read", "m": 1}, {"gap": "…"}, {"n": 254, "t": "    if: github.event_name == 'workflow_dispatch'", "m": 2}, {"n": 255, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 256, "t": "    permissions:", "m": null}, {"n": 257, "t": "      id-token: write", "m": 3}], "tone": "new"}]}], "caption": "A pull request check: only the Validate box runs, and nothing touches AWS."}]}}};
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function hl(text, lang) {
+  if (lang === 'plain') return esc(text);
+  let out = '', rest = text;
+  if (lang === 'yaml') {
+    const m = rest.match(/^(\s*(?:-\s+)?)([A-Za-z0-9_.:\/-]+?)(:)(?=\s|$)/);
+    if (m) { out += esc(m[1]) + '<span class="k">' + esc(m[2]) + '</span>' + m[3]; rest = rest.slice(m[0].length); }
+  }
+  const bash = /^\s*(case|esac|echo|if|elif|else|fi|while|for|do|done|then)\b/.test(text);
+  const re = new RegExp('(\\$\\{\\{.*?\\}\\})|("(?:[^"\\\\]|\\\\.)*")|(\'(?:[^\'\\\\]|\\\\.)*\')|((?:^|\\s)#.*$)|(!Sub|!Ref)\\b' +
+                        (bash ? '|\\b(case|esac|echo|if|elif|else|fi|while|for|do|done|then|in)\\b' : ''), 'g');
+  let last = 0, m;
+  while ((m = re.exec(rest))) {
+    out += esc(rest.slice(last, m.index));
+    const t = m[0];
+    if (m[1]) out += '<span class="x">' + esc(t) + '</span>';
+    else if (m[2]) out += '<span class="' + (lang === 'json' && /^\s*:/.test(rest.slice(m.index + t.length)) ? 'k' : 's') + '">' + esc(t) + '</span>';
+    else if (m[3]) out += '<span class="s">' + esc(t) + '</span>';
+    else if (m[4]) out += '<span class="c">' + esc(t) + '</span>';
+    else out += '<span class="w">' + esc(t) + '</span>';
+    last = m.index + t.length;
+  }
+  return out + esc(rest.slice(last));
+}
+
+function shot(b, badges) {
+  const numbered = b.rows.some((r) => r.n);
+  let rows = '';
+  for (const r of b.rows) {
+    if (r.gap !== undefined) {
+      rows += '<tr class="gap"><td class="ln">⋯</td>' + (badges ? '<td class="mk"></td>' : '') + '<td class="src">' + esc(r.gap) + '</td></tr>';
+      continue;
+    }
+    const lead = r.t.match(/^ */)[0].length;
+    rows += '<tr' + (r.m ? ' class="hl"' : '') + '><td class="ln">' + (r.n || '') + '</td>' +
+            (badges ? '<td class="mk">' + (r.m ? '<span class="badge">' + r.m + '</span>' : '') + '</td>' : '') +
+            '<td class="src" style="--n:' + lead + '"><span class="ind"></span>' + (hl(r.t.slice(lead), b.lang) || ' ') + '</td></tr>';
+  }
+  const pill = b.tone ? '<span class="pill pill-' + b.tone + '">' + b.tone + '</span>' : '';
+  return '<figure class="shot"><figcaption class="shot-bar"><span class="fname">' + esc(b.file) + '</span><span class="fsub">' +
+         esc(b.sub) + '</span>' + pill + '</figcaption><div class="shot-scroll"><table class="code' + (numbered ? '' : ' no-ln') +
+         '"><tbody>' + rows + '</tbody></table></div></figure>';
+}
+
+document.querySelectorAll('[data-panel]').forEach((el) => {
+  const b = DATA.panels[el.dataset.panel];
+  el.innerHTML = shot(b, b.rows.some((r) => r.m));
+});
+
+function initPlayer(root) {
+  const spec = DATA.players[root.dataset.player];
+  const q = (sel) => root.querySelector(sel);
+  const svg = q('svg.diagram'), box = svg.parentElement, panel = q('[role="tabpanel"]');
+  const tabs = [...root.querySelectorAll('[role="tab"]')];
+  let v = 0, idx = 0;
+  function show(focusTab) {
+    const variant = spec.variants[v], steps = variant.steps, s = steps[idx];
+    tabs.forEach((t, i) => { t.setAttribute('aria-selected', String(i === v)); t.tabIndex = i === v ? 0 : -1; });
+    if (panel && tabs[v]) panel.setAttribute('aria-labelledby', tabs[v].id);
+    if (focusTab) tabs[v].focus();
+    svg.classList.add('stepping');
+    svg.querySelectorAll('[data-part]').forEach((g) => g.classList.toggle('on', s.parts.includes(g.dataset.part)));
+    const lit = [...svg.querySelectorAll('[data-part].on')];
+    if (lit.length && box.scrollWidth > box.clientWidth + 1) {
+      const rs = lit.map((g) => g.getBoundingClientRect()), b = box.getBoundingClientRect();
+      const left = Math.min(...rs.map((r) => r.left)), right = Math.max(...rs.map((r) => r.right));
+      const x = right - left > box.clientWidth ? left - b.left - 8 : (left + right) / 2 - b.left - box.clientWidth / 2;
+      box.scrollTo({ left: Math.max(0, box.scrollLeft + x), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    q('.fig-cap').textContent = variant.caption;
+    q('.step-count').textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+    q('.step-title').textContent = s.title;
+    q('.step-text').innerHTML = s.text;
+    q('.step-code').innerHTML = s.code.map((c) => shot(c, false)).join('');
+    q('.prev').disabled = idx === 0;
+    q('.next').disabled = idx === steps.length - 1;
+    q('.dots').innerHTML = steps.map((st, i) => '<li><button type="button" data-i="' + i + '" aria-label="Step ' + (i + 1) + ': ' +
+      esc(st.title) + '"' + (i === idx ? ' aria-current="step"' : '') + '>' + (i + 1) + '</button></li>').join('');
+  }
+  q('.prev').addEventListener('click', () => { if (idx > 0) { idx--; show(); } });
+  q('.next').addEventListener('click', () => { if (idx < spec.variants[v].steps.length - 1) { idx++; show(); } });
+  q('.dots').addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) { idx = Number(b.dataset.i); show(); } });
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => { if (v !== i) { v = i; idx = 0; show(); } });
+    t.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      v = (v + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length; idx = 0; show(true);
+    });
+  });
+  show();
+}
+document.querySelectorAll('[data-player]').forEach(initPlayer);
+</script>
+
+</body></html>

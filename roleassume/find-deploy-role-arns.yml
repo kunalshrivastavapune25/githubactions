@@ -1,0 +1,76 @@
+# Find the roles in DEPLOY_ROLE_ARNS_JSON
+#
+# The WS2 DNS pipelines (ws2-dns-records-export.yml, ws2-dns-records-apply.yml) sign in with a role ARN taken from
+# the secret DEPLOY_ROLE_ARNS_JSON: a JSON list of account name → role ARN. This shows which AWS account and which
+# role each entry points to.
+#
+# GitHub never shows a secret again, and hides the whole value in logs. This prints the parts of each role ARN
+# (the account number and the role name) separately, so you can read them. Anything that is not a role ARN is not
+# printed. It does not sign in to AWS and changes nothing.
+#
+# How to use it:
+#   1. In the repo where the WS2 pipelines run, create a new branch (e.g. find-deploy-role-arns).
+#   2. Add this file on that branch as  .github/workflows/find-deploy-role-arns.yml  and commit.
+#      The commit starts the run by itself.
+#   3. Actions tab → "Find the roles in DEPLOY_ROLE_ARNS_JSON" → open the run → the table is on the Summary page.
+#   4. Afterwards delete the branch, and the run if the account numbers shouldn't stay visible.
+
+name: Find the roles in DEPLOY_ROLE_ARNS_JSON
+
+on:
+  push:
+    paths:
+      - .github/workflows/find-deploy-role-arns.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  roles:
+    name: 🔍 Roles in DEPLOY_ROLE_ARNS_JSON
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show the account and role for each entry
+        env:
+          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}
+        run: |
+          printf '## Roles in DEPLOY_ROLE_ARNS_JSON\n\n' >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$ARNS_JSON" ]; then
+            echo "::error title=Secret not set::DEPLOY_ROLE_ARNS_JSON is empty, or this repo can't read it."
+            echo "❌ DEPLOY_ROLE_ARNS_JSON is empty, or this repo can't read it." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! jq -e 'type == "object"' <<< "$ARNS_JSON" > /dev/null 2>&1; then
+            echo "::error title=Not a list of roles::DEPLOY_ROLE_ARNS_JSON is set, but it isn't a JSON object of account name → role ARN (contents not shown)."
+            echo "❌ DEPLOY_ROLE_ARNS_JSON isn't a JSON object of account name → role ARN (contents not shown)." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          role_arn='^arn:aws[a-z-]*:iam::([0-9]{12}):role/([A-Za-z0-9+=,.@_/-]+)$'
+          total=0; master=0
+          printf '| Account name | Account | Role name |\n|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          while IFS=$'\t' read -r name value; do
+            [ -n "$name" ] || continue
+            total=$((total + 1))
+            value=$(printf '%s' "$value" | tr -d '[:space:]')
+            if [[ $value =~ $role_arn ]]; then
+              account=${BASH_REMATCH[1]}
+              role=${BASH_REMATCH[2]}
+              cell="\`$role\`"
+              if [ "$role" = AWSControlTowerExecution ]; then master=$((master + 1)); fi
+            else
+              account="not a role ARN (not shown)"; role="–"; cell="–"
+            fi
+            printf '%-28s %-30s %s\n' "$name" "$account" "$role"
+            echo "| \`$name\` | $account | $cell |" >> "$GITHUB_STEP_SUMMARY"
+          done < <(jq -r 'to_entries[] | [.key, (.value | tostring | gsub("^\\s+|\\s+$"; ""))] | @tsv' <<< "$ARNS_JSON")
+
+          {
+            echo
+            echo "**$master of $total** entries point to Control Tower's master key, \`AWSControlTowerExecution\`."
+          } >> "$GITHUB_STEP_SUMMARY"
