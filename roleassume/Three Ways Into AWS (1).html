@@ -1,0 +1,842 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Three Ways Into AWS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@600;800&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with wider exhibit bands for the run player and the code screenshots */
+:root {
+  --bg: #F1F3F6; --surface: #FFFFFF; --ink: #17202C; --muted: #566273; --line: #DCE1E8; --line-strong: #A6B0BE;
+  --accent: #A35C00; --accent-soft: #FFF0D2;            /* amber: where the run is now */
+  --good: #0D6E5B; --good-soft: #DDF1EC;                /* the new pipeline */
+  --bad: #A8372A; --bad-soft: #F9E3DF;                  /* the old pipeline */
+  --code-bg: #FAFBFC; --code-bar: #ECEFF4; --code-ln: #8A94A3; --code-hl: #FFF1D4;
+  --tk-key: #1C4FB0; --tk-str: #0B6B58; --tk-expr: #8B3DCB; --tk-cmt: #6C7787; --tk-kw: #A8372A;
+  --font-display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --measure: 46rem; --wide: 72rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+    --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+    --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+    --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+  --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+  --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+  --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--font-body); }
+.page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+        padding-block: 40px 64px; display: grid; gap: 56px; }
+.page > * { width: 100%; max-width: var(--measure); margin-inline: auto; min-width: 0; }
+.page > .wide { max-width: var(--wide); }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 1.4rem + 2.6vw, 3.1rem); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 800; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bar); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+section { display: grid; gap: 18px; }
+.eyebrow { font: 600 0.78rem/1 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.hero { display: grid; gap: 16px; }
+.lede { font-size: 1.15rem; color: var(--ink); max-width: 40rem; }
+
+/* the short version */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 10px; align-content: start; }
+.card-old { border-top: 4px solid var(--bad); }
+.card-new { border-top: 4px solid var(--good); }
+.card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 8px; }
+.tag { font: 700 0.8rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.tag-old { color: var(--bad); } .tag-new { color: var(--good); }
+.note { color: var(--muted); }
+
+/* words */
+.glossary { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0 28px; }
+.glossary div { padding-block: 12px; border-top: 1px solid var(--line); display: grid; gap: 4px; align-content: start; }
+.glossary dt { font: 600 0.95rem var(--font-mono); color: var(--ink); }
+.glossary dd { margin: 0; color: var(--muted); }
+.glossary dd b { color: var(--ink); }
+
+/* run player */
+.tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--code-bar); border-radius: 10px; justify-self: start; flex-wrap: wrap; }
+.tabs button { font: 600 0.95rem var(--font-body); border: 0; background: transparent; color: var(--muted); padding: 8px 16px; border-radius: 7px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.tabs button[aria-selected="true"]#tab-new { color: var(--good); }
+.tabs button[aria-selected="true"]#tab-old { color: var(--bad); }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.player { display: grid; gap: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.diagram-fig { margin: 0; display: grid; gap: 8px; }
+.diagram-scroll { overflow-x: auto; }
+.diagram { display: block; width: 100%; min-width: 620px; height: auto; color: var(--muted); }
+.diagram[hidden] { display: none; }
+.diagram-fig figcaption { color: var(--muted); font-size: 0.95rem; }
+.diagram .zone { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 6 6; }
+.diagram .zone-label { fill: var(--muted); font: 700 11px var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.diagram .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+.diagram .box-bad { stroke: var(--bad); stroke-dasharray: 5 4; }
+.diagram .t-title { fill: var(--ink); font: 700 15px var(--font-display); }
+.diagram .t-sub { fill: var(--muted); font: 400 12px var(--font-body); }
+.diagram .t-bad { fill: var(--bad); font-weight: 700; }
+.diagram .t-mono { fill: var(--ink); font: 600 10.5px var(--font-mono); }
+.diagram .chip-neutral { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+.diagram .chip-good { fill: var(--good-soft); stroke: var(--good); stroke-width: 1.2; }
+.diagram .chip-bad { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; }
+.diagram .stack { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.2; }
+.diagram .arrow { color: var(--muted); }
+.diagram .arrow path { fill: none; stroke: currentColor; stroke-width: 2; }
+.diagram .arrow polygon { fill: currentColor; }
+.diagram .arrow.dashed path { stroke-dasharray: 6 5; }
+.diagram .arrow.bad { color: var(--bad); }
+.diagram .arrow-label { fill: currentColor; font: 700 12.5px var(--font-body); }
+.diagram [data-part] { transition: opacity 0.25s ease; }
+.diagram.stepping [data-part]:not(.on) { opacity: 0.2; }
+.diagram .arrow.on:not(.bad) { color: var(--accent); }
+.diagram .arrow.on path { stroke-width: 3; }
+.diagram g.on > .box:not(.box-bad) { stroke: var(--accent); stroke-width: 2.5; }
+.stepper { display: grid; gap: 14px; }
+.step-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.step-nav .nav { font: 700 0.95rem var(--font-body); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.step-nav .nav:disabled { opacity: 0.4; cursor: default; }
+.step-nav .nav.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+@media (max-width: 640px) { .step-nav .dots { order: -1; flex-basis: 100%; } .step-nav .nav { flex: 1; } }
+.dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+.dots button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--muted); font: 700 0.8rem var(--font-body); cursor: pointer; font-variant-numeric: tabular-nums; }
+.dots button[aria-current="step"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.step-body { display: grid; gap: 10px; min-width: 0; }
+.step-count { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.step-code { display: grid; gap: 12px; min-width: 0; }
+
+/* code screenshots */
+.shot { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--code-bg); min-width: 0; }
+.shot-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--code-bar); border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.fname { font: 600 0.85rem var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
+.fsub { color: var(--muted); }
+.pill { margin-left: auto; font: 700 0.7rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 8px; border-radius: 99px; }
+.pill-old { color: var(--bad); background: var(--bad-soft); } .pill-new { color: var(--good); background: var(--good-soft); }
+.shot-scroll { overflow-x: auto; }
+table.code { border-collapse: collapse; width: 100%; font: 400 12.5px/1.65 var(--font-mono); }
+table.code td { padding: 0 10px; vertical-align: top; }
+table.code td.ln { width: 1%; text-align: right; color: var(--code-ln); user-select: none; font-variant-numeric: tabular-nums; padding-left: 12px; }
+table.code td.mk { width: 1%; padding: 0 2px; }
+/* long lines wrap with a hanging indent: --n = leading spaces of the line, --iu = width of one indent space */
+table.code { --iu: 1ch; }
+table.code td.src { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); padding-right: 16px;
+  padding-left: calc(10px + (var(--n, 0) + 4) * var(--iu)); text-indent: calc(-1 * (var(--n, 0) + 4) * var(--iu)); }
+table.code td.src .ind { display: inline-block; width: calc(var(--n, 0) * var(--iu)); }
+@media (max-width: 640px) { table.code { --iu: 0.5ch; } }
+table.code tr.hl td { background: var(--code-hl); }
+table.code tr.hl td.ln { color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+table.code tr.gap td { color: var(--code-ln); font-style: italic; font-family: var(--font-body); font-size: 12.5px; padding-block: 2px; }
+table.code.no-ln td.ln { display: none; }
+.badge { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 10.5px var(--font-body); margin-top: 2px; }
+.k { color: var(--tk-key); } .s { color: var(--tk-str); } .x { color: var(--tk-expr); font-weight: 600; } .c { color: var(--tk-cmt); font-style: italic; } .w { color: var(--tk-kw); font-weight: 600; }
+
+/* line-by-line exhibits */
+.exhibit { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .exhibit { grid-template-columns: minmax(0, 1fr); } }
+.callouts { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: c; }
+.callouts li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; counter-increment: c; }
+.callouts li::before { content: counter(c); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 12px var(--font-body); margin-top: 2px; }
+.callouts li.after { display: block; counter-increment: none; color: var(--muted); font-size: 0.95rem; }
+.callouts .after::before { content: none; }
+.sub-old { color: var(--bad); } .sub-new { color: var(--good); }
+.group { display: grid; gap: 22px; }
+
+/* side by side */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.side { border-collapse: collapse; width: 100%; min-width: 36rem; font-size: 0.97rem; }
+table.side th, table.side td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.side tr:last-child > * { border-bottom: 0; }
+
+table.side thead th { font: 700 0.8rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+table.side thead th.o { color: var(--bad); } table.side thead th.n { color: var(--good); }
+table.side tbody th { font-weight: 700; width: 26%; }
+@media (max-width: 640px) {
+  table.side { min-width: 0; }
+  table.side thead { display: none; }
+  table.side tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--line); }
+  table.side tbody tr:last-child { border-bottom: 0; }
+  table.side tbody th { grid-column: 1 / -1; width: auto; padding-bottom: 2px; }
+  table.side tbody th, table.side tbody td { border-bottom: 0; }
+  table.side td::before { content: attr(data-label); display: block; margin-bottom: 2px; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+  table.side td.o::before { color: var(--bad); }
+  table.side td.n::before { color: var(--good); }
+}
+/* next */
+.todo { margin: 0; padding-left: 1.4rem; display: grid; gap: 10px; }
+footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+/* how GitHub OIDC works */
+.seq .life { stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.seq .msg { color: var(--accent); }
+.seq .msg path { fill: none; stroke: currentColor; stroke-width: 2.2; }
+.seq .msg polygon { fill: currentColor; }
+.seq .msg.back path { stroke-dasharray: 6 5; }
+.seq .msg-label { fill: var(--ink); font: 700 12.5px var(--font-body); }
+.seq .msg-note { fill: var(--muted); font: 600 11px var(--font-mono); }
+.tag-plain { color: var(--muted); }
+.swipe-hint { display: none; }
+@media (max-width: 700px) { .swipe-hint { display: inline; font-weight: 700; } }
+.card h4 { margin: 0; font: 700 1.05rem var(--font-display); }
+.where { color: var(--muted); font-size: 0.95rem; }
+.where code { overflow-wrap: anywhere; }
+table.formats { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+table.formats caption { text-align: left; padding: 12px 14px 4px; font-weight: 700; }
+table.formats th, table.formats td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.formats tr:last-child > * { border-bottom: 0; }
+table.formats thead th { font: 700 0.75rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+table.formats tbody th { font-weight: 400; width: 34%; }
+.callout-box { max-width: var(--measure); margin: 0; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--ink); padding: 12px 16px; border-radius: 0 10px 10px 0; }
+/* roles up close */
+.intro { max-width: var(--measure); }
+.jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.jump a { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 99px; background: var(--surface); color: var(--ink); text-decoration: none; font-size: 0.92rem; }
+.jump a:hover { border-color: var(--accent); }
+.jump code { background: none; padding: 0; }
+.jump .tag { font-size: 0.66rem; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 16px; }
+.glance h3 code, .role-head h3 code { background: none; padding: 0; font-size: 1.05em; }
+.kv { margin: 0; display: grid; gap: 10px; }
+.kv div { display: grid; gap: 2px; }
+.kv dt, .facts dt { font: 700 0.72rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.kv dd, .facts dd { margin: 0; min-width: 0; }
+.role { display: grid; gap: 16px; padding-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 16px; min-width: 0; }
+.role-head { display: grid; gap: 10px; max-width: var(--measure); }
+.role h4 { margin: 8px 0 0; font: 700 1.02rem var(--font-display); }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 10px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.facts div { display: grid; gap: 2px; min-width: 0; }
+.facts .full { grid-column: 1 / -1; }
+.shots { display: grid; gap: 12px; min-width: 0; }
+.callouts li.sub { display: block; counter-increment: none; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.callouts li.sub::before { content: none; }
+@media (prefers-reduced-motion: reduce) { .diagram [data-part] { transition: none; } }
+
+/* ── this page ── */
+.toc { box-sizing: border-box; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+.toc-title { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.toc ol { margin: 0; padding-left: 1.3rem; display: grid; gap: 4px; }
+.toc ol ol { margin-top: 4px; font-size: 0.95rem; }
+.toc a, .intro a, .note a { color: var(--ink); }
+.card h3 { font-size: 1.25rem; }
+.mono-line { color: var(--muted); font-size: 0.92rem; }
+.howto { margin: 0; padding-left: 1.4rem; display: grid; gap: 8px; max-width: var(--measure); }
+.part-h { margin: 22px 0 0; font: 700 1.08rem var(--font-display); }
+.pipe-h { display: grid; gap: 6px; }
+.wide > h3 { margin-top: 18px; font-size: 1.3rem; }
+.solo { min-width: 0; max-width: 58rem; }
+.player-body { display: grid; gap: 18px; min-width: 0; }
+.step-title { margin: 0; font: 600 1.15rem/1.2 var(--font-display); }
+.diagram .flow path { fill: none; stroke: var(--line-strong); stroke-width: 2; }
+.diagram .flow polygon { fill: var(--line-strong); }
+table.side.plain td::before { color: var(--muted); }
+table.side.plain thead th { color: var(--muted); }
+.goodlist { margin: 0; padding-left: 1.2rem; display: grid; gap: 8px; max-width: var(--measure); }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 16px; }
+.rules ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 6px; }
+.page > .callout-box { box-sizing: border-box; margin-inline: auto; }
+.callout-box a { color: var(--ink); }
+code.nw { white-space: nowrap; }
+/* ── page 4: three ways into AWS ── */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.icons { position: absolute; width: 0; height: 0; overflow: hidden; }
+.oneline { font-size: 1.12rem; }
+.step-code:empty { display: none; }
+.rank { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 14px; }
+.rank .card { border-top: 4px solid var(--line-strong); }
+.rank .r-good { border-top-color: var(--good); }
+.rank .r-mid { border-top-color: var(--accent); }
+.rank .r-bad { border-top-color: var(--bad); }
+.rank h3 { font-size: 1.2rem; }
+.verdict { font: 700 0.76rem/1 var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; }
+.r-good .verdict { color: var(--good); } .r-mid .verdict { color: var(--accent); } .r-bad .verdict { color: var(--bad); }
+.legend { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 860px) { .legend { grid-template-columns: minmax(0, 1fr); } }
+.wide > .callout-box { max-width: none; }
+.legend li { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 2px 14px; align-content: start; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.legend svg { grid-row: span 3; width: 40px; height: 40px; color: var(--accent); }
+.legend b { font: 700 1.05rem var(--font-display); }
+.legend span { color: var(--muted); font-size: 0.95rem; line-height: 1.45; }
+.legend .real { font-size: 0.82rem; margin-top: 4px; }
+.says { display: grid; gap: 22px; }
+.says-h { font: 700 0.8rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+.wide > h3 { margin-top: 12px; }
+.means { margin: 0; padding-left: 1.2rem; display: grid; gap: 8px; max-width: var(--measure); }
+.doc { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); min-width: 0; }
+.doc .fname { font-family: var(--font-body); font-weight: 700; }
+.pill-doc { color: var(--muted); background: var(--code-bg); border: 1px solid var(--line); }
+.doc-body { padding: 16px 18px; display: grid; gap: 10px; font-size: 0.97rem; line-height: 1.65; }
+.doc-h { font: 700 1.02rem/1.35 var(--font-display); text-wrap: balance; }
+.doc-body .gap { color: var(--muted); line-height: 1; }
+.doc-body ul { margin: 0; padding-left: 1.2rem; }
+.doc-body mark { background: var(--code-hl); color: var(--ink); border-radius: 3px; padding: 1px 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.doc-body mark .badge { margin: 0 5px 0 0; vertical-align: 1px; }
+.doc-foot { margin: 0; border-top: 1px solid var(--line); background: var(--code-bg); padding: 9px 18px; display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: space-between; font-size: 0.85rem; color: var(--muted); }
+.doc-foot a, .callouts a { color: var(--ink); font-weight: 700; }
+.diagram .ic { color: var(--muted); }
+.diagram g.on .ic { color: var(--accent); }
+.diagram .ic-bad { color: var(--bad); }
+.diagram .ic-good { color: var(--good); }
+.diagram .box-good { stroke: var(--good); }
+.diagram g.on > .box.box-good { stroke: var(--good); stroke-width: 2.5; }
+.diagram g.on > .box.box-bad { stroke-width: 2.5; }
+.diagram .t-good { fill: var(--good); font-weight: 700; }
+.diagram .room { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+.diagram .room-lit { fill: var(--accent-soft); stroke: var(--accent); }
+.diagram .door { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+.diagram .room-lit + .door { stroke: var(--accent); }
+table.score td .v { font-weight: 700; }
+.v-yes { color: var(--good); } .v-no { color: var(--bad); } .v-part { color: var(--accent); } .v-unk { color: var(--muted); }
+table.score td small { display: block; color: var(--muted); font-size: 0.85rem; }
+table.score tr.verdict-row > * { border-top: 2px solid var(--line-strong); }
+</style>
+
+<main class="page">
+  <svg class="icons" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="ic-house" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 34V17L20 7l14 10v17z"/><path d="M16 34v-9h8v9"/></g></symbol>
+      <symbol id="ic-office" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="5" width="22" height="30" rx="1.5"/><path d="M14 11h4M22 11h4M14 17h4M22 17h4M14 23h4M22 23h4"/><path d="M17 35v-6h6v6"/></g></symbol>
+      <symbol id="ic-note" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5h15l6 6v24H10z"/><path d="M25 5v6h6"/><path d="M14 17h12M14 22h12"/><circle cx="24" cy="29" r="3"/></g></symbol>
+      <symbol id="ic-badge" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="6" width="20" height="28" rx="4"/><circle cx="20" cy="16" r="4"/><path d="M15 25h10M17 29h6"/></g></symbol>
+      <symbol id="ic-key" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="20" r="6.5"/><path d="M19.5 20H35M30 20v6M34 20v4"/></g></symbol>
+      <symbol id="ic-list" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="7" width="24" height="28" rx="3"/><path d="M16 5h8v5h-8z"/><path d="M12 18l2 2 4-4M12 27l2 2 4-4M21 18h7M21 27h7"/></g></symbol>
+      <symbol id="ic-rooms" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="9" width="30" height="24" rx="2"/><path d="M15 9v24M25 9v24"/><path d="M8 33v-7h4v7M18 33v-7h4v7M28 33v-7h4v7"/></g></symbol>
+      <symbol id="ic-shield" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5l13 5v9c0 8-5.5 13-13 16-7.5-3-13-8-13-16v-9z"/><path d="M14 20l4 4 8-8"/></g></symbol>
+      <symbol id="ic-ticket" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13h30v5a3 3 0 0 0 0 6v5H5v-5a3 3 0 0 0 0-6z"/><path d="M16 13v16" stroke-dasharray="2.5 2.5"/></g></symbol>
+      <symbol id="ic-lock" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="18" width="22" height="16" rx="3"/><path d="M14 18v-5a6 6 0 0 1 12 0v5"/><circle cx="20" cy="26" r="2"/></g></symbol>
+    </defs>
+  </svg>
+
+  <header class="hero">
+    <p class="eyebrow">GitHub pipelines · getting into AWS</p>
+    <h1>Three ways into AWS, and which is best</h1>
+    <p class="lede">Your pipelines get into AWS in three different ways. The short answer comes first. After it, each way is explained with the same simple picture, next to what AWS’s own pages say.</p>
+  </header>
+
+  <section class="wide" aria-labelledby="answer-h">
+    <h2 id="answer-h" class="visually-hidden">The short answer</h2>
+    <div class="rank">
+      <article class="card r-good">
+        <p class="verdict">Best of the three</p>
+        <h3>Way 3 · New IMS sign-in</h3>
+        <p>Reception at head office first, then a badge made for pipelines.</p>
+        <p class="mono-line">Your converted pipelines</p>
+      </article>
+      <article class="card r-bad">
+        <p class="verdict">Worst, same as Way 1</p>
+        <h3>Way 2 · WS2 list</h3>
+        <p>Straight to the badge a list names. The check on 31 October showed it’s the master key too.</p>
+        <p class="mono-line">The WS2 DNS pipelines</p>
+      </article>
+      <article class="card r-bad">
+        <p class="verdict">Worst</p>
+        <h3>Way 1 · Old secrets</h3>
+        <p>Straight to Control Tower’s master key, which opens everything.</p>
+        <p class="mono-line">The old pipelines</p>
+      </article>
+    </div>
+    <aside class="callout-box"><b>What AWS would change:</b> keep Way 3’s two steps, but put the reception desk outside head office, name exact repos on the guest lists, and let each badge open only the rooms it needs. <a href="#aws-h">See AWS’s advice</a>.</aside>
+  </section>
+
+  <nav class="toc" aria-labelledby="toc-h">
+    <h2 id="toc-h" class="toc-title">On this page</h2>
+    <ol>
+      <li><a href="#key-h">The picture on this page</a></li>
+      <li><a href="#right-h">What all three get right</a></li>
+      <li><a href="#w1-h">Way 1 · Old secrets</a></li>
+      <li><a href="#w2-h">Way 2 · WS2 list</a></li>
+      <li><a href="#w3-h">Way 3 · New IMS sign-in</a></li>
+      <li><a href="#aws-h">What AWS recommends</a></li>
+      <li><a href="#side-h">All four side by side</a></li>
+      <li><a href="#next-h">What to do next</a></li>
+    </ol>
+  </nav>
+
+  <section class="wide" aria-labelledby="key-h">
+    <h2 id="key-h">The picture on this page</h2>
+    <p class="intro">Think of each AWS account as a building. A pipeline run is a visitor who needs a badge to get in. Here is every piece of the picture, with its real name underneath.</p>
+    <ul class="legend">
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-house"/></svg><b>Building</b><span>One AWS account, for example the prd network account.</span><span class="real">Real name: AWS account</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-office"/></svg><b>Head office</b><span>The company’s main account, which runs all the others.</span><span class="real">Real name: IMS Root (AWS calls it the management account)</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-note"/></svg><b>Signed note</b><span>Proof from GitHub, made fresh for each run, saying which repo and branch the run comes from.</span><span class="real">Real name: OIDC token</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-badge"/></svg><b>Badge</b><span>What the pipeline becomes inside a building.</span><span class="real">Real name: IAM role</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-key"/></svg><b>Master key</b><span>Control Tower’s own badge. It opens every room in every building.</span><span class="real">Real name: <code>AWSControlTowerExecution</code></span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-list"/></svg><b>Guest list</b><span>Who may get a badge. Each badge has its own list.</span><span class="real">Real name: trust policy</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-rooms"/></svg><b>Rooms</b><span>What a badge lets you do inside the building.</span><span class="real">Real name: permissions</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-shield"/></svg><b>Building rules</b><span>Company-wide safety rules that apply to everyone inside, whatever their badge.</span><span class="real">Real name: guardrails (SCPs)</span></li>
+      <li><svg viewBox="0 0 40 40" aria-hidden="true"><use href="#ic-ticket"/></svg><b>Reception pass</b><span>Way 3’s first badge, at head office. It is only good for one swap.</span><span class="real">Real name: the <code>iamr</code> role in IMS Root</span></li>
+    </ul>
+  </section>
+
+  <section class="wide" aria-labelledby="right-h">
+    <h2 id="right-h">What all three get right</h2>
+    <p class="intro">All three ways start the same way, and it’s the most important part. GitHub gives each run a signed note. AWS checks the note and hands over a temporary badge that expires on its own. No password or key is stored anywhere.</p>
+    <figure class="diagram-fig">
+      <div class="diagram-scroll"><svg class="diagram" viewBox="0 0 800 132" role="img" aria-label="All three ways: a GitHub run gets a fresh signed note, AWS checks it against a badge’s guest list, and gives a temporary badge that expires on its own. Nothing is stored."><g data-part="c1"><rect class="box" x="16" y="24" width="206" height="84" rx="12"/><use href="#ic-note" class="ic" x="26" y="36" width="28" height="28"/><text class="t-title" x="62" y="55">GitHub run</text><text class="t-sub" x="28" y="77">gets a fresh signed note</text><text class="t-sub" x="28" y="93">for this run only</text></g><g class="arrow" data-part="c2"><path d="M222,66 H288"/><polygon points="288,61 297,66 288,71"/><text class="arrow-label" x="259" y="56" text-anchor="middle">shows it</text></g><g data-part="c3"><rect class="box" x="297" y="24" width="206" height="84" rx="12"/><use href="#ic-list" class="ic" x="307" y="36" width="28" height="28"/><text class="t-title" x="343" y="55">AWS checks it</text><text class="t-sub" x="309" y="77">against the guest list</text><text class="t-sub" x="309" y="93">of one badge</text></g><g class="arrow" data-part="c4"><path d="M503,66 H569"/><polygon points="569,61 578,66 569,71"/><text class="arrow-label" x="540" y="56" text-anchor="middle">gives</text></g><g data-part="c5"><rect class="box" x="578" y="24" width="206" height="84" rx="12"/><use href="#ic-badge" class="ic ic-good" x="588" y="36" width="28" height="28"/><text class="t-title" x="624" y="55">Temporary badge</text><text class="t-sub" x="590" y="77">expires on its own;</text><text class="t-sub" x="590" y="93">no password stored</text></g></svg></div>
+      <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span>The part all three ways share.</figcaption>
+    </figure>
+    <p class="says-h">What AWS says</p>
+    <div class="exhibit">
+      <figure class="doc">
+        <figcaption class="shot-bar"><span class="fname">AWS IAM User Guide</span><span class="fsub">Security best practices in IAM</span><span class="pill pill-doc">Exact words</span></figcaption>
+        <div class="doc-body">
+          <p class="doc-h">Require workloads to use temporary credentials with IAM roles to access AWS</p>
+          <p class="gap">…</p>
+          <p>Workloads that run outside of AWS, such as your on-premises servers, servers from other cloud providers, or <mark><span class="badge">1</span>managed continuous integration and continuous delivery (CI/CD) platforms, can still use temporary credentials.</mark> However, you'll need to deliver these temporary credentials to your workload. The following are ways you can deliver temporary credentials to your workloads:</p>
+          <p class="gap">…</p>
+          <ul><li><mark><span class="badge">2</span>You can call the AWS STS <code>AssumeRoleWithWebIdentity</code> API to request temporary AWS credentials for your workload using a JSON web token (JWT) from an IdP that is configured within your AWS account.</mark></li></ul>
+        </div>
+        <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+      </figure>
+      <ol class="callouts">
+        <li><span>GitHub Actions is one of these: a pipeline service that runs outside AWS.</span></li>
+        <li><span>This is the swap all three ways make: GitHub’s signed note (a “JSON web token”) in, a temporary badge out.</span></li>
+        <li class="after">So all three ways already follow AWS’s first and most important rule. The differences are in what happens next.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="w1-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Way 1 · used by the old pipelines</p>
+      <h2 id="w1-h">Old secrets: straight to the master key</h2>
+    </div>
+    <p class="intro oneline">In one line: a secret in GitHub names Control Tower’s master key, and the run gets it in one step.</p>
+    <div class="player" data-player="w1">
+      <div class="player-body">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll"><svg class="diagram" viewBox="0 0 800 330" role="img" aria-label="Way 1. The pipeline run reads a secret that names the badge, shows GitHub’s signed note at the prd network account, and receives Control Tower’s master key, AWSControlTowerExecution. The guest list lets in the Landing-Zone repo and any repo in the github.com tescoims org. The building rules let the master key through, and it can open every room."><rect class="zone" x="8" y="8" width="168" height="314" rx="14"/><text class="zone-label" x="24" y="28">GitHub</text><g data-part="run"><rect class="box" x="20" y="44" width="144" height="80" rx="12"/><use href="#ic-note" class="ic" x="30" y="56" width="28" height="28"/><text class="t-title" x="66" y="75">Pipeline run</text><text class="t-sub" x="32" y="97">carries a signed</text><text class="t-sub" x="32" y="113">note from GitHub</text></g><g data-part="secret"><rect class="box" x="20" y="152" width="144" height="80" rx="12"/><use href="#ic-lock" class="ic" x="30" y="164" width="28" height="28"/><text class="t-title" x="66" y="183">Secret</text><text class="t-sub" x="32" y="205">names the badge</text><text class="t-sub" x="32" y="221">to ask for</text></g><g data-part="secret"><text class="t-mono" x="92" y="256" text-anchor="middle">NETWORK_SERVICES_ROLE</text></g><g class="arrow" data-part="a0"><path d="M92,152 V133"/><polygon points="87,133 92,124 97,133"/></g><rect class="zone" x="256" y="8" width="536" height="314" rx="14"/><text class="zone-label" x="272" y="28">AWS · prd network account</text><g class="arrow" data-part="a1"><path d="M164,84 H263"/><polygon points="263,79 272,84 263,89"/><text class="arrow-label" x="216" y="74" text-anchor="middle">shows note</text></g><g data-part="guest"><rect class="box" x="272" y="44" width="200" height="112" rx="12"/><use href="#ic-list" class="ic" x="282" y="56" width="28" height="28"/><text class="t-title" x="318" y="75">Guest list</text><text class="t-sub" x="284" y="97">✓ the Landing-Zone repo</text><text class="t-sub t-bad" x="284" y="113">✓ any tescoims repo,</text><text class="t-sub t-bad" x="284" y="129">    on any branch</text></g><g class="arrow" data-part="a2"><path d="M472,100 H507"/><polygon points="507,95 516,100 507,105"/></g><g data-part="key"><rect class="box" x="516" y="44" width="260" height="112" rx="12"/><use href="#ic-key" class="ic ic-bad" x="526" y="56" width="28" height="28"/><text class="t-title" x="562" y="75">Master key</text><text class="t-sub" x="528" y="97">Control Tower’s own key,</text><text class="t-sub" x="528" y="113">made to set up every account</text><text class="t-mono" x="646" y="144" text-anchor="middle">AWSControlTowerExecution</text></g><g data-part="rules"><rect class="box box-bad" x="272" y="176" width="504" height="44" rx="10"/><use href="#ic-shield" class="ic ic-bad" x="282" y="184" width="28" height="28"/><text class="t-sub t-bad" x="318" y="203">Building rules (guardrails) let the master key through</text></g><text class="t-sub" x="272" y="250">Rooms: all of them (admin)</text><g data-part="rooms"><rect class="room room-lit" x="272" y="262" width="117" height="44" rx="6"/><path class="door" d="M323.5,306 v-20 h14 v20"/><rect class="room room-lit" x="401" y="262" width="117" height="44" rx="6"/><path class="door" d="M452.5,306 v-20 h14 v20"/><rect class="room room-lit" x="530" y="262" width="117" height="44" rx="6"/><path class="door" d="M581.5,306 v-20 h14 v20"/><rect class="room room-lit" x="659" y="262" width="117" height="44" rx="6"/><path class="door" d="M710.5,306 v-20 h14 v20"/></g><g class="arrow" data-part="a3"><path d="M764,156 V253"/><polygon points="759,253 764,262 769,253"/></g></svg></div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h3 class="step-title"></h3>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="says-h">What AWS says</p>
+    <div class="says">
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">AWS IAM User Guide</span><span class="fsub">Security best practices in IAM</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p class="doc-h">Establish permissions guardrails across multiple accounts</p>
+            <p>As you scale your workloads, separate them by using multiple accounts that are managed with AWS Organizations. <mark><span class="badge">1</span>We recommend that you use AWS Organizations service control policies (SCPs) to establish permissions guardrails to control access for all principals (IAM roles and users) across your accounts.</mark></p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026</span><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>AWS wants the building rules to cover every badge in every account. “Principals” here means badges and users.</span></li>
+        </ol>
+      </div>
+      <div class="exhibit">
+        <div data-panel="scp"></div>
+        <ol class="callouts">
+          <li><span>One of Control Tower’s building rules. “Deny” means block.</span></li>
+          <li><span>What it blocks: adding or changing CloudFormation extensions. Other rules block other things.</span></li>
+          <li><span>Where: everywhere in the account.</span></li>
+          <li><span>Who: only callers whose badge is not like…</span></li>
+          <li><span>…the master key. So the master key is let through.</span></li>
+          <li class="after">The same exception is written into other Control Tower rules on this AWS page. It is there so Control Tower’s own work isn’t blocked. <a href="https://docs.aws.amazon.com/controltower/latest/controlreference/elective-preventive-controls.html" target="_blank" rel="noopener">Open the AWS page ↗</a></li>
+        </ol>
+      </div>
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">AWS Control Tower User Guide</span><span class="fsub">Guidance for creating and modifying AWS Control Tower resources</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p class="doc-h">General Guidance</p>
+            <p>We recommend the following best practices as you create and modify resources in AWS Control Tower. This guidance might change as the service is updated.</p>
+            <p class="gap">…</p>
+            <ul><li><mark><span class="badge">1</span>Do not modify or delete any resources created by AWS Control Tower</mark>, including resources in the management account, in the shared accounts, and in member accounts. <mark><span class="badge">2</span>If you modify these resources, you may be required to update your landing zone or re-register an OU, and modification can result in inaccurate compliance reporting.</mark></li></ul>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://docs.aws.amazon.com/controltower/latest/userguide/getting-started-guidance.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>The master key was made by Control Tower. Adding GitHub to its guest list is a change to it.</span></li>
+          <li><span>What can happen: repair work on the whole Control Tower setup, and compliance reports that are wrong.</span></li>
+        </ol>
+      </div>
+    </div>
+
+    <h3>What it means for you</h3>
+    <ul class="means">
+      <li><b>Risk:</b> anyone who can run a pipeline in any <code>tescoims</code> repo could get the master key to the prd network account.</li>
+      <li><b>Risk:</b> the building rules don’t stop the master key, so a pipeline mistake isn’t caught by them.</li>
+      <li><b>Future:</b> none. Once every pipeline has moved, the WS2 pipelines included, take GitHub off the master key’s guest list and delete the old secrets.</li>
+    </ul>
+  </section>
+
+  <section class="wide" aria-labelledby="w2-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Way 2 · used by the WS2 DNS pipelines</p>
+      <h2 id="w2-h">WS2 list: another route to the master key</h2>
+    </div>
+    <p class="intro oneline">In one line: one secret holds a list of badges, and both badges on it are Control Tower’s master key. So Way 2 is Way 1 by another route.</p>
+    <div class="player" data-player="w2">
+      <div class="player-body">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll"><svg class="diagram" viewBox="0 0 800 330" role="img" aria-label="Way 2. The pipeline run reads one secret holding a list of badges, shows GitHub’s signed note at the account you typed, and receives the badge the list names, in one step. The check on 31 October 2026 showed that both entries, sandbox and network-prod, name Control Tower’s master key, AWSControlTowerExecution. The building rules let it through, and it can open every room."><rect class="zone" x="8" y="8" width="168" height="314" rx="14"/><text class="zone-label" x="24" y="28">GitHub</text><g data-part="run"><rect class="box" x="20" y="44" width="144" height="80" rx="12"/><use href="#ic-note" class="ic" x="30" y="56" width="28" height="28"/><text class="t-title" x="66" y="75">Pipeline run</text><text class="t-sub" x="32" y="97">carries a signed</text><text class="t-sub" x="32" y="113">note from GitHub</text></g><g data-part="secret"><rect class="box" x="20" y="152" width="144" height="80" rx="12"/><use href="#ic-lock" class="ic" x="30" y="164" width="28" height="28"/><text class="t-title" x="66" y="183">Secret</text><text class="t-sub" x="32" y="205">a list: account</text><text class="t-sub" x="32" y="221">name → badge</text></g><g data-part="secret"><text class="t-mono" x="92" y="256" text-anchor="middle">DEPLOY_ROLE_ARNS_JSON</text></g><g class="arrow" data-part="a0"><path d="M92,152 V133"/><polygon points="87,133 92,124 97,133"/></g><rect class="zone" x="256" y="8" width="536" height="314" rx="14"/><text class="zone-label" x="272" y="28">AWS · sandbox or network-prod</text><g class="arrow" data-part="a1"><path d="M164,84 H263"/><polygon points="263,79 272,84 263,89"/><text class="arrow-label" x="216" y="74" text-anchor="middle">shows note</text></g><g data-part="guest"><rect class="box" x="272" y="44" width="200" height="112" rx="12"/><use href="#ic-list" class="ic" x="282" y="56" width="28" height="28"/><text class="t-title" x="318" y="75">Guest list</text><text class="t-sub" x="284" y="97">the master key’s list:</text><text class="t-sub" x="284" y="113">must let in the</text><text class="t-sub" x="284" y="129">WS2 pipelines’ repo</text></g><g class="arrow" data-part="a2"><path d="M472,100 H507"/><polygon points="507,95 516,100 507,105"/></g><g data-part="key"><rect class="box" x="516" y="44" width="260" height="112" rx="12"/><use href="#ic-key" class="ic ic-bad" x="526" y="56" width="28" height="28"/><text class="t-title" x="562" y="75">Master key</text><text class="t-sub" x="528" y="97">both list entries name it:</text><text class="t-sub" x="528" y="113">sandbox and network-prod</text><text class="t-mono" x="646" y="144" text-anchor="middle">AWSControlTowerExecution</text></g><g data-part="rules"><rect class="box box-bad" x="272" y="176" width="504" height="44" rx="10"/><use href="#ic-shield" class="ic ic-bad" x="282" y="184" width="28" height="28"/><text class="t-sub t-bad" x="318" y="203">Building rules (guardrails) let the master key through</text></g><text class="t-sub" x="272" y="250">Rooms: all of them (admin)</text><g data-part="rooms"><rect class="room room-lit" x="272" y="262" width="117" height="44" rx="6"/><path class="door" d="M323.5,306 v-20 h14 v20"/><rect class="room room-lit" x="401" y="262" width="117" height="44" rx="6"/><path class="door" d="M452.5,306 v-20 h14 v20"/><rect class="room room-lit" x="530" y="262" width="117" height="44" rx="6"/><path class="door" d="M581.5,306 v-20 h14 v20"/><rect class="room room-lit" x="659" y="262" width="117" height="44" rx="6"/><path class="door" d="M710.5,306 v-20 h14 v20"/></g><g class="arrow" data-part="a3"><path d="M764,156 V253"/><polygon points="759,253 764,262 769,253"/></g></svg></div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h3 class="step-title"></h3>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <h3>What it means for you</h3>
+    <ul class="means">
+      <li><b>Checked on 31 October 2026:</b> both entries in the list are the master key, for sandbox (<code>036943221440</code>) and network-prod (<code>584477831165</code>).</li>
+      <li><b>Risk:</b> the same as Way 1. Export and Apply run as full admin in both accounts, and the building rules don’t stop them.</li>
+      <li><b>Next:</b> move both pipelines to Way 3. network-prod already has a pipeline badge, <code>iamr-net-prd-deploy</code>, but its guest list only lets in AWS-Landing-Zone and ims-app-identity. sandbox has no pipeline badge yet.</li>
+    </ul>
+  </section>
+
+  <section class="wide" aria-labelledby="w3-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Way 3 · used by your converted pipelines</p>
+      <h2 id="w3-h">New IMS sign-in: reception first, then a pipeline badge</h2>
+    </div>
+    <p class="intro oneline">In one line: the run gets a reception pass at head office, then swaps it for a badge made for pipelines.</p>
+    <div class="player" data-player="w3">
+      <div class="player-body">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll"><svg class="diagram" viewBox="0 0 800 342" role="img" aria-label="Way 3. The pipeline run stores no secret. It shows GitHub’s signed note at head office (IMS Root), whose guest list lets in 2 named repos for the prd network and any repo in the 13 GitHub orgs for other badges. It gets a reception pass that can only be swapped for one badge, then swaps it for a pipeline badge in the network account, iamr-net-prd-deploy. The building rules apply there, and the badge can open every room. The organization’s rules don’t apply in head office."><rect class="zone" x="8" y="8" width="168" height="326" rx="14"/><text class="zone-label" x="24" y="28">GitHub</text><g data-part="run"><rect class="box" x="20" y="44" width="144" height="80" rx="12"/><use href="#ic-note" class="ic" x="30" y="56" width="28" height="28"/><text class="t-title" x="66" y="75">Pipeline run</text><text class="t-sub" x="32" y="97">carries a signed</text><text class="t-sub" x="32" y="113">note from GitHub</text></g><g data-part="nostore"><rect class="box" x="20" y="152" width="144" height="80" rx="12"/><use href="#ic-lock" class="ic ic-good" x="30" y="164" width="28" height="28"/><text class="t-title" x="66" y="183">No secret</text><text class="t-sub" x="32" y="205">badge name comes</text><text class="t-sub" x="32" y="221">from the account</text></g><rect class="zone" x="256" y="8" width="248" height="326" rx="14"/><text class="zone-label" x="272" y="28">Head office · IMS Root</text><g class="arrow" data-part="a1"><path d="M164,84 H263"/><polygon points="263,79 272,84 263,89"/><text class="arrow-label" x="216" y="74" text-anchor="middle">shows note</text></g><g data-part="guest"><rect class="box" x="272" y="44" width="216" height="104" rx="12"/><use href="#ic-list" class="ic" x="282" y="56" width="28" height="28"/><text class="t-title" x="318" y="75">Guest list</text><text class="t-sub" x="284" y="97">prd network: 2 repos</text><text class="t-sub" x="284" y="113">other badges: any repo</text><text class="t-sub" x="284" y="129">in the 13 GitHub orgs</text></g><g class="arrow" data-part="a2"><path d="M380,148 V159"/><polygon points="375,159 380,168 385,159"/></g><g data-part="pass"><rect class="box" x="272" y="168" width="216" height="76" rx="12"/><use href="#ic-ticket" class="ic" x="282" y="180" width="28" height="28"/><text class="t-title" x="318" y="199">Reception pass</text><text class="t-sub" x="284" y="221">good for one swap, into</text><text class="t-sub" x="284" y="237">one account only</text></g><g data-part="ho"><rect class="box box-bad" x="272" y="262" width="216" height="56" rx="10"/><text class="t-sub t-bad" x="284" y="285">Organization rules don’t</text><text class="t-sub t-bad" x="284" y="302">apply in head office</text></g><rect class="zone" x="520" y="8" width="272" height="326" rx="14"/><text class="zone-label" x="536" y="28">Network account (prd)</text><g class="arrow" data-part="a3"><path d="M488,206 H512 V100 H527"/><polygon points="527,95 536,100 527,105"/></g><g data-part="badge"><rect class="box" x="536" y="44" width="240" height="112" rx="12"/><use href="#ic-badge" class="ic ic-good" x="546" y="56" width="28" height="28"/><text class="t-title" x="582" y="75">Pipeline badge</text><text class="t-sub" x="548" y="97">made for pipelines</text><text class="t-mono" x="656" y="144" text-anchor="middle">iamr-net-prd-deploy</text></g><g data-part="rules"><rect class="box box-good" x="536" y="172" width="240" height="44" rx="10"/><use href="#ic-shield" class="ic ic-good" x="546" y="180" width="28" height="28"/><text class="t-sub t-good" x="582" y="199">Building rules apply</text></g><text class="t-sub" x="536" y="250">Rooms: all of them (admin)</text><g data-part="rooms"><rect class="room room-lit" x="536" y="262" width="51" height="44" rx="6"/><path class="door" d="M554.5,306 v-20 h14 v20"/><rect class="room room-lit" x="599" y="262" width="51" height="44" rx="6"/><path class="door" d="M617.5,306 v-20 h14 v20"/><rect class="room room-lit" x="662" y="262" width="51" height="44" rx="6"/><path class="door" d="M680.5,306 v-20 h14 v20"/><rect class="room room-lit" x="725" y="262" width="51" height="44" rx="6"/><path class="door" d="M743.5,306 v-20 h14 v20"/></g><g class="arrow" data-part="a4"><path d="M750,156 V253"/><polygon points="745,253 750,262 755,253"/></g></svg></div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h3 class="step-title"></h3>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="says-h">What AWS says</p>
+    <div class="says">
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">AWS Prescriptive Guidance</span><span class="fsub">Optimize multi-account serverless deployments by using the AWS CDK and GitHub Actions workflows</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p class="doc-h">Architecture</p>
+            <p class="gap">…</p>
+            <p>12. <mark><span class="badge">1</span>The CD workflow authenticates with AWS using the central AWS account GitHub OIDC role.</mark> For the CD workflow, AWS STS is first used to assume the central AWS account GitHub OIDC role. <mark><span class="badge">2</span>Then, this role assumes the CDK bootstrap roles for target account deployments.</mark></p>
+            <p class="doc-h">Epics</p>
+            <p class="gap">…</p>
+            <p>Set up a CDK environment in a specific AWS account and AWS Region that enables cross-account deployments from a central account and <mark><span class="badge">3</span>applies least-privilege principles to the CloudFormation execution role.</mark></p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/optimize-multi-account-serverless-deployments.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>Step one: GitHub’s note gets a pass in one central account. In Way 3, that’s IMS Root.</span></li>
+          <li><span>Step two: the pass is swapped for a badge in each target account. The same two steps as Way 3.</span></li>
+          <li><span>And the target badges get only what they need. Way 3’s badges are full admin.</span></li>
+        </ol>
+      </div>
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">AWS re:Post Knowledge Center</span><span class="fsub">Can I increase the duration of the IAM role chaining session?</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p><mark><span class="badge">1</span>Role chaining limits your AWS CLI or AWS API role session to 1 hour.</mark></p>
+            <p class="gap">…</p>
+            <p><mark><span class="badge">2</span>You can't increase the session duration.</mark></p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://repost.aws/knowledge-center/iam-role-chaining-limit" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>“Role chaining” is AWS’s name for Way 3’s swap: one badge used to get another.</span></li>
+          <li><span>So after the swap a run has at most 1 hour of access. Long jobs need to finish their AWS work within it.</span></li>
+        </ol>
+      </div>
+    </div>
+
+    <h3>What it means for you</h3>
+    <ul class="means">
+      <li><b>Good:</b> badges made for pipelines, the building rules apply, nothing is stored in GitHub, and the client controls every guest list in one place.</li>
+      <li><b>Watch:</b> 1 hour of access after the swap, and it can’t be raised.</li>
+      <li><b>Watch:</b> 14 of your accounts have no pipeline badge yet. Way 3 can’t reach them until the client creates one.</li>
+      <li><b>Watch:</b> the badges are full admin, and outside the prd network the guest lists let in any repo in the 13 GitHub orgs.</li>
+      <li><b>Watch:</b> the reception desk is in head office. That’s the one thing AWS’s advice would change.</li>
+    </ul>
+  </section>
+
+  <section class="wide" aria-labelledby="aws-h">
+    <div class="pipe-h">
+      <p class="eyebrow">AWS’s advice</p>
+      <h2 id="aws-h">What AWS recommends</h2>
+    </div>
+    <p class="intro oneline">In one line: keep Way 3’s two steps, and fix three things.</p>
+    <p class="intro">AWS doesn’t insist on one step or two. Its own GitHub example uses two steps, like Way 3. What its pages ask for is where the reception desk sits, how exact the guest lists are, and how many rooms each badge opens.</p>
+    <div class="player" data-player="aws">
+      <div class="player-body">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll"><svg class="diagram" viewBox="0 0 800 342" role="img" aria-label="AWS’s advice. The pipeline run shows GitHub’s signed note in a separate account, not head office, whose guest list names exact repos. It gets a reception pass there, where the organization’s rules apply, and swaps it for a pipeline badge in the network account. The building rules apply, and the badge opens only the rooms it needs. Head office is kept for running the organization only."><rect class="zone" x="8" y="8" width="168" height="160" rx="14"/><text class="zone-label" x="24" y="28">GitHub</text><g data-part="run"><rect class="box" x="20" y="44" width="144" height="80" rx="12"/><use href="#ic-note" class="ic" x="30" y="56" width="28" height="28"/><text class="t-title" x="66" y="75">Pipeline run</text><text class="t-sub" x="32" y="97">carries a signed</text><text class="t-sub" x="32" y="113">note from GitHub</text></g><rect class="zone" x="8" y="184" width="168" height="150" rx="14"/><text class="zone-label" x="24" y="204">Head office</text><g data-part="ho"><rect class="box box-good" x="20" y="220" width="144" height="96" rx="12"/><use href="#ic-office" class="ic ic-good" x="30" y="232" width="28" height="28"/><text class="t-title" x="66" y="251">IMS Root</text><text class="t-sub" x="32" y="273">org admin only</text><text class="t-sub" x="32" y="289">no pipelines</text></g><rect class="zone" x="256" y="8" width="248" height="326" rx="14"/><text class="zone-label" x="272" y="28">A separate account</text><g class="arrow" data-part="a1"><path d="M164,84 H263"/><polygon points="263,79 272,84 263,89"/><text class="arrow-label" x="216" y="74" text-anchor="middle">shows note</text></g><g data-part="guest"><rect class="box" x="272" y="44" width="216" height="104" rx="12"/><use href="#ic-list" class="ic ic-good" x="282" y="56" width="28" height="28"/><text class="t-title" x="318" y="75">Guest list</text><text class="t-sub t-good" x="284" y="97">✓ named repos only</text><text class="t-sub t-good" x="284" y="113">✓ checked by repo ID</text></g><g class="arrow" data-part="a2"><path d="M380,148 V159"/><polygon points="375,159 380,168 385,159"/></g><g data-part="pass"><rect class="box" x="272" y="168" width="216" height="76" rx="12"/><use href="#ic-ticket" class="ic" x="282" y="180" width="28" height="28"/><text class="t-title" x="318" y="199">Reception pass</text><text class="t-sub" x="284" y="221">good for one swap, into</text><text class="t-sub" x="284" y="237">one account only</text></g><g data-part="rulesA"><rect class="box box-good" x="272" y="262" width="216" height="56" rx="10"/><text class="t-sub t-good" x="284" y="285">Organization rules</text><text class="t-sub t-good" x="284" y="302">apply here too</text></g><rect class="zone" x="520" y="8" width="272" height="326" rx="14"/><text class="zone-label" x="536" y="28">Network account (prd)</text><g class="arrow" data-part="a3"><path d="M488,206 H512 V100 H527"/><polygon points="527,95 536,100 527,105"/></g><g data-part="badge"><rect class="box" x="536" y="44" width="240" height="112" rx="12"/><use href="#ic-badge" class="ic ic-good" x="546" y="56" width="28" height="28"/><text class="t-title" x="582" y="75">Pipeline badge</text><text class="t-sub" x="548" y="97">made for this pipeline</text></g><g data-part="rules"><rect class="box box-good" x="536" y="172" width="240" height="44" rx="10"/><use href="#ic-shield" class="ic ic-good" x="546" y="180" width="28" height="28"/><text class="t-sub t-good" x="582" y="199">Building rules apply</text></g><text class="t-sub" x="536" y="250">Rooms: only the ones it needs</text><g data-part="rooms"><rect class="room" x="536" y="262" width="51" height="44" rx="6"/><path class="door" d="M554.5,306 v-20 h14 v20"/><rect class="room" x="599" y="262" width="51" height="44" rx="6"/><path class="door" d="M617.5,306 v-20 h14 v20"/><rect class="room room-lit" x="662" y="262" width="51" height="44" rx="6"/><path class="door" d="M680.5,306 v-20 h14 v20"/><rect class="room room-lit" x="725" y="262" width="51" height="44" rx="6"/><path class="door" d="M743.5,306 v-20 h14 v20"/></g><g class="arrow" data-part="a4"><path d="M750,156 V253"/><polygon points="745,253 750,262 755,253"/></g></svg></div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h3 class="step-title"></h3>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Change 1 · Reception outside head office</h3>
+    <div class="says">
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">AWS Organizations User Guide</span><span class="fsub">Best practices for the management account</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p class="doc-h">Use the management account only for tasks that require the management account</p>
+            <p><mark><span class="badge">1</span>We recommend that you use the management account and its users and roles for tasks that must be performed only by that account.</mark> Store all of your AWS resources in other AWS accounts in the organization and keep them out of the management account. One important reason to keep your resources in other accounts is because <mark><span class="badge">2</span>Organizations service control policies (SCPs) do not work to restrict any users or roles in the management account.</mark></p>
+            <p class="gap">…</p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://docs.aws.amazon.com/organizations/latest/userguide/orgs_best-practices_mgmt-acct.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>The management account is head office, IMS Root. Letting pipelines in is not a job only head office can do.</span></li>
+          <li><span>SCPs are the building rules. They don’t reach anything in head office, reception passes included.</span></li>
+        </ol>
+      </div>
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">AWS whitepaper</span><span class="fsub">Organizing Your AWS Environment Using Multiple Accounts · Deployments OU</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p class="doc-h">Using CI/CD capabilities residing outside of your AWS environment</p>
+            <p><mark><span class="badge">1</span>If you already use on-premises and/or managed CI/CD and related capabilities that reside outside of your AWS environment</mark> and you do not expect to use and/or manage CI/CD services within your AWS environment in the near term, <mark><span class="badge">2</span>you might not immediately need to establish the Deployments OU and an associated set of CI/CD oriented accounts.</mark></p>
+            <p>In this scenario, <mark><span class="badge">3</span>you must work through any access and potential network connectivity dependencies</mark> between your CI/CD capabilities residing outside of your AWS environment and your workloads environments in AWS.</p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026</span><a href="https://docs.aws.amazon.com/whitepapers/latest/organizing-your-aws-environment/deployments-ou.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>That’s you: your pipelines run in GitHub, outside AWS.</span></li>
+          <li><span>So AWS doesn’t insist on special pipeline accounts for you.</span></li>
+          <li><span>But you do have to plan how the pipelines get in. That’s what this page compares.</span></li>
+          <li class="after">So AWS’s pages don’t name one account for the reception desk. They are clear about one thing: not head office.</li>
+        </ol>
+      </div>
+    </div>
+
+    <h3>Change 2 · Guest lists with exact names</h3>
+    <div class="says">
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">GitHub Docs</span><span class="fsub">Configuring OpenID Connect in Amazon Web Services</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p>… <mark><span class="badge">1</span>define at least one condition, so that untrusted repositories can't request access tokens</mark> …</p>
+            <p>… Evaluating this condition key in the role trust policy <mark><span class="badge">2</span>limits which GitHub actions are able to assume the role.</mark></p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws" target="_blank" rel="noopener">Open the GitHub page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>A guest list must say who may come in, so other people’s repos can’t get a badge.</span></li>
+          <li><span>The check decides which pipelines can get the badge. GitHub’s page shows one that lets in a single repo, and only its production environment: <code>repo:octo-org/octo-repo:environment:prod</code>.</span></li>
+        </ol>
+      </div>
+      <div class="exhibit">
+        <figure class="doc">
+          <figcaption class="shot-bar"><span class="fname">What’s New with AWS</span><span class="fsub">Posted on: Feb 2, 2026</span><span class="pill pill-doc">Exact words</span></figcaption>
+          <div class="doc-body">
+            <p class="doc-h">AWS STS now supports validation of select identity provider specific claims from Google, GitHub, CircleCI and OCI</p>
+            <p>… <mark><span class="badge">1</span>implement fine-grained access control for federated identities</mark> and help you establish your data perimeters.</p>
+          </div>
+          <p class="doc-foot"><span>Copied 31 Oct 2026 · “…” marks text left out</span><a href="https://aws.amazon.com/about-aws/whats-new/2026/01/aws-sts-supports-validation-identity-provider-claims/" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+        </figure>
+        <ol class="callouts">
+          <li><span>In plain words: a guest list can now check more details in GitHub’s note, such as the repo’s permanent ID and the environment.</span></li>
+          <li class="after">Your company’s GitHub signs its notes as <code>tescoims.ghe.com</code>. Ask the client’s architect to confirm this works for it before relying on it.</li>
+        </ol>
+      </div>
+    </div>
+
+    <h3>Change 3 · Only the rooms each badge needs</h3>
+    <div class="exhibit">
+      <figure class="doc">
+        <figcaption class="shot-bar"><span class="fname">AWS IAM User Guide</span><span class="fsub">Security best practices in IAM</span><span class="pill pill-doc">Exact words</span></figcaption>
+        <div class="doc-body">
+          <p class="doc-h">Apply least-privilege permissions</p>
+          <p><mark><span class="badge">1</span>When you set permissions with IAM policies, grant only the permissions required to perform a task.</mark> You do this by defining the actions that can be taken on specific resources under specific conditions, also known as <em>least-privilege permissions</em>. You might start with broad permissions while you explore the permissions that are required for your workload or use case. <mark><span class="badge">2</span>As your use case matures, you can work to reduce the permissions that you grant to work toward least privilege.</mark></p>
+        </div>
+        <p class="doc-foot"><span>Copied 31 Oct 2026</span><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html" target="_blank" rel="noopener">Open the AWS page ↗</a></p>
+      </figure>
+      <ol class="callouts">
+        <li><span>Give each badge only the rooms its pipeline needs.</span></li>
+        <li><span>Starting broad is fine if you narrow it over time. Today’s pipeline badges are full admin.</span></li>
+      </ol>
+    </div>
+    <p class="note">A one-step setup, with a proper pipeline badge in each account, is also standard practice. For your company the client’s standard is Way 3, so the advice is to keep it and make these three changes.</p>
+  </section>
+
+  <section class="wide" aria-labelledby="side-h">
+    <h2 id="side-h">All four side by side</h2>
+    <div class="table-wrap">
+      <table class="side plain score">
+        <thead><tr><th scope="col">Question</th><th scope="col">Way 1 · Old secrets</th><th scope="col">Way 2 · WS2 list</th><th scope="col">Way 3 · New IMS</th><th scope="col">AWS’s advice</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">No password kept in GitHub</th><td data-label="Way 1"><span class="v v-yes">✓ Yes</span></td><td data-label="Way 2"><span class="v v-yes">✓ Yes</span></td><td data-label="Way 3"><span class="v v-yes">✓ Yes</span></td><td data-label="AWS’s advice"><span class="v v-yes">✓ Yes</span></td></tr>
+          <tr><th scope="row">Badge made for pipelines</th><td data-label="Way 1"><span class="v v-no">✗ No</span><small>Control Tower’s master key</small></td><td data-label="Way 2"><span class="v v-no">✗ No</span><small>Control Tower’s master key</small></td><td data-label="Way 3"><span class="v v-yes">✓ Yes</span></td><td data-label="AWS’s advice"><span class="v v-yes">✓ Yes</span></td></tr>
+          <tr><th scope="row">Building rules apply</th><td data-label="Way 1"><span class="v v-no">✗ No</span></td><td data-label="Way 2"><span class="v v-no">✗ No</span></td><td data-label="Way 3"><span class="v v-yes">✓ Yes</span></td><td data-label="AWS’s advice"><span class="v v-yes">✓ Yes</span></td></tr>
+          <tr><th scope="row">Guest list names exact repos</th><td data-label="Way 1"><span class="v v-no">✗ No</span><small>a whole GitHub org</small></td><td data-label="Way 2"><span class="v v-no">✗ No</span><small>in network-prod, the same list as Way 1</small></td><td data-label="Way 3"><span class="v v-part">~ Partly</span><small>only for the prd network</small></td><td data-label="AWS’s advice"><span class="v v-yes">✓ Yes</span></td></tr>
+          <tr><th scope="row">Opens only the rooms needed</th><td data-label="Way 1"><span class="v v-no">✗ No</span><small>everything</small></td><td data-label="Way 2"><span class="v v-no">✗ No</span><small>everything</small></td><td data-label="Way 3"><span class="v v-no">✗ No</span><small>everything</small></td><td data-label="AWS’s advice"><span class="v v-yes">✓ Yes</span></td></tr>
+          <tr><th scope="row">Keeps head office out of it</th><td data-label="Way 1"><span class="v v-yes">✓ Yes</span></td><td data-label="Way 2"><span class="v v-yes">✓ Yes</span></td><td data-label="Way 3"><span class="v v-no">✗ No</span><small>reception is there</small></td><td data-label="AWS’s advice"><span class="v v-yes">✓ Yes</span></td></tr>
+          <tr class="verdict-row"><th scope="row">Verdict</th><td data-label="Way 1"><span class="v v-no">Worst</span></td><td data-label="Way 2"><span class="v v-no">Worst, same as Way 1</span></td><td data-label="Way 3"><span class="v v-yes">Best of the three</span></td><td data-label="AWS’s advice"><span class="v">The target</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="next-h">
+    <h2 id="next-h">What to do next</h2>
+    <ol class="howto">
+      <li>Move the WS2 pipelines to Way 3. network-prod can use <code>iamr-net-prd-deploy</code> once its guest list lets in the repo the WS2 pipelines live in; sandbox needs a pipeline badge first.</li>
+      <li>Ask the client to create pipeline badges (<code>iamr</code> roles) for the 14 accounts that only have the master key today. sandbox is one of them.</li>
+      <li>Ask the client to make the guest lists name exact repos, and the production environment for production badges. This is the follow-up already planned after the July sign-in incident.</li>
+      <li>Raise the head office point with the client’s architect. Moving the reception desk is their design decision, and a longer-term change.</li>
+      <li>Once nothing uses the master key, take GitHub off its guest list and delete the old secrets.</li>
+    </ol>
+  </section>
+
+  <footer>The AWS and GitHub boxes show text copied word for word from each page on 31 October 2026. “…” marks text left out, and the highlights and numbers are added. Pages can change, so follow the link under each box for the current version. Details about your accounts come from your own pipeline files and the secret checks of 30 and 31 October 2026.</footer>
+</main>
+
+<script>
+const DATA = {"panels": {"scp": {"file": "AWS Control Tower controls reference", "sub": "CT.CLOUDFORMATION.PR.1 · the control’s policy, exact", "lang": "json", "rows": [{"n": null, "t": "{", "m": null}, {"n": null, "t": "    \"Version\":\"2012-10-17\",", "m": null}, {"n": null, "t": "    \"Statement\": [", "m": null}, {"n": null, "t": "        {", "m": null}, {"n": null, "t": "            \"Sid\": \"GRDISALLOWMODIFICATIONCFNREGISTRY\",", "m": null}, {"n": null, "t": "            \"Effect\": \"Deny\",", "m": 1}, {"n": null, "t": "            \"Action\": [", "m": 2}, {"n": null, "t": "                \"cloudformation:RegisterType\",", "m": null}, {"n": null, "t": "                \"cloudformation:DeregisterType\",", "m": null}, {"n": null, "t": "                \"cloudformation:SetTypeConfiguration\",", "m": null}, {"n": null, "t": "                \"cloudformation:SetTypeDefaultVersion\",", "m": null}, {"n": null, "t": "                \"cloudformation:PublishType\"", "m": null}, {"n": null, "t": "            ],", "m": null}, {"n": null, "t": "            \"Resource\": [", "m": null}, {"n": null, "t": "                \"*\"", "m": 3}, {"n": null, "t": "            ],", "m": null}, {"n": null, "t": "            \"Condition\": {", "m": null}, {"n": null, "t": "                \"ArnNotLike\": {", "m": 4}, {"n": null, "t": "                    \"aws:PrincipalARN\": \"arn:aws:iam::*:role/AWSControlTowerExecution\"", "m": 5}, {"n": null, "t": "                }", "m": null}, {"n": null, "t": "            }", "m": null}, {"n": null, "t": "        }", "m": null}, {"n": null, "t": "    ]", "m": null}, {"n": null, "t": "}", "m": null}], "tone": ""}}, "players": {"w1": {"variants": [{"label": "Way 1", "caption": "Way 1 in the prd network account, as the old pipelines use it.", "steps": [{"title": "A run starts", "parts": ["run"], "text": "Every run gets a fresh signed note from GitHub. The note says which repo and branch the run comes from. Nothing like a password is stored.", "code": []}, {"title": "A secret names the badge", "parts": ["secret", "a0"], "text": "A secret in GitHub holds the full name of the badge to ask for. 17 of your 19 old role secrets name the same badge: the master key.", "code": []}, {"title": "The note is checked against the guest list", "parts": ["run", "a1", "guest"], "text": "The prd network account compares the note with the master key’s guest list. The list lets in the Landing-Zone repo, but also any repo in the github.com <code>tescoims<\/code> org, on any branch.", "code": []}, {"title": "The run gets the master key", "parts": ["a2", "key"], "text": "The badge it receives is <code>AWSControlTowerExecution<\/code>, Control Tower’s own key for setting up every account. GitHub was added to this key’s guest list so that pipelines could use it.", "code": []}, {"title": "The building rules let it through", "parts": ["key", "rules"], "text": "The organization’s safety rules (guardrails) are written with an exception for this key. A mistake made with it is not stopped by them.", "code": []}, {"title": "It can open every room", "parts": ["a3", "rooms"], "text": "The master key is full admin. A run holding it can change anything in the account.", "code": []}]}]}, "w2": {"variants": [{"label": "Way 2", "caption": "Way 2, as the WS2 DNS pipelines use it, after the check on 31 October 2026.", "steps": [{"title": "A run starts and reads a list", "parts": ["run", "secret", "a0"], "text": "Like Way 1, the run gets a signed note from GitHub. One secret, <code>DEPLOY_ROLE_ARNS_JSON<\/code>, holds a list: for each account name, the full name of a badge. The run picks the line for the account you typed.", "code": []}, {"title": "Straight to that badge", "parts": ["a1", "guest", "a2", "key"], "text": "It shows the note at that account’s door and gets the badge in one step. The check on 31 October showed which badge that is: both entries, sandbox and network-prod, name <code>AWSControlTowerExecution<\/code>, Control Tower’s master key.", "code": []}, {"title": "The building rules let it through", "parts": ["key", "rules"], "text": "As in Way 1, the organization’s safety rules make an exception for this key. A mistake made with it is not stopped by them.", "code": []}, {"title": "It can open every room", "parts": ["a3", "rooms"], "text": "The master key is full admin, so Export and Apply can change anything in both accounts, not only DNS records.", "code": []}]}]}, "w3": {"variants": [{"label": "Way 3", "caption": "Way 3, the new IMS sign-in your converted pipelines use.", "steps": [{"title": "A run starts, with nothing stored", "parts": ["run", "nostore"], "text": "The run gets its signed note from GitHub. It works out the badge name from the account name, so no secret is needed.", "code": []}, {"title": "Head office checks the note", "parts": ["a1", "guest"], "text": "The run goes to the head office account first (IMS Root). The guest list there decides who may come in: for the prd network, only 2 named repos; for the other badges, any repo in the 13 company GitHub orgs.", "code": []}, {"title": "It gets a reception pass", "parts": ["a2", "pass"], "text": "This pass is good for one thing only: swapping it for the badge with the same name in one account.", "code": []}, {"title": "It swaps the pass for a pipeline badge", "parts": ["a3", "badge"], "text": "In the network account the pass becomes <code>iamr-net-prd-deploy<\/code>, a badge made for pipelines. After this swap the run has at most 1 hour of access, and AWS doesn’t allow longer for a swap like this.", "code": []}, {"title": "The building rules apply", "parts": ["badge", "rules"], "text": "This badge is not Control Tower’s master key, so the organization’s safety rules apply to everything it does.", "code": []}, {"title": "It can still open every room", "parts": ["a4", "rooms"], "text": "The pipeline badge is full admin, so it can still change anything in the account. The building rules are what limit it.", "code": []}, {"title": "The one thing AWS would question", "parts": ["pass", "ho"], "text": "The reception desk sits in head office, where the organization’s safety rules don’t apply. AWS says to keep head office for running the organization only. The risk today is small, because a pass can only be swapped for one badge.", "code": []}]}]}, "aws": {"variants": [{"label": "AWS", "caption": "AWS’s advice, drawn the same way.", "steps": [{"title": "The same two steps as Way 3", "parts": ["run", "a1", "guest", "a2", "pass", "a3", "badge"], "text": "AWS’s own GitHub example uses the same shape: a pass in one central account, then a badge in each target account.", "code": []}, {"title": "Reception outside head office", "parts": ["pass", "rulesA", "ho"], "text": "The difference: the reception desk is in an ordinary account, where the organization’s safety rules apply. Head office is kept for running the organization only.", "code": []}, {"title": "A guest list with exact names", "parts": ["guest"], "text": "Only named repos get in, and for production only runs from the production environment, which can require someone’s approval. Since February 2026 AWS can also check the repo’s permanent ID in GitHub’s note.", "code": []}, {"title": "Only the rooms it needs", "parts": ["badge", "a4", "rooms"], "text": "Each badge opens only what its pipeline needs. A DNS pipeline gets the DNS rooms, not the whole building.", "code": []}, {"title": "The rules apply at every step", "parts": ["rules", "rulesA"], "text": "Both the pass and the badge sit in accounts where the organization’s safety rules apply.", "code": []}]}]}}};
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function hl(text, lang) {
+  if (lang === 'plain') return esc(text);
+  let out = '', rest = text;
+  if (lang === 'yaml') {
+    const m = rest.match(/^(\s*(?:-\s+)?)([A-Za-z0-9_.:\/-]+?)(:)(?=\s|$)/);
+    if (m) { out += esc(m[1]) + '<span class="k">' + esc(m[2]) + '</span>' + m[3]; rest = rest.slice(m[0].length); }
+  }
+  const bash = /^\s*(case|esac|echo|if|elif|else|fi|while|for|do|done|then)\b/.test(text);
+  const re = new RegExp('(\\$\\{\\{.*?\\}\\})|("(?:[^"\\\\]|\\\\.)*")|(\'(?:[^\'\\\\]|\\\\.)*\')|((?:^|\\s)#.*$)|(!Sub|!Ref)\\b' +
+                        (bash ? '|\\b(case|esac|echo|if|elif|else|fi|while|for|do|done|then|in)\\b' : ''), 'g');
+  let last = 0, m;
+  while ((m = re.exec(rest))) {
+    out += esc(rest.slice(last, m.index));
+    const t = m[0];
+    if (m[1]) out += '<span class="x">' + esc(t) + '</span>';
+    else if (m[2]) out += '<span class="' + (lang === 'json' && /^\s*:/.test(rest.slice(m.index + t.length)) ? 'k' : 's') + '">' + esc(t) + '</span>';
+    else if (m[3]) out += '<span class="s">' + esc(t) + '</span>';
+    else if (m[4]) out += '<span class="c">' + esc(t) + '</span>';
+    else out += '<span class="w">' + esc(t) + '</span>';
+    last = m.index + t.length;
+  }
+  return out + esc(rest.slice(last));
+}
+
+function shot(b, badges) {
+  const numbered = b.rows.some((r) => r.n);
+  let rows = '';
+  for (const r of b.rows) {
+    if (r.gap !== undefined) {
+      rows += '<tr class="gap"><td class="ln">⋯</td>' + (badges ? '<td class="mk"></td>' : '') + '<td class="src">' + esc(r.gap) + '</td></tr>';
+      continue;
+    }
+    const lead = r.t.match(/^ */)[0].length;
+    rows += '<tr' + (r.m ? ' class="hl"' : '') + '><td class="ln">' + (r.n || '') + '</td>' +
+            (badges ? '<td class="mk">' + (r.m ? '<span class="badge">' + r.m + '</span>' : '') + '</td>' : '') +
+            '<td class="src" style="--n:' + lead + '"><span class="ind"></span>' + (hl(r.t.slice(lead), b.lang) || ' ') + '</td></tr>';
+  }
+  const pill = b.tone ? '<span class="pill pill-' + b.tone + '">' + b.tone + '</span>' : '';
+  return '<figure class="shot"><figcaption class="shot-bar"><span class="fname">' + esc(b.file) + '</span><span class="fsub">' +
+         esc(b.sub) + '</span>' + pill + '</figcaption><div class="shot-scroll"><table class="code' + (numbered ? '' : ' no-ln') +
+         '"><tbody>' + rows + '</tbody></table></div></figure>';
+}
+
+document.querySelectorAll('[data-panel]').forEach((el) => {
+  const b = DATA.panels[el.dataset.panel];
+  el.innerHTML = shot(b, b.rows.some((r) => r.m));
+});
+
+function initPlayer(root) {
+  const spec = DATA.players[root.dataset.player];
+  const q = (sel) => root.querySelector(sel);
+  const svg = q('svg.diagram'), box = svg.parentElement, panel = q('[role="tabpanel"]');
+  const tabs = [...root.querySelectorAll('[role="tab"]')];
+  let v = 0, idx = 0;
+  function show(focusTab) {
+    const variant = spec.variants[v], steps = variant.steps, s = steps[idx];
+    tabs.forEach((t, i) => { t.setAttribute('aria-selected', String(i === v)); t.tabIndex = i === v ? 0 : -1; });
+    if (panel && tabs[v]) panel.setAttribute('aria-labelledby', tabs[v].id);
+    if (focusTab) tabs[v].focus();
+    svg.classList.add('stepping');
+    svg.querySelectorAll('[data-part]').forEach((g) => g.classList.toggle('on', s.parts.includes(g.dataset.part)));
+    const lit = [...svg.querySelectorAll('[data-part].on')];
+    if (lit.length && box.scrollWidth > box.clientWidth + 1) {
+      const rs = lit.map((g) => g.getBoundingClientRect()), b = box.getBoundingClientRect();
+      const left = Math.min(...rs.map((r) => r.left)), right = Math.max(...rs.map((r) => r.right));
+      const x = right - left > box.clientWidth ? left - b.left - 8 : (left + right) / 2 - b.left - box.clientWidth / 2;
+      box.scrollTo({ left: Math.max(0, box.scrollLeft + x), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    q('.fig-cap').textContent = variant.caption;
+    q('.step-count').textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+    q('.step-title').textContent = s.title;
+    q('.step-text').innerHTML = s.text;
+    q('.step-code').innerHTML = s.code.map((c) => shot(c, false)).join('');
+    q('.prev').disabled = idx === 0;
+    q('.next').disabled = idx === steps.length - 1;
+    q('.dots').innerHTML = steps.map((st, i) => '<li><button type="button" data-i="' + i + '" aria-label="Step ' + (i + 1) + ': ' +
+      esc(st.title) + '"' + (i === idx ? ' aria-current="step"' : '') + '>' + (i + 1) + '</button></li>').join('');
+  }
+  q('.prev').addEventListener('click', () => { if (idx > 0) { idx--; show(); } });
+  q('.next').addEventListener('click', () => { if (idx < spec.variants[v].steps.length - 1) { idx++; show(); } });
+  q('.dots').addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) { idx = Number(b.dataset.i); show(); } });
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => { if (v !== i) { v = i; idx = 0; show(); } });
+    t.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      v = (v + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length; idx = 0; show(true);
+    });
+  });
+  show();
+}
+document.querySelectorAll('[data-player]').forEach(initPlayer);
+</script>
+
+</body></html>

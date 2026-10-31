@@ -1,0 +1,1009 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>WS2 DNS Pipelines Explained</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@600;800&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with wider exhibit bands for the run player and the code screenshots */
+:root {
+  --bg: #F1F3F6; --surface: #FFFFFF; --ink: #17202C; --muted: #566273; --line: #DCE1E8; --line-strong: #A6B0BE;
+  --accent: #A35C00; --accent-soft: #FFF0D2;            /* amber: where the run is now */
+  --good: #0D6E5B; --good-soft: #DDF1EC;                /* the new pipeline */
+  --bad: #A8372A; --bad-soft: #F9E3DF;                  /* the old pipeline */
+  --code-bg: #FAFBFC; --code-bar: #ECEFF4; --code-ln: #8A94A3; --code-hl: #FFF1D4;
+  --tk-key: #1C4FB0; --tk-str: #0B6B58; --tk-expr: #8B3DCB; --tk-cmt: #6C7787; --tk-kw: #A8372A;
+  --font-display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --measure: 46rem; --wide: 72rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+    --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+    --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+    --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+  --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+  --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+  --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--font-body); }
+.page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+        padding-block: 40px 64px; display: grid; gap: 56px; }
+.page > * { width: 100%; max-width: var(--measure); margin-inline: auto; min-width: 0; }
+.page > .wide { max-width: var(--wide); }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 1.4rem + 2.6vw, 3.1rem); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 800; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bar); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+section { display: grid; gap: 18px; }
+.eyebrow { font: 600 0.78rem/1 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.hero { display: grid; gap: 16px; }
+.lede { font-size: 1.15rem; color: var(--ink); max-width: 40rem; }
+
+/* the short version */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 10px; align-content: start; }
+.card-old { border-top: 4px solid var(--bad); }
+.card-new { border-top: 4px solid var(--good); }
+.card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 8px; }
+.tag { font: 700 0.8rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.tag-old { color: var(--bad); } .tag-new { color: var(--good); }
+.note { color: var(--muted); }
+
+/* words */
+.glossary { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0 28px; }
+.glossary div { padding-block: 12px; border-top: 1px solid var(--line); display: grid; gap: 4px; align-content: start; }
+.glossary dt { font: 600 0.95rem var(--font-mono); color: var(--ink); }
+.glossary dd { margin: 0; color: var(--muted); }
+.glossary dd b { color: var(--ink); }
+
+/* run player */
+.tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--code-bar); border-radius: 10px; justify-self: start; flex-wrap: wrap; }
+.tabs button { font: 600 0.95rem var(--font-body); border: 0; background: transparent; color: var(--muted); padding: 8px 16px; border-radius: 7px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.tabs button[aria-selected="true"]#tab-new { color: var(--good); }
+.tabs button[aria-selected="true"]#tab-old { color: var(--bad); }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.player { display: grid; gap: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.diagram-fig { margin: 0; display: grid; gap: 8px; }
+.diagram-scroll { overflow-x: auto; }
+.diagram { display: block; width: 100%; min-width: 620px; height: auto; color: var(--muted); }
+.diagram[hidden] { display: none; }
+.diagram-fig figcaption { color: var(--muted); font-size: 0.95rem; }
+.diagram .zone { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 6 6; }
+.diagram .zone-label { fill: var(--muted); font: 700 11px var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.diagram .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+.diagram .box-bad { stroke: var(--bad); stroke-dasharray: 5 4; }
+.diagram .t-title { fill: var(--ink); font: 700 15px var(--font-display); }
+.diagram .t-sub { fill: var(--muted); font: 400 12px var(--font-body); }
+.diagram .t-bad { fill: var(--bad); font-weight: 700; }
+.diagram .t-mono { fill: var(--ink); font: 600 10.5px var(--font-mono); }
+.diagram .chip-neutral { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+.diagram .chip-good { fill: var(--good-soft); stroke: var(--good); stroke-width: 1.2; }
+.diagram .chip-bad { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; }
+.diagram .stack { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.2; }
+.diagram .arrow { color: var(--muted); }
+.diagram .arrow path { fill: none; stroke: currentColor; stroke-width: 2; }
+.diagram .arrow polygon { fill: currentColor; }
+.diagram .arrow.dashed path { stroke-dasharray: 6 5; }
+.diagram .arrow.bad { color: var(--bad); }
+.diagram .arrow-label { fill: currentColor; font: 700 12.5px var(--font-body); }
+.diagram [data-part] { transition: opacity 0.25s ease; }
+.diagram.stepping [data-part]:not(.on) { opacity: 0.2; }
+.diagram .arrow.on:not(.bad) { color: var(--accent); }
+.diagram .arrow.on path { stroke-width: 3; }
+.diagram g.on > .box:not(.box-bad) { stroke: var(--accent); stroke-width: 2.5; }
+.stepper { display: grid; gap: 14px; }
+.step-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.step-nav .nav { font: 700 0.95rem var(--font-body); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.step-nav .nav:disabled { opacity: 0.4; cursor: default; }
+.step-nav .nav.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+@media (max-width: 640px) { .step-nav .dots { order: -1; flex-basis: 100%; } .step-nav .nav { flex: 1; } }
+.dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+.dots button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--muted); font: 700 0.8rem var(--font-body); cursor: pointer; font-variant-numeric: tabular-nums; }
+.dots button[aria-current="step"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.step-body { display: grid; gap: 10px; min-width: 0; }
+.step-count { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.step-code { display: grid; gap: 12px; min-width: 0; }
+
+/* code screenshots */
+.shot { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--code-bg); min-width: 0; }
+.shot-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--code-bar); border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.fname { font: 600 0.85rem var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
+.fsub { color: var(--muted); }
+.pill { margin-left: auto; font: 700 0.7rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 8px; border-radius: 99px; }
+.pill-old { color: var(--bad); background: var(--bad-soft); } .pill-new { color: var(--good); background: var(--good-soft); }
+.shot-scroll { overflow-x: auto; }
+table.code { border-collapse: collapse; width: 100%; font: 400 12.5px/1.65 var(--font-mono); }
+table.code td { padding: 0 10px; vertical-align: top; }
+table.code td.ln { width: 1%; text-align: right; color: var(--code-ln); user-select: none; font-variant-numeric: tabular-nums; padding-left: 12px; }
+table.code td.mk { width: 1%; padding: 0 2px; }
+/* long lines wrap with a hanging indent: --n = leading spaces of the line, --iu = width of one indent space */
+table.code { --iu: 1ch; }
+table.code td.src { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); padding-right: 16px;
+  padding-left: calc(10px + (var(--n, 0) + 4) * var(--iu)); text-indent: calc(-1 * (var(--n, 0) + 4) * var(--iu)); }
+table.code td.src .ind { display: inline-block; width: calc(var(--n, 0) * var(--iu)); }
+@media (max-width: 640px) { table.code { --iu: 0.5ch; } }
+table.code tr.hl td { background: var(--code-hl); }
+table.code tr.hl td.ln { color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+table.code tr.gap td { color: var(--code-ln); font-style: italic; font-family: var(--font-body); font-size: 12.5px; padding-block: 2px; }
+table.code.no-ln td.ln { display: none; }
+.badge { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 10.5px var(--font-body); margin-top: 2px; }
+.k { color: var(--tk-key); } .s { color: var(--tk-str); } .x { color: var(--tk-expr); font-weight: 600; } .c { color: var(--tk-cmt); font-style: italic; } .w { color: var(--tk-kw); font-weight: 600; }
+
+/* line-by-line exhibits */
+.exhibit { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .exhibit { grid-template-columns: minmax(0, 1fr); } }
+.callouts { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: c; }
+.callouts li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; counter-increment: c; }
+.callouts li::before { content: counter(c); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 12px var(--font-body); margin-top: 2px; }
+.callouts li.after { display: block; counter-increment: none; color: var(--muted); font-size: 0.95rem; }
+.callouts .after::before { content: none; }
+.sub-old { color: var(--bad); } .sub-new { color: var(--good); }
+.group { display: grid; gap: 22px; }
+
+/* side by side */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.side { border-collapse: collapse; width: 100%; min-width: 36rem; font-size: 0.97rem; }
+table.side th, table.side td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.side tr:last-child > * { border-bottom: 0; }
+
+table.side thead th { font: 700 0.8rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+table.side thead th.o { color: var(--bad); } table.side thead th.n { color: var(--good); }
+table.side tbody th { font-weight: 700; width: 26%; }
+@media (max-width: 640px) {
+  table.side { min-width: 0; }
+  table.side thead { display: none; }
+  table.side tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--line); }
+  table.side tbody tr:last-child { border-bottom: 0; }
+  table.side tbody th { grid-column: 1 / -1; width: auto; padding-bottom: 2px; }
+  table.side tbody th, table.side tbody td { border-bottom: 0; }
+  table.side td::before { content: attr(data-label); display: block; margin-bottom: 2px; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+  table.side td.o::before { color: var(--bad); }
+  table.side td.n::before { color: var(--good); }
+}
+/* next */
+.todo { margin: 0; padding-left: 1.4rem; display: grid; gap: 10px; }
+footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+/* how GitHub OIDC works */
+.seq .life { stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.seq .msg { color: var(--accent); }
+.seq .msg path { fill: none; stroke: currentColor; stroke-width: 2.2; }
+.seq .msg polygon { fill: currentColor; }
+.seq .msg.back path { stroke-dasharray: 6 5; }
+.seq .msg-label { fill: var(--ink); font: 700 12.5px var(--font-body); }
+.seq .msg-note { fill: var(--muted); font: 600 11px var(--font-mono); }
+.tag-plain { color: var(--muted); }
+.swipe-hint { display: none; }
+@media (max-width: 700px) { .swipe-hint { display: inline; font-weight: 700; } }
+.card h4 { margin: 0; font: 700 1.05rem var(--font-display); }
+.where { color: var(--muted); font-size: 0.95rem; }
+.where code { overflow-wrap: anywhere; }
+table.formats { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+table.formats caption { text-align: left; padding: 12px 14px 4px; font-weight: 700; }
+table.formats th, table.formats td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.formats tr:last-child > * { border-bottom: 0; }
+table.formats thead th { font: 700 0.75rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+table.formats tbody th { font-weight: 400; width: 34%; }
+.callout-box { max-width: var(--measure); margin: 0; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--ink); padding: 12px 16px; border-radius: 0 10px 10px 0; }
+/* roles up close */
+.intro { max-width: var(--measure); }
+.jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.jump a { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 99px; background: var(--surface); color: var(--ink); text-decoration: none; font-size: 0.92rem; }
+.jump a:hover { border-color: var(--accent); }
+.jump code { background: none; padding: 0; }
+.jump .tag { font-size: 0.66rem; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 16px; }
+.glance h3 code, .role-head h3 code { background: none; padding: 0; font-size: 1.05em; }
+.kv { margin: 0; display: grid; gap: 10px; }
+.kv div { display: grid; gap: 2px; }
+.kv dt, .facts dt { font: 700 0.72rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.kv dd, .facts dd { margin: 0; min-width: 0; }
+.role { display: grid; gap: 16px; padding-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 16px; min-width: 0; }
+.role-head { display: grid; gap: 10px; max-width: var(--measure); }
+.role h4 { margin: 8px 0 0; font: 700 1.02rem var(--font-display); }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 10px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.facts div { display: grid; gap: 2px; min-width: 0; }
+.facts .full { grid-column: 1 / -1; }
+.shots { display: grid; gap: 12px; min-width: 0; }
+.callouts li.sub { display: block; counter-increment: none; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.callouts li.sub::before { content: none; }
+@media (prefers-reduced-motion: reduce) { .diagram [data-part] { transition: none; } }
+
+/* ── this page ── */
+.toc { box-sizing: border-box; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+.toc-title { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.toc ol { margin: 0; padding-left: 1.3rem; display: grid; gap: 4px; }
+.toc ol ol { margin-top: 4px; font-size: 0.95rem; }
+.toc a, .intro a, .note a { color: var(--ink); }
+.card h3 { font-size: 1.25rem; }
+.mono-line { color: var(--muted); font-size: 0.92rem; }
+.howto { margin: 0; padding-left: 1.4rem; display: grid; gap: 8px; max-width: var(--measure); }
+.part-h { margin: 22px 0 0; font: 700 1.08rem var(--font-display); }
+.pipe-h { display: grid; gap: 6px; }
+.wide > h3 { margin-top: 18px; font-size: 1.3rem; }
+.solo { min-width: 0; max-width: 58rem; }
+.player-body { display: grid; gap: 18px; min-width: 0; }
+.step-title { margin: 0; font: 600 1.15rem/1.2 var(--font-display); }
+.diagram .flow path { fill: none; stroke: var(--line-strong); stroke-width: 2; }
+.diagram .flow polygon { fill: var(--line-strong); }
+table.side.plain td::before { color: var(--muted); }
+table.side.plain thead th { color: var(--muted); }
+.goodlist { margin: 0; padding-left: 1.2rem; display: grid; gap: 8px; max-width: var(--measure); }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 16px; }
+.rules ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 6px; }
+.page > .callout-box { box-sizing: border-box; margin-inline: auto; }
+.callout-box a { color: var(--ink); }
+code.nw { white-space: nowrap; }
+</style>
+
+<main class="page">
+  <header class="hero">
+    <p class="eyebrow">Route 53 · DNS records kept in Git</p>
+    <h1>Your WS2 DNS pipelines, explained</h1>
+    <p class="lede">Two pipelines keep the DNS records of your Route 53 zones in Git. <b>Export</b> copies a zone’s live records into a JSON file and opens a pull request. <b>Apply</b> compares that file with the live zone and makes the zone match. This page walks through both with the real code, and answers how they get into AWS.</p>
+  </header>
+
+  <aside class="callout-box" aria-labelledby="answer-h">
+    <p><b id="answer-h">Old way or new way?</b> The old way. Every box that talks to AWS takes a role ARN for the account from the secret <code>DEPLOY_ROLE_ARNS_JSON</code> and signs straight in to that account in one step. Nothing goes through IMS Root. And <a href="#roles-h">the check on 31 October</a> showed the role it signs in to is Control Tower’s master key, <code>AWSControlTowerExecution</code>, in both accounts on the list.</p>
+  </aside>
+
+  <nav class="toc" aria-labelledby="toc-h">
+    <h2 id="toc-h" class="toc-title">On this page</h2>
+    <ol>
+      <li><a href="#glance-h">The two pipelines at a glance</a></li>
+      <li><a href="#words-h">Words on this page</a></li>
+      <li><a href="#signin-h">How they get into AWS</a></li>
+      <li><a href="#ex-h">Pipeline 1 · Export</a>
+        <ol>
+          <li><a href="#ex-run-h">How to run it</a></li>
+          <li><a href="#ex-watch-h">Watch one run</a></li>
+          <li><a href="#ex-what-h">What gets exported</a></li>
+          <li><a href="#ex-code-h">The file, line by line</a></li>
+          <li><a href="#ex-errors-h">When something goes wrong</a></li>
+        </ol></li>
+      <li><a href="#ap-h">Pipeline 2 · Apply</a>
+        <ol>
+          <li><a href="#ap-safe-h">Its safety switches</a></li>
+          <li><a href="#ap-run-h">How to run it</a></li>
+          <li><a href="#ap-watch-h">Watch one run</a></li>
+          <li><a href="#ap-code-h">The file, line by line</a></li>
+          <li><a href="#ap-errors-h">When something goes wrong</a></li>
+        </ol></li>
+      <li><a href="#side-h">Export and Apply side by side</a></li>
+      <li><a href="#fix-h">Things worth fixing</a></li>
+    </ol>
+  </nav>
+
+  <section aria-labelledby="glance-h">
+    <h2 id="glance-h">The two pipelines at a glance</h2>
+    <div class="compare">
+      <article class="card">
+        <p class="tag tag-plain">Pipeline 1</p>
+        <h3>Export</h3>
+        <p class="mono-line"><code>ws2-dns-records-export.yml</code> · in Actions: <b>WS2 - DNS Records Export (batch)</b></p>
+        <ul>
+          <li>Reads the live records of one zone, or of every zone in an account.</li>
+          <li>Writes one JSON file per zone, and opens a pull request with them.</li>
+          <li>Changes nothing in AWS.</li>
+          <li>Exporting every zone needs approval, except in sandbox.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <p class="tag tag-plain">Pipeline 2</p>
+        <h3>Apply</h3>
+        <p class="mono-line"><code>ws2-dns-records-apply.yml</code> · in Actions: <b>WS2 -- DNS Records Apply (Gated / Audited)</b></p>
+        <ul>
+          <li>Compares one zone’s JSON file with the live zone and makes the zone match.</li>
+          <li>Always previews first; changes only when you tick <b>execute_changes</b>.</li>
+          <li>Deletes records only when you also tick <b>with_deletes</b>.</li>
+          <li>Real changes need approval, except in sandbox.</li>
+        </ul>
+      </article>
+    </div>
+    <figure class="diagram-fig">
+      <div class="diagram-scroll">
+        <svg class="diagram" viewBox="0 0 800 206" role="img" aria-label="The loop: Export copies the live zone into a pull request with a JSON file per zone; the team reviews, edits and merges it into main; Apply makes the live zone match the file on main, after a preview and an approval.">
+          <rect class="box" x="16" y="40" width="180" height="76" rx="12"/>
+          <text class="t-title" x="106" y="72" text-anchor="middle">Live zone</text>
+          <text class="t-sub" x="106" y="94" text-anchor="middle">in Route 53</text>
+          <rect class="box" x="310" y="40" width="180" height="76" rx="12"/>
+          <text class="t-title" x="400" y="72" text-anchor="middle">Pull request</text>
+          <text class="t-sub" x="400" y="94" text-anchor="middle">a JSON file per zone</text>
+          <rect class="box" x="604" y="40" width="180" height="76" rx="12"/>
+          <text class="t-title" x="694" y="72" text-anchor="middle">main</text>
+          <text class="t-sub" x="694" y="94" text-anchor="middle">the records you want</text>
+          <g class="arrow on"><path d="M196,78 L301,78"/><polygon points="301,73 310,78 301,83"/><text class="arrow-label" x="253" y="68" text-anchor="middle">Export</text></g>
+          <g class="arrow on"><path d="M490,78 L595,78"/><polygon points="595,73 604,78 595,83"/><text class="arrow-label" x="547" y="52" text-anchor="middle">review, edit</text><text class="arrow-label" x="547" y="68" text-anchor="middle">and merge</text></g>
+          <g class="arrow on"><path d="M694,116 C694,182 106,182 106,125"/><polygon points="101,125 106,116 111,125"/><text class="arrow-label" x="400" y="196" text-anchor="middle">Apply: preview → approval → change batch</text></g>
+        </svg>
+      </div>
+      <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span>The loop the two pipelines make. Export brings the live records into Git; Apply takes the records in Git back to the live zone.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="words-h">
+    <h2 id="words-h">Words on this page</h2>
+    <dl class="glossary">
+      <div><dt>hosted zone</dt><dd>Route 53’s container for one domain’s DNS records, for example <code>example.com</code>. A public zone answers the internet; a private zone answers only inside chosen VPCs.</dd></div>
+      <div><dt>DNS record</dt><dd>One entry in a zone: A (an IPv4 address), AAAA (IPv6), CNAME (another name), MX (mail), TXT (text, often for checks), NS (which name servers answer).</dd></div>
+      <div><dt>ALIAS</dt><dd>A Route 53 shortcut that points a name at an AWS resource, such as CloudFront or a load balancer. Export leaves these out.</dd></div>
+      <div><dt>stack_id</dt><dd>The pipelines’ name for a zone, and the name of its file: <code class="nw">dns-records-</code> plus the zone name with dots as dashes, for example <code>dns-records-example-com</code>.</dd></div>
+      <div><dt>hosted zone ID</dt><dd>Route 53’s own ID for a zone, starting with Z, like the form’s example <code>Z060943926KMOQ012KNSW</code>.</dd></div>
+      <div><dt>split-horizon</dt><dd>A public zone and a private zone with the same name. Export gives their files <code class="nw">-public</code> and <code class="nw">-private</code> endings.</dd></div>
+      <div><dt>config file</dt><dd><code>config/accounts/&lt;account&gt;/networking/&lt;stack_id&gt;.json</code>: one zone’s records as JSON, kept in Git.</dd></div>
+      <div><dt>accounts registry</dt><dd><code>config/_accounts-registry.yaml</code>: the list of account names both pipelines accept, such as <code>network-prod</code> and <code>sandbox</code>.</dd></div>
+      <div><dt>environment · approval</dt><dd>A GitHub setting that can make a job wait for a named reviewer. These pipelines wait on <code>production</code>; Apply in sandbox uses <code>dns-records-sandbox</code>.</dd></div>
+      <div><dt>change batch · UPSERT · DELETE</dt><dd>How Route 53 takes changes: one batch of actions, where UPSERT creates or updates a record and DELETE removes one.</dd></div>
+      <div><dt>preview</dt><dd>Working out and printing the changes without making them. Apply always previews first.</dd></div>
+      <div><dt>matrix</dt><dd>One job run several times, once per item in a list. Here, once per zone.</dd></div>
+      <div><dt>artifact</dt><dd>A file a run keeps: the zone list passed between boxes (kept a day), and the exported JSON files (kept 30 days).</dd></div>
+      <div><dt>sandbox</dt><dd>The test account. It never waits for approval, so changes are tried there first; the pipelines call it the canary.</dd></div>
+    </dl>
+  </section>
+
+  <section class="wide" aria-labelledby="signin-h">
+    <h2 id="signin-h">How they get into AWS</h2>
+    <p class="intro">Both pipelines use the same two steps, in every box that talks to AWS. First a script looks up the role for your account in the secret <code>DEPLOY_ROLE_ARNS_JSON</code>; then the ready-made AWS step signs straight in to that role. That is one hop, directly into the target account, with no IMS Root in between: the old way.</p>
+    <div class="exhibit">
+      <div data-panel="s_old"></div>
+      <ol class="callouts">
+        <li><span>Step one, in every box that talks to AWS: look up the role.</span></li>
+        <li><span>The secret <code>DEPLOY_ROLE_ARNS_JSON</code>: one secret holding a list of role ARNs, one per account name (its shape is below).</span></li>
+        <li><span>Picks the ARN for the account you typed…</span></li>
+        <li><span>…and stops if there isn’t one.</span></li>
+        <li><span>Hides the ARN in the log.</span></li>
+        <li><span>Step two: the ready-made AWS step. It asks GitHub for a signed note about the run…</span></li>
+        <li><span>…and uses it to sign straight in to that role, in the target account. One hop.</span></li>
+        <li><span>The region the AWS commands go to. Route 53 itself is global.</span></li>
+        <li class="after">This copy is from Export’s List zones box (lines 219–237). The same two steps are in five more places.</li>
+      </ol>
+    </div>
+    <div class="solo" data-panel="x_shape"></div>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Pipeline</th><th scope="col">Boxes that sign in</th><th scope="col">When</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Export</th><td class="o" data-label="Boxes that sign in">Resolve filter logic · List zones · Export</td><td class="n" data-label="When">Resolve filter only when you give a zone ID; the other two always</td></tr>
+          <tr><th scope="row">Apply</th><td class="o" data-label="Boxes that sign in">Validate account · Preview · Apply</td><td class="n" data-label="When">Validate and Preview always; Apply only with execute_changes ticked</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>How this compares with your other pipelines</h3>
+    <div class="table-wrap">
+      <table class="side">
+        <thead><tr><th scope="col"></th><th scope="col">WS2 pipelines (now)</th><th scope="col">Your converted pipelines</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Where GitHub is checked</th><td class="o" data-label="WS2 now">In each target account, by the role from the secret</td><td class="n" data-label="Converted">Only at IMS Root</td></tr>
+          <tr><th scope="row">Stored in GitHub</th><td class="o" data-label="WS2 now"><code>DEPLOY_ROLE_ARNS_JSON</code>: a role ARN per account</td><td class="n" data-label="Converted">Nothing</td></tr>
+          <tr><th scope="row">Steps to get in</th><td class="o" data-label="WS2 now">One</td><td class="n" data-label="Converted">Two: the reception copy at IMS Root, then the working copy</td></tr>
+          <tr><th scope="row">Which role</th><td class="o" data-label="WS2 now"><code>AWSControlTowerExecution</code>, Control Tower’s master key (checked 31 October 2026)</td><td class="n" data-label="Converted"><code>iamr-…-deploy</code>, made for pipelines</td></tr>
+          <tr><th scope="row">Needed in each target account</th><td class="o" data-label="WS2 now">A GitHub identity provider, and a role that trusts this repo</td><td class="n" data-label="Converted">Only the <code>iamr</code> role, trusting IMS Root</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 id="roles-h">Which roles does the secret hold?</h3>
+    <p class="intro">The checker, <code>find-deploy-role-arns.yml</code>, ran on 31 October 2026. Both entries in the secret point to Control Tower’s master key, the same role the old pipelines used:</p>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Account name</th><th scope="col">Account</th><th scope="col">Role</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">sandbox</th><td class="o" data-label="Account"><code>036943221440</code></td><td class="n" data-label="Role"><code>AWSControlTowerExecution</code></td></tr>
+          <tr><th scope="row">network-prod</th><td class="o" data-label="Account"><code>584477831165</code></td><td class="n" data-label="Role"><code>AWSControlTowerExecution</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="intro">So these pipelines have the same problems as your old ones: the organization’s guardrails don’t apply to that role, and the GitHub trust added to it changes a role that Control Tower owns. To check again later, run the same file the same way: on a new branch in the repo where the WS2 pipelines run.</p>
+    <h3>Moving them to the new way</h3>
+    <ol class="howto">
+      <li>network-prod (<code>584477831165</code>) already has a pipeline role, <code>iamr-net-prd-deploy</code>. Its guest list accepts only AWS-Landing-Zone and ims-app-identity, so the client may need to add the repo these pipelines run in.</li>
+      <li>sandbox (<code>036943221440</code>) has no <code>iamr</code> role yet. The client creates one, with its reception copy in IMS Root, that accepts this repo.</li>
+      <li>In the six places above, replace the two steps with a lookup of the role name and the two sign-in steps your converted pipelines use: IMS Root first, then the swap with <code>role-chaining: true</code> and no session tags.</li>
+      <li>Delete <code>DEPLOY_ROLE_ARNS_JSON</code> once nothing uses it.</li>
+    </ol>
+  </section>
+
+  <section class="wide" aria-labelledby="ex-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Pipeline 1</p>
+      <h2 id="ex-h">Export</h2>
+    </div>
+    <p class="intro">Export reads the live records of a zone (or of every zone in an account) and turns them into JSON files in Git. It changes nothing in AWS. The point is to get the current records into a file you can review and edit, so the next change goes through a pull request instead of the console.</p>
+
+    <h3 id="ex-run-h">How to run it</h3>
+    <ol class="howto">
+      <li>Open the repo’s <b>Actions</b> tab and pick <b>WS2 - DNS Records Export (batch)</b>.</li>
+      <li>Click <b>Run workflow</b>, type the account, and name the zone (below). Leave the zone empty to export every zone.</li>
+      <li>Click the green <b>Run workflow</b>. For every zone in an account other than sandbox, a reviewer of <code>production</code> has to approve.</li>
+      <li>When it finishes, open the pull request it made, or download the files from the run page.</li>
+    </ol>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Form field</th><th scope="col">What to enter</th><th scope="col">Example</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">account</th><td class="o" data-label="What to enter">An account name from the registry, typed in</td><td class="n" data-label="Example"><code>network-prod</code></td></tr>
+          <tr><th scope="row">stack_id</th><td class="o" data-label="What to enter">Optional. The zone’s stack_id, its real name, or the name of the CloudFormation stack that created it</td><td class="n" data-label="Example"><code>dns-records-example-com</code> or <code>example.com</code></td></tr>
+          <tr><th scope="row">hosted_zone_id</th><td class="o" data-label="What to enter">Optional. The zone’s ID. If you fill in both, they must name the same zone</td><td class="n" data-label="Example"><code>Z060943926KMOQ012KNSW</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="ex-watch-h">Watch one run</h3>
+    <p class="intro">Pick one zone or all zones, then step through it.</p>
+    <div class="player" data-player="ex">
+      <div class="tabs" role="tablist" aria-label="What to export">
+        <button role="tab" id="ex-tab-0" aria-selected="true" aria-controls="ex-panel">One zone</button>
+        <button role="tab" id="ex-tab-1" aria-selected="false" aria-controls="ex-panel" tabindex="-1">All zones</button>
+      </div>
+      <div class="player-body" id="ex-panel" role="tabpanel" aria-labelledby="ex-tab-0">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll">
+            <svg class="diagram" viewBox="0 0 800 340" role="img" aria-label="The Export pipeline: Run workflow, then five boxes: account check, filter, list zones, approval and export. They sign in directly to the role from DEPLOY_ROLE_ARNS_JSON in the target account, read the Route 53 zone, and write JSON files to a branch and pull request in your repo.">
+              <rect class="zone" x="8" y="8" width="784" height="188" rx="14"/>
+              <text class="zone-label" x="24" y="28">GitHub · one run</text>
+              <g data-part="start"><rect class="box" x="16" y="40" width="112" height="64" rx="12"/><text class="t-title" x="72" y="68" text-anchor="middle">Run workflow</text><text class="t-sub" x="72" y="88" text-anchor="middle">you fill the form</text></g>
+              <g data-part="j1"><rect class="box" x="140" y="40" width="112" height="64" rx="12"/><text class="t-title" x="196" y="68" text-anchor="middle">Account</text><text class="t-sub" x="196" y="88" text-anchor="middle">check registry</text></g>
+              <g data-part="j2"><rect class="box" x="264" y="40" width="112" height="64" rx="12"/><text class="t-title" x="320" y="68" text-anchor="middle">Filter</text><text class="t-sub" x="320" y="88" text-anchor="middle">which zones</text></g>
+              <g data-part="j3"><rect class="box" x="388" y="40" width="112" height="64" rx="12"/><text class="t-title" x="444" y="68" text-anchor="middle">List zones</text><text class="t-sub" x="444" y="88" text-anchor="middle">pick zones</text></g>
+              <g data-part="j4"><rect class="box" x="512" y="40" width="112" height="64" rx="12"/><text class="t-title" x="568" y="68" text-anchor="middle">Approval</text><text class="t-sub" x="568" y="88" text-anchor="middle">all zones only</text></g>
+              <g data-part="j5"><rect class="box" x="636" y="40" width="140" height="64" rx="12"/><text class="t-title" x="706" y="68" text-anchor="middle">Export</text><text class="t-sub" x="706" y="88" text-anchor="middle">files + pull request</text></g>
+              <g class="flow"><path d="M128,72 L132,72"/><polygon points="132,68 140,72 132,76"/></g>
+              <g class="flow"><path d="M252,72 L256,72"/><polygon points="256,68 264,72 256,76"/></g>
+              <g class="flow"><path d="M376,72 L380,72"/><polygon points="380,68 388,72 380,76"/></g>
+              <g class="flow"><path d="M500,72 L504,72"/><polygon points="504,68 512,72 504,76"/></g>
+              <g class="flow"><path d="M624,72 L628,72"/><polygon points="628,68 636,72 628,76"/></g>
+              <g data-part="repo"><rect class="stack" x="388" y="124" width="388" height="56" rx="8"/><text class="t-sub" x="582" y="148" text-anchor="middle">your repo: the registry, and the JSON files</text><text class="t-sub" x="582" y="166" text-anchor="middle">on a new branch with a pull request</text></g>
+              <rect class="zone" x="8" y="212" width="784" height="120" rx="14"/>
+              <text class="zone-label" x="24" y="232">AWS · the account you typed</text>
+              <g data-part="role"><rect class="box" x="16" y="244" width="360" height="76" rx="12"/><text class="t-title" x="196" y="274" text-anchor="middle">Role from DEPLOY_ROLE_ARNS_JSON</text><text class="t-sub" x="196" y="296" text-anchor="middle">AWSControlTowerExecution · one hop</text></g>
+              <g data-part="zone"><rect class="box" x="400" y="244" width="376" height="76" rx="12"/><text class="t-title" x="588" y="274" text-anchor="middle">Route 53 hosted zone</text><text class="t-sub" x="588" y="296" text-anchor="middle">its live records</text></g>
+            </svg>
+          </div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h4 class="step-title"></h4>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 id="ex-what-h">What gets exported</h3>
+    <p class="intro">The run’s Summary page shows this table (lines 914–920). Records Export leaves out can’t be managed through the JSON files.</p>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Record</th><th scope="col">Exported?</th><th scope="col">Why</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">A, AAAA, CNAME, MX, TXT and similar</th><td class="o" data-label="Exported?">Yes</td><td class="n" data-label="Why">Records you manage</td></tr>
+          <tr><th scope="row">SOA</th><td class="o" data-label="Exported?">No</td><td class="n" data-label="Why">Route 53 manages it</td></tr>
+          <tr><th scope="row">NS of the zone itself</th><td class="o" data-label="Exported?">No</td><td class="n" data-label="Why">Route 53 manages the zone’s own delegation</td></tr>
+          <tr><th scope="row">NS for a subdomain</th><td class="o" data-label="Exported?">Yes</td><td class="n" data-label="Why">You may delegate subdomains</td></tr>
+          <tr><th scope="row">ALIAS (A or AAAA pointing at AWS resources)</th><td class="o" data-label="Exported?">No</td><td class="n" data-label="Why">The dns-records module doesn’t support them; manage them in CloudFormation</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="ex-code-h">The file, line by line</h3>
+    <p class="intro">The whole file, part by part. The numbers on the highlighted lines match the notes next to each part.</p>
+
+    <h4 class="part-h">The Run workflow form</h4>
+    <div class="exhibit">
+      <div data-panel="ex_form"></div>
+      <ol class="callouts">
+        <li><span>The name in the Actions tab.</span></li>
+        <li><span>Started by hand only, with Run workflow.</span></li>
+        <li><span>account: typed in, not picked from a list, so a typo is possible. The first box checks it against the registry.</span></li>
+        <li><span>stack_id: optional. One of several ways to name the zone.</span></li>
+        <li><span>hosted_zone_id: optional. Leave both empty to export every zone in the account (approval needed, except in sandbox).</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 1 · Validate account exists</h4>
+    <div class="exhibit">
+      <div data-panel="ex_validate"></div>
+      <ol class="callouts">
+        <li><span>The first box. It doesn’t use AWS.</span></li>
+        <li><span>Copies the repo, to read the registry.</span></li>
+        <li><span>The account name must be in <code>config/_accounts-registry.yaml</code>…</span></li>
+        <li><span>…otherwise it lists the valid names and stops.</span></li>
+        <li><span>Reads the account’s environment and OU from the registry, for the log.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 2 · Resolve filter logic</h4>
+    <div class="exhibit">
+      <div data-panel="ex_filter"></div>
+      <ol class="callouts">
+        <li><span>The second box. It works out which zone, or zones, to export.</span></li>
+        <li><span>It may ask GitHub for a signed note; it only needs one to look up a zone ID.</span></li>
+        <li><span>The rule: a stack_id wins over a zone ID, and with neither, everything is exported.</span></li>
+        <li><span>Spaces pasted into the form are stripped first; they would otherwise break every lookup.</span></li>
+        <li><span>Both given? They must name the same zone, or the run stops.</span></li>
+        <li><span>A stack_id alone (or a zone name, or the stack that created the zone): one zone.</span></li>
+        <li><span>A zone ID alone: it asks Route 53 for the zone’s name…</span></li>
+        <li><span>…and turns it into a stack_id: <code class="nw">dns-records-</code> plus the name with dots as dashes.</span></li>
+        <li><span>Neither: “all” mode, every zone in the account.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 3 · List zones matching filter</h4>
+    <div class="exhibit">
+      <div data-panel="ex_list"></div>
+      <ol class="callouts">
+        <li><span>The third box.</span></li>
+        <li><span>Its own permissions: read the repo, and ask for a signed note. A list here replaces GitHub’s defaults, which is why <code>contents: read</code> is spelled out.</span></li>
+        <li><span>Lists every hosted zone in the account, public and private.</span></li>
+        <li><span>Each zone’s stack_id: <code class="nw">dns-records-</code> plus the zone name with dots as dashes.</span></li>
+        <li><span>Two zones with the same name (split-horizon) get <code class="nw">-public</code> and <code class="nw">-private</code> endings…</span></li>
+        <li><span>…and if that still clashes, the end of the zone ID, so no zone is ever dropped.</span></li>
+        <li><span>One zone wanted: first the stack_id as given…</span></li>
+        <li><span>…and as a last resort, the name of the CloudFormation stack that created the zone, through that stack’s HostedZoneId output.</span></li>
+        <li><span>All mode: every zone.</span></li>
+        <li><span>The chosen zones become a list of stack_id, zone name and zone ID…</span></li>
+        <li><span>…saved to a file…</span></li>
+        <li><span>…and passed to the Export box as an artifact, kept for one day.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 4 · Gatekeeper approval</h4>
+    <div class="exhibit">
+      <div data-panel="ex_gate"></div>
+      <ol class="callouts">
+        <li><span>The fourth box.</span></li>
+        <li><span>Only for all zones, in an account other than sandbox. Exporting one zone never waits.</span></li>
+        <li><span><code>environment: production</code>: GitHub holds the run here until a reviewer of that environment approves it.</span></li>
+        <li><span>What the reviewer is told: the account and how many zones.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 5 · Export · when it runs</h4>
+    <div class="exhibit">
+      <div data-panel="ex_exporthead"></div>
+      <ol class="callouts">
+        <li><span>The fifth box.</span></li>
+        <li><span><code>always()</code> makes GitHub check the conditions below, even though an earlier box may have been skipped…</span></li>
+        <li><span>…so it runs when the approval passed or wasn’t needed.</span></li>
+        <li><span><code>contents: write</code> lets it push a branch…</span></li>
+        <li><span>…and <code>pull-requests: write</code> lets it open a pull request.</span></li>
+        <li><span>The whole history, needed to make a branch.</span></li>
+        <li><span>Python for the export script. This is version 4 of the action, an old one; Apply uses version 5.</span></li>
+        <li class="after">Next come the two sign-in steps (lines 582–600).</li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 5 · Export · check the sign-in</h4>
+    <div class="exhibit">
+      <div data-panel="ex_access"></div>
+      <ol class="callouts">
+        <li><span>Checks the sign-in worked by asking AWS “who am I?”…</span></li>
+        <li><span>…and if it didn’t, lists the likely causes: the account isn’t in <code>DEPLOY_ROLE_ARNS_JSON</code>, the role doesn’t trust GitHub, or the role lacks permissions.</span></li>
+        <li><span>Prints the account number it got into.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 5 · Export · one JSON file per zone</h4>
+    <div class="exhibit">
+      <div data-panel="ex_loop"></div>
+      <ol class="callouts">
+        <li><span>Fetches the zone list from List zones.</span></li>
+        <li><span>No list, or an empty one: stop.</span></li>
+        <li><span>Each zone becomes one file: <code>config/accounts/&lt;account&gt;/networking/&lt;stack_id&gt;.json</code>.</span></li>
+        <li><span><code>pipeline/dns_records_export.py</code> reads the zone’s live records and writes that file…</span></li>
+        <li><span>…given the exact zone ID, so the private half of a split-horizon pair can’t be mixed up with the public half.</span></li>
+        <li><span>Script OK and the file is there: exported.</span></li>
+        <li><span>Script OK but no file: skipped (the zone wasn’t found or couldn’t be read).</span></li>
+        <li><span>Script failed: failed, with its first error line as the reason.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 5 · Export · the results</h4>
+    <div class="exhibit">
+      <div data-panel="ex_results"></div>
+      <ol class="callouts">
+        <li><span>Meant to print a table of the counts. These lines have no <code>%s</code>, so the numbers never appear and the labels run together on one line (see <a href="#fix-h">Things worth fixing</a>).</span></li>
+        <li><span>No zone processed: fail.</span></li>
+        <li><span>No zone exported: fail, listing the skipped zones.</span></li>
+        <li><span>At least one exported: success, followed by the list of files.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 5 · Export · hand the files over</h4>
+    <div class="exhibit">
+      <div data-panel="ex_handover"></div>
+      <ol class="callouts">
+        <li><span>Only when at least one zone was exported.</span></li>
+        <li><span>Option A: the JSON files as a download on the run page…</span></li>
+        <li><span>…kept for 30 days.</span></li>
+        <li><span>Option B: a branch and a pull request.</span></li>
+        <li><span>Uses the run’s own GitHub token to push and to open the pull request.</span></li>
+        <li><span>The branch: <code>feat/export-zone-&lt;zone&gt;-&lt;account&gt;-&lt;date and time&gt;</code>, so every run gets a new one.</span></li>
+        <li><span>Creates the branch…</span></li>
+        <li><span>…commits the files. If nothing changed it makes an empty commit, so there is still a pull request to look at…</span></li>
+        <li><span>…pushes it…</span></li>
+        <li><span>…and opens a pull request into main.</span></li>
+        <li><span>If GitHub refuses (for example when Actions isn’t allowed to create pull requests in this repo), it prints a link to open one by hand.</span></li>
+        <li class="after">Last, it writes the Summary page: the files, what gets exported, how to get the files, and what to run next.</li>
+      </ol>
+    </div>
+
+    <h3 id="ex-errors-h">When something goes wrong</h3>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">You see</th><th scope="col">What it means</th><th scope="col">What to do</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">[ERROR] Account not found</th><td class="o" data-label="What it means">The account name isn’t in the registry</td><td class="n" data-label="What to do">Use one of the names the error lists</td></tr>
+          <tr><th scope="row">[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account</th><td class="o" data-label="What it means">The secret has no entry for that account</td><td class="n" data-label="What to do">Check the spelling; a repo admin adds the entry to the secret</td></tr>
+          <tr><th scope="row">The sign-in step fails: Not authorized to perform sts:AssumeRoleWithWebIdentity</th><td class="o" data-label="What it means">The role doesn’t accept GitHub runs from this repo, or the account has no GitHub identity provider</td><td class="n" data-label="What to do">Ask the role’s owner to check its trust policy</td></tr>
+          <tr><th scope="row">[ERROR] CONFLICTING INPUTS</th><td class="o" data-label="What it means">The stack_id and the zone ID name different zones</td><td class="n" data-label="What to do">Fill in only one, or make them match</td></tr>
+          <tr><th scope="row">[ERROR] Could not resolve hosted zone ID</th><td class="o" data-label="What it means">No zone with that ID in this account, or the role can’t read it</td><td class="n" data-label="What to do">Check the ID and the account</td></tr>
+          <tr><th scope="row">[ERROR] Stack ID not found</th><td class="o" data-label="What it means">Nothing matched: not a stack_id, not a zone name, not a stack with a HostedZoneId output</td><td class="n" data-label="What to do">Use one of the names the error lists</td></tr>
+          <tr><th scope="row">Waiting for approval</th><td class="o" data-label="What it means">An all-zones export, outside sandbox</td><td class="n" data-label="What to do">A reviewer of <code>production</code> approves it on the run page</td></tr>
+          <tr><th scope="row">[ERROR] Failed to authenticate to AWS account</th><td class="o" data-label="What it means">The sign-in didn’t work</td><td class="n" data-label="What to do">Go through the three causes it lists</td></tr>
+          <tr><th scope="row">[SKIPPED] a zone</th><td class="o" data-label="What it means">The script ran but wrote no file: the zone wasn’t found or couldn’t be read</td><td class="n" data-label="What to do">Check the zone exists in that account</td></tr>
+          <tr><th scope="row">[ERROR] No zones were successfully exported</th><td class="o" data-label="What it means">Every zone was skipped or failed</td><td class="n" data-label="What to do">Read the reasons in the log</td></tr>
+          <tr><th scope="row">[WARN] Could not auto-create PR</th><td class="o" data-label="What it means">GitHub refused to open the pull request; the branch is pushed</td><td class="n" data-label="What to do">Open it with the printed link; an admin can allow Actions to create pull requests</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="ap-h">
+    <div class="pipe-h">
+      <p class="eyebrow">Pipeline 2</p>
+      <h2 id="ap-h">Apply</h2>
+    </div>
+    <p class="intro">Apply takes one zone’s JSON file (the records you want) and compares it with the live zone in Route 53. It then sends Route 53 a change batch with the difference: UPSERT for records to add or change, and DELETE for records you removed from the file, if you allow deletes. The script that does this, <code>pipeline/dns_records_apply.py</code>, isn’t in the workflow file; the workflow runs it twice, once to preview and once to apply.</p>
+
+    <h3 id="ap-safe-h">Its safety switches</h3>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Tick box</th><th scope="col">Empty (the default)</th><th scope="col">Ticked</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">execute_changes</th><td class="o" data-label="Empty (the default)">Preview only; nothing changes</td><td class="n" data-label="Ticked">Preview, approval, then the change batch</td></tr>
+          <tr><th scope="row">with_deletes</th><td class="o" data-label="Empty (the default)">No record is ever deleted</td><td class="n" data-label="Ticked">Records missing from the file are deleted</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="intro">Two more rules are built in. Every real change outside sandbox waits for a reviewer of <code>production</code>; sandbox goes straight on. And each run handles exactly one zone: with no stack_id or zone ID it stops, so there is no “all zones” for Apply.</p>
+
+    <h3 id="ap-run-h">How to run it</h3>
+    <ol class="howto">
+      <li>Merge the zone’s JSON file change into main first (the Export pull request, or your own edit).</li>
+      <li>Actions tab → <b>WS2 -- DNS Records Apply (Gated / Audited)</b> → <b>Run workflow</b>, on main.</li>
+      <li>Type the account, name the zone, and leave both tick boxes empty. Read the preview on the Summary page.</li>
+      <li>Happy with it? Run again with <b>execute_changes</b> ticked (and <b>with_deletes</b> only if records should be deleted). Outside sandbox, a reviewer approves before anything changes.</li>
+    </ol>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">Form field</th><th scope="col">What to enter</th><th scope="col">Example</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">account</th><td class="o" data-label="What to enter">An account name from the registry (network-prod unless you change it)</td><td class="n" data-label="Example"><code>sandbox</code></td></tr>
+          <tr><th scope="row">stack_id</th><td class="o" data-label="What to enter">The zone’s stack_id, its real name, or the stack that created it. This or hosted_zone_id is required</td><td class="n" data-label="Example"><code>dns-records-example-com</code></td></tr>
+          <tr><th scope="row">hosted_zone_id</th><td class="o" data-label="What to enter">The zone’s ID. If you fill in both, they must name the same zone</td><td class="n" data-label="Example"><code>Z060943926KMOQ012KNSW</code></td></tr>
+          <tr><th scope="row">execute_changes</th><td class="o" data-label="What to enter">Tick to apply; leave empty to preview</td><td class="n" data-label="Example">empty</td></tr>
+          <tr><th scope="row">with_deletes</th><td class="o" data-label="What to enter">Tick to allow deletes</td><td class="n" data-label="Example">empty</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="ap-watch-h">Watch one run</h3>
+    <p class="intro">Pick a preview-only run or a real apply, then step through it.</p>
+    <div class="player" data-player="ap">
+      <div class="tabs" role="tablist" aria-label="Kind of run">
+        <button role="tab" id="ap-tab-0" aria-selected="true" aria-controls="ap-panel">Preview only</button>
+        <button role="tab" id="ap-tab-1" aria-selected="false" aria-controls="ap-panel" tabindex="-1">Apply with approval</button>
+      </div>
+      <div class="player-body" id="ap-panel" role="tabpanel" aria-labelledby="ap-tab-0">
+        <figure class="diagram-fig">
+          <div class="diagram-scroll">
+            <svg class="diagram" viewBox="0 0 800 340" role="img" aria-label="The Apply pipeline: Run workflow, then four boxes: validate, preview, approval and apply. They sign in directly to the role from DEPLOY_ROLE_ARNS_JSON in the target account and change the Route 53 zone to match the JSON file in your repo.">
+              <rect class="zone" x="8" y="8" width="784" height="188" rx="14"/>
+              <text class="zone-label" x="24" y="28">GitHub · one run</text>
+              <g data-part="start"><rect class="box" x="16" y="40" width="120" height="64" rx="12"/><text class="t-title" x="76" y="68" text-anchor="middle">Run workflow</text><text class="t-sub" x="76" y="88" text-anchor="middle">you fill the form</text></g>
+              <g data-part="j1"><rect class="box" x="160" y="40" width="144" height="64" rx="12"/><text class="t-title" x="232" y="68" text-anchor="middle">Validate</text><text class="t-sub" x="232" y="88" text-anchor="middle">account and zone</text></g>
+              <g data-part="j2"><rect class="box" x="328" y="40" width="144" height="64" rx="12"/><text class="t-title" x="400" y="68" text-anchor="middle">Preview</text><text class="t-sub" x="400" y="88" text-anchor="middle">always</text></g>
+              <g data-part="j3"><rect class="box" x="496" y="40" width="144" height="64" rx="12"/><text class="t-title" x="568" y="68" text-anchor="middle">Approval</text><text class="t-sub" x="568" y="88" text-anchor="middle">if execute_changes</text></g>
+              <g data-part="j4"><rect class="box" x="664" y="40" width="112" height="64" rx="12"/><text class="t-title" x="720" y="68" text-anchor="middle">Apply</text><text class="t-sub" x="720" y="88" text-anchor="middle">change batch</text></g>
+              <g class="flow"><path d="M136,72 L151,72"/><polygon points="151,67 160,72 151,77"/></g>
+              <g class="flow"><path d="M304,72 L319,72"/><polygon points="319,67 328,72 319,77"/></g>
+              <g class="flow"><path d="M472,72 L487,72"/><polygon points="487,67 496,72 487,77"/></g>
+              <g class="flow"><path d="M640,72 L655,72"/><polygon points="655,67 664,72 655,77"/></g>
+              <g data-part="repo"><rect class="stack" x="16" y="124" width="456" height="56" rx="8"/><text class="t-sub" x="244" y="148" text-anchor="middle">your repo: the registry, and the zone’s JSON file</text><text class="t-sub" x="244" y="166" text-anchor="middle">(the records you want)</text></g>
+              <rect class="zone" x="8" y="212" width="784" height="120" rx="14"/>
+              <text class="zone-label" x="24" y="232">AWS · the account you typed</text>
+              <g data-part="role"><rect class="box" x="16" y="244" width="360" height="76" rx="12"/><text class="t-title" x="196" y="274" text-anchor="middle">Role from DEPLOY_ROLE_ARNS_JSON</text><text class="t-sub" x="196" y="296" text-anchor="middle">AWSControlTowerExecution · one hop</text></g>
+              <g data-part="zone"><rect class="box" x="400" y="244" width="376" height="76" rx="12"/><text class="t-title" x="588" y="274" text-anchor="middle">Route 53 hosted zone</text><text class="t-sub" x="588" y="296" text-anchor="middle">its live records</text></g>
+            </svg>
+          </div>
+          <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span><span class="fig-cap"></span></figcaption>
+        </figure>
+        <div class="stepper">
+          <div class="step-nav">
+            <button class="nav prev" type="button">← Back</button>
+            <ol class="dots" aria-label="Steps"></ol>
+            <button class="nav primary next" type="button">Next →</button>
+          </div>
+          <div class="step-body" aria-live="polite">
+            <p class="step-count"></p>
+            <h4 class="step-title"></h4>
+            <p class="step-text"></p>
+            <div class="step-code"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 id="ap-code-h">The file, line by line</h3>
+    <p class="intro">The whole file, part by part. The numbers on the highlighted lines match the notes next to each part.</p>
+
+    <h4 class="part-h">What the file says about itself</h4>
+    <div class="exhibit">
+      <div data-panel="ap_header"></div>
+      <ol class="callouts">
+        <li><span>What it’s for: adding, changing and deleting DNS records with a Route 53 change batch.</span></li>
+        <li><span>It compares the records you want (the JSON file) with the live zone and applies the difference: UPSERT to add or change, DELETE only if you allow it.</span></li>
+        <li><span>It always shows the preview first.</span></li>
+        <li><span>Approval for every account except sandbox. The comment names a <code>gate-dns-records</code> environment; the code actually uses <code>production</code> (and <code>dns-records-sandbox</code> for sandbox).</span></li>
+        <li><span>Deletes happen only when you tick with_deletes and the approval passes.</span></li>
+        <li><span>Preview-only by default. The comment says dry_run; the form field is now execute_changes, left empty.</span></li>
+        <li><span>Form values reach the scripts as environment variables, never pasted into the script text, so a value can’t run commands.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">The form and the settings</h4>
+    <div class="exhibit">
+      <div data-panel="ap_form"></div>
+      <ol class="callouts">
+        <li><span>account: typed in. The first box checks it against the registry.</span></li>
+        <li><span>network-prod, unless you change it.</span></li>
+        <li><span>stack_id…</span></li>
+        <li><span>…or hosted_zone_id. One of the two is required, so a run only ever touches one zone.</span></li>
+        <li><span>execute_changes: a tick box. Empty (the default) means preview only.</span></li>
+        <li><span>with_deletes: empty (the default) means no record is ever deleted.</span></li>
+        <li><span>The whole workflow may ask GitHub for a signed note.</span></li>
+        <li><span>AWS commands go to eu-west-1. Route 53 itself is global.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 1 · Validate account and resolve filter</h4>
+    <div class="exhibit">
+      <div data-panel="ap_validate"></div>
+      <ol class="callouts">
+        <li><span>The first box.</span></li>
+        <li><span>It hands on the zone as a list, so the later boxes can run once per zone.</span></li>
+        <li><span>The account must be in the registry.</span></li>
+        <li><span>It signs in only when a zone was given, which the next step makes compulsory anyway.</span></li>
+        <li><span>The role ARN for the account, from <code>DEPLOY_ROLE_ARNS_JSON</code>…</span></li>
+        <li><span>…hidden in the log…</span></li>
+        <li><span>…and the one-step sign-in.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 1 · work out the zone</h4>
+    <div class="exhibit">
+      <div data-panel="ap_resolve"></div>
+      <ol class="callouts">
+        <li><span>Neither a stack_id nor a zone ID: stop…</span></li>
+        <li><span>…so nobody changes every zone in an account by accident.</span></li>
+        <li><span>Lists the account’s zones…</span></li>
+        <li><span>…and names each one <code>dns-records-&lt;name&gt;</code>. Unlike Export, split-horizon zones get no <code class="nw">-public</code> or <code class="nw">-private</code> ending (see <a href="#fix-h">Things worth fixing</a>).</span></li>
+        <li><span>Whatever form you typed becomes the <code>dns-records-…</code> name.</span></li>
+        <li><span>One zone, by its stack_id…</span></li>
+        <li><span>…or by its zone ID, turned into a name the same way.</span></li>
+        <li><span>The result as a list, so Preview and Apply run once per zone (a matrix).</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 2 · Preview change summary</h4>
+    <div class="exhibit">
+      <div data-panel="ap_preview"></div>
+      <ol class="callouts">
+        <li><span>The second box. It always runs.</span></li>
+        <li><span>It gives up after 15 minutes.</span></li>
+        <li><span>One copy per zone (a matrix; in practice always one)…</span></li>
+        <li><span>…and one zone failing doesn’t stop the others.</span></li>
+        <li><span>Python 3.11 for the script.</span></li>
+        <li><span>This variable is called DRY_RUN but holds execute_changes. The summary labels it “Execute changes”, which is right.</span></li>
+        <li><span>With with_deletes ticked, the preview also lists deletions.</span></li>
+        <li><span><code>pipeline/dns_records_apply.py</code> without <code>--execute</code>: work out the changes and print them…</span></li>
+        <li><span>…and if it fails, the box fails and nothing is applied.</span></li>
+        <li><span>The preview goes on the Summary page, with who ran it and the settings.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 3 · Gatekeeper approval</h4>
+    <div class="exhibit">
+      <div data-panel="ap_gate"></div>
+      <ol class="callouts">
+        <li><span>The third box.</span></li>
+        <li><span>After the preview…</span></li>
+        <li><span>…and only when execute_changes is ticked.</span></li>
+        <li><span>Sandbox uses the <code>dns-records-sandbox</code> environment, which the comments describe as ungated; every other account uses <code>production</code>, which waits for a reviewer.</span></li>
+        <li><span>The log line for sandbox…</span></li>
+        <li><span>…and for other accounts: review the preview before approving.</span></li>
+      </ol>
+    </div>
+
+    <h4 class="part-h">Box 4 · Apply change batch</h4>
+    <div class="exhibit">
+      <div data-panel="ap_apply"></div>
+      <ol class="callouts">
+        <li><span>The fourth box.</span></li>
+        <li><span>Only after validation, preview and approval…</span></li>
+        <li><span>…and only with execute_changes ticked.</span></li>
+        <li><span>One copy per zone again.</span></li>
+        <li><span>No environment here: the approval box already covered it, so nobody approves the same run twice.</span></li>
+        <li><span>The same script…</span></li>
+        <li><span>…with <code>--execute</code>: now Route 53 really changes.</span></li>
+        <li><span>APPLIED or FAILED, with the script’s output, goes on the Summary page.</span></li>
+        <li><span>A failure turns the box red.</span></li>
+      </ol>
+    </div>
+
+    <h3 id="ap-errors-h">When something goes wrong</h3>
+    <div class="table-wrap">
+      <table class="side plain">
+        <thead><tr><th scope="col">You see</th><th scope="col">What it means</th><th scope="col">What to do</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">[ERROR] Account not found</th><td class="o" data-label="What it means">The account name isn’t in the registry</td><td class="n" data-label="What to do">Use one of the names the error lists</td></tr>
+          <tr><th scope="row">[ERROR] MISSING REQUIRED INPUT</th><td class="o" data-label="What it means">Neither a stack_id nor a zone ID</td><td class="n" data-label="What to do">Name exactly one zone</td></tr>
+          <tr><th scope="row">[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON, or a sign-in step fails</th><td class="o" data-label="What it means">The same causes as in Export</td><td class="n" data-label="What to do">See <a href="#ex-errors-h">Export’s table</a></td></tr>
+          <tr><th scope="row">[ERROR] Stack ID not found, CONFLICTING INPUTS, or Could not resolve hosted zone ID</th><td class="o" data-label="What it means">The zone couldn’t be worked out, as in Export</td><td class="n" data-label="What to do">Use one of the names the error lists, or fix the ID</td></tr>
+          <tr><th scope="row">The Preview box fails</th><td class="o" data-label="What it means">The script hit a problem; its output says what</td><td class="n" data-label="What to do">Read it in the log. Nothing was changed</td></tr>
+          <tr><th scope="row">Waiting for approval</th><td class="o" data-label="What it means">execute_changes is ticked, outside sandbox</td><td class="n" data-label="What to do">A reviewer of <code>production</code> approves after reading the preview</td></tr>
+          <tr><th scope="row">WS2 DNS Records -- FAILED</th><td class="o" data-label="What it means">The change batch failed</td><td class="n" data-label="What to do">Read the script output on the Summary page</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="side-h">
+    <h2 id="side-h">Export and Apply side by side</h2>
+    <div class="table-wrap">
+      <table class="side">
+        <thead><tr><th scope="col"></th><th scope="col">Export</th><th scope="col">Apply</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Direction</th><td class="o" data-label="Export">Live zone → JSON file in Git</td><td class="n" data-label="Apply">JSON file in Git → live zone</td></tr>
+          <tr><th scope="row">Zones per run</th><td class="o" data-label="Export">One, or every zone in the account</td><td class="n" data-label="Apply">Exactly one</td></tr>
+          <tr><th scope="row">Changes in AWS</th><td class="o" data-label="Export">None: it only reads the zones</td><td class="n" data-label="Apply">The zone’s records, only with execute_changes</td></tr>
+          <tr><th scope="row">Changes in Git</th><td class="o" data-label="Export">A new branch and a pull request</td><td class="n" data-label="Apply">None</td></tr>
+          <tr><th scope="row">Approval</th><td class="o" data-label="Export">Only to export every zone, outside sandbox</td><td class="n" data-label="Apply">Every real apply, outside sandbox</td></tr>
+          <tr><th scope="row">Signs in</th><td class="o" data-label="Export">Directly, with the role from <code>DEPLOY_ROLE_ARNS_JSON</code></td><td class="n" data-label="Apply">The same</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="fix-h">
+    <h2 id="fix-h">Things worth fixing</h2>
+    <p class="note">Found while reading the two files. None of them stops the pipelines today, but the last two can make a run show or change the wrong thing.</p>
+    <ol class="todo">
+      <li><b>Export’s results table never shows its numbers</b> (lines 712–716). The <code>printf</code> lines have no <code>%s</code>, so they print only the labels, run together. Use the same pattern as line 710, for example <code>printf "%-50s %s\n" "[OK] Successfully exported" "$EXPORT_COUNT"</code>.</li>
+      <li><b>Export uses an old version of setup-python</b> (<code>@v4</code>, line 574). Apply already uses <code>@v5</code>.</li>
+      <li><b>Apply’s header comment is out of date.</b> It mentions a <code>gate-dns-records</code> environment and <code>dry_run</code>; the code uses <code>production</code> / <code>dns-records-sandbox</code> and <code>execute_changes</code>.</li>
+      <li><b>A misleading name in Apply’s preview</b> (line 384): <code>DRY_RUN</code> holds execute_changes, the opposite of what the name says. The summary prints it correctly.</li>
+      <li><b>After opening the pull request, Export prints a “new pull request” link</b> (line 895) rather than the pull request it just made.</li>
+      <li><b>Split-horizon zones:</b> Export names them <code class="nw">…-public</code> and <code class="nw">…-private</code>, but Apply’s lookup (lines 171–176 and 305) doesn’t. A <code class="nw">…-private</code> stack_id isn’t found, and a private zone’s ID turns into the plain name. Check how <code>dns_records_apply.py</code> picks the zone before using Apply on such a pair.</li>
+    </ol>
+  </section>
+
+  <footer>Code is copied from ws2-dns-records-export.yml and ws2-dns-records-apply.yml as stored in this project (29 September 2026), with their real line numbers. The Python scripts they run (pipeline/dns_records_export.py and pipeline/dns_records_apply.py) aren’t in those files, so this page describes them only from how the workflows call them and from the workflows’ own comments and summaries.</footer>
+</main>
+
+<script>
+const DATA = {"panels": {"s_old": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 219, "t": "      - name: \"Look up deploy role ARN\"", "m": 1}, {"n": 220, "t": "        id: role", "m": null}, {"n": 221, "t": "        env:", "m": null}, {"n": 222, "t": "          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}", "m": 2}, {"n": 223, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 224, "t": "        run: |", "m": null}, {"n": 225, "t": "          set -eo pipefail", "m": null}, {"n": 226, "t": "          ROLE_ARN=$(echo \"${ARNS_JSON}\" | jq -r --arg a \"${ACCOUNT}\" '.[$a] // \"\"' 2>/dev/null || true)", "m": 3}, {"n": 227, "t": "          if [[ -z \"$ROLE_ARN\" || \"$ROLE_ARN\" == \"null\" ]]; then", "m": null}, {"n": 228, "t": "            echo \"[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}\"; exit 1", "m": 4}, {"n": 229, "t": "          fi", "m": null}, {"n": 230, "t": "          echo \"::add-mask::${ROLE_ARN}\"", "m": 5}, {"n": 231, "t": "          echo \"role_arn=${ROLE_ARN}\" >> \"$GITHUB_OUTPUT\"", "m": null}, {"n": 232, "t": "", "m": null}, {"n": 233, "t": "      - name: Configure AWS credentials (OIDC)", "m": 6}, {"n": 234, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 235, "t": "        with:", "m": null}, {"n": 236, "t": "          role-to-assume: ${{ steps.role.outputs.role_arn }}", "m": 7}, {"n": 237, "t": "          aws-region: eu-west-1", "m": 8}], "tone": ""}, "x_shape": {"file": "DEPLOY_ROLE_ARNS_JSON", "sub": "its shape, as the lookup step reads it", "lang": "json", "rows": [{"n": null, "t": "{", "m": null}, {"n": null, "t": "  \"network-prod\": \"arn:aws:iam::<account number>:role/<role name>\",", "m": null}, {"n": null, "t": "  \"sandbox\":      \"arn:aws:iam::<account number>:role/<role name>\",", "m": null}, {"n": null, "t": "  …", "m": null}, {"n": null, "t": "}", "m": null}], "tone": ""}, "ex_form": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 1, "t": "name: WS2 - DNS Records Export (batch)", "m": 1}, {"n": 2, "t": "on:", "m": null}, {"n": 3, "t": "  workflow_dispatch:", "m": 2}, {"n": 4, "t": "    inputs:", "m": null}, {"n": 5, "t": "      account:", "m": 3}, {"n": 6, "t": "        description: 'Target account (network-prod, sandbox, etc.)'", "m": null}, {"n": 7, "t": "        required: true", "m": null}, {"n": 8, "t": "        type: string", "m": null}, {"n": 9, "t": "      stack_id:", "m": 4}, {"n": 10, "t": "        description: 'dns-records-* stack ID, a zone name, or the CFN stack that created the zone (any naming) - or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'", "m": null}, {"n": 11, "t": "        required: false", "m": null}, {"n": 12, "t": "        type: string", "m": null}, {"n": 13, "t": "      hosted_zone_id:", "m": 5}, {"n": 14, "t": "        description: 'Hosted zone ID (e.g., Z060943926KMOQ012KNSW) - auto-derives stack ID, or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'", "m": null}, {"n": 15, "t": "        required: false", "m": null}, {"n": 16, "t": "        type: string", "m": null}], "tone": ""}, "ex_validate": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 19, "t": "  validate-account:", "m": null}, {"n": 20, "t": "    name: Validate account exists", "m": 1}, {"n": 21, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 22, "t": "    steps:", "m": null}, {"n": 23, "t": "      - name: Checkout repo", "m": null}, {"n": 24, "t": "        uses: actions/checkout@v4", "m": 2}, {"n": 25, "t": "", "m": null}, {"n": 26, "t": "      - name: Verify account in registry", "m": null}, {"n": 27, "t": "        env:", "m": null}, {"n": 28, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 29, "t": "        run: |", "m": null}, {"n": 30, "t": "          echo \"[INFO] Validating account: $ACCOUNT\"", "m": null}, {"n": 31, "t": "", "m": null}, {"n": 32, "t": "          # Check if account exists in _accounts-registry.yaml", "m": null}, {"n": 33, "t": "          if ! grep -q \"^  $ACCOUNT:\" config/_accounts-registry.yaml; then", "m": 3}, {"n": 34, "t": "            echo \"\"", "m": null}, {"n": 35, "t": "            echo \"[ERROR] Account not found: $ACCOUNT\"", "m": null}, {"n": 36, "t": "            echo \"\"", "m": null}, {"n": 37, "t": "            echo \"Valid accounts are:\"", "m": null}, {"n": 38, "t": "            grep \"^  [a-z]\" config/_accounts-registry.yaml | sed 's/^  /  - /' | sed 's/:$//'", "m": 4}, {"n": 39, "t": "            echo \"\"", "m": null}, {"n": 40, "t": "            echo \"Please use a valid account name and try again.\"", "m": null}, {"n": 41, "t": "            exit 1", "m": null}, {"n": 42, "t": "          fi", "m": null}, {"n": 43, "t": "", "m": null}, {"n": 44, "t": "          # Extract account details", "m": null}, {"n": 45, "t": "          ENVIRONMENT=$(grep -A 5 \"^  $ACCOUNT:\" config/_accounts-registry.yaml | grep \"environment:\" | awk '{print $2}')", "m": 5}, {"n": 46, "t": "          OU=$(grep -A 5 \"^  $ACCOUNT:\" config/_accounts-registry.yaml | grep \"ou:\" | awk '{print $2}')", "m": null}, {"n": 47, "t": "", "m": null}, {"n": 48, "t": "          echo \"[SUCCESS] Account validated\"", "m": null}, {"n": 49, "t": "          echo \"  Account: $ACCOUNT\"", "m": null}, {"n": 50, "t": "          echo \"  Environment: $ENVIRONMENT\"", "m": null}, {"n": 51, "t": "          echo \"  OU: $OU\"", "m": null}, {"n": 52, "t": "", "m": null}], "tone": ""}, "ex_filter": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 53, "t": "  validate-inputs:", "m": null}, {"n": 54, "t": "    name: Resolve filter logic", "m": 1}, {"n": 55, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 56, "t": "    needs: validate-account", "m": null}, {"n": 57, "t": "    permissions:", "m": 2}, {"n": 58, "t": "      id-token: write", "m": null}, {"n": 59, "t": "    outputs:", "m": null}, {"n": 60, "t": "      filter: ${{ steps.resolve.outputs.filter }}", "m": null}, {"n": 61, "t": "      mode: ${{ steps.resolve.outputs.mode }}", "m": null}, {"n": 62, "t": "    steps:", "m": null}, {"gap": "look up the role and sign in, only when a hosted zone ID was given (lines 63–83)"}, {"n": 85, "t": "      - name: Resolve filter (specific > hosted_zone_id > all)", "m": 3}, {"n": 86, "t": "        id: resolve", "m": null}, {"n": 87, "t": "        env:", "m": null}, {"n": 88, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 89, "t": "          SPECIFIC: ${{ inputs.stack_id }}", "m": null}, {"n": 90, "t": "          ZONE_ID: ${{ inputs.hosted_zone_id }}", "m": null}, {"n": 91, "t": "        run: |", "m": null}, {"gap": "the rules, in comments"}, {"n": 106, "t": "          SPECIFIC=\"$(echo -n \"$SPECIFIC\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"", "m": 4}, {"n": 107, "t": "          ZONE_ID=\"$(echo -n \"$ZONE_ID\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"", "m": null}, {"n": 108, "t": "", "m": null}, {"n": 109, "t": "          if [[ -n \"$SPECIFIC\" ]] && [[ -n \"$ZONE_ID\" ]]; then", "m": 5}, {"n": 110, "t": "            echo \"[INFO] Both stack_id and hosted_zone_id provided -- verifying they refer to the same zone...\"", "m": null}, {"n": 111, "t": "            ZONE_ID_NORMALIZED=$(echo \"$ZONE_ID\" | sed 's|^/hostedzone/||')", "m": null}, {"gap": "look up the zone ID; stop if the two name different zones"}, {"n": 147, "t": "          elif [[ -n \"$SPECIFIC\" ]]; then", "m": 6}, {"n": 148, "t": "            echo \"mode=specific\" >> $GITHUB_OUTPUT", "m": null}, {"n": 149, "t": "            echo \"filter=$SPECIFIC\" >> $GITHUB_OUTPUT", "m": null}, {"n": 150, "t": "            echo \"[SUCCESS] Using SPECIFIC mode: $SPECIFIC\"", "m": null}, {"n": 151, "t": "", "m": null}, {"n": 152, "t": "          elif [[ -n \"$ZONE_ID\" ]]; then", "m": 7}, {"n": 153, "t": "            # Resolve hosted_zone_id to stack_id via Route53 lookup", "m": null}, {"n": 154, "t": "            echo \"[INFO] Resolving hosted zone ID to stack ID...\"", "m": null}, {"n": 155, "t": "", "m": null}, {"n": 156, "t": "            # Normalize the zone ID (remove /hostedzone/ prefix if present)", "m": null}, {"n": 157, "t": "            ZONE_ID_NORMALIZED=$(echo \"$ZONE_ID\" | sed 's|^/hostedzone/||')", "m": null}, {"gap": "ask Route 53 for the zone’s name"}, {"n": 164, "t": "              # Derive stack_id from zone name: zone.name. -> dns-records-zone-name", "m": null}, {"n": 165, "t": "              # Remove trailing dot, convert dots to dashes, prepend prefix", "m": null}, {"n": 166, "t": "              STACK_ID=\"dns-records-$(echo \"$ZONE_NAME\" | sed 's/\\.$//' | sed 's/\\./-/g')\"", "m": 8}, {"n": 167, "t": "", "m": null}, {"n": 168, "t": "              echo \"mode=specific\" >> $GITHUB_OUTPUT", "m": null}, {"n": 169, "t": "              echo \"filter=$STACK_ID\" >> $GITHUB_OUTPUT", "m": null}, {"gap": "error if the zone ID isn’t found"}, {"n": 189, "t": "          else", "m": null}, {"n": 190, "t": "            # Neither stack_id nor hosted_zone_id given -- this means \"export EVERY", "m": null}, {"n": 191, "t": "            # zone in the account\". That's a legitimate use case (e.g. periodic backup).", "m": null}, {"n": 192, "t": "            # Non-sandbox accounts require gatekeeper approval further down the", "m": null}, {"n": 193, "t": "            # pipeline (see the gate-approval job) before this actually runs; sandbox", "m": null}, {"n": 194, "t": "            # is the canary tier and proceeds automatically.", "m": null}, {"n": 195, "t": "            echo \"mode=all\" >> $GITHUB_OUTPUT", "m": 9}, {"n": 196, "t": "            echo \"filter=dns-records-*\" >> $GITHUB_OUTPUT", "m": null}, {"n": 197, "t": "            echo \"[SUCCESS] Using ALL mode: exporting all dns-records-* zones in '$ACCOUNT'\"", "m": null}, {"n": 198, "t": "          fi", "m": null}], "tone": ""}, "ex_list": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 200, "t": "  list-zones:", "m": null}, {"n": 201, "t": "    name: \"List zones matching filter\"", "m": 1}, {"n": 202, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 203, "t": "    needs: validate-inputs", "m": null}, {"n": 204, "t": "    permissions:", "m": 2}, {"n": 205, "t": "      # An explicit permissions: block REPLACES the default set entirely for this", "m": null}, {"n": 206, "t": "      # job -- it does not merge with it. contents: read must be listed explicitly", "m": null}, {"n": 207, "t": "      # or actions/checkout has no permission to fetch the repo at all (GitHub then", "m": null}, {"n": 208, "t": "      # reports a misleading \"Repository not found\" for a private repo, rather than", "m": null}, {"n": 209, "t": "      # a clearer permissions error, to avoid revealing the repo's existence to a", "m": null}, {"n": 210, "t": "      # token that can't read it).", "m": null}, {"n": 211, "t": "      contents: read", "m": null}, {"n": 212, "t": "      id-token: write", "m": null}, {"n": 213, "t": "    outputs:", "m": null}, {"n": 214, "t": "      count: ${{ steps.list_zones.outputs.count }}", "m": null}, {"n": 215, "t": "    steps:", "m": null}, {"gap": "checkout, then the two sign-in steps (lines 216–237)"}, {"n": 239, "t": "      - name: List zones matching filter", "m": null}, {"n": 240, "t": "        id: list_zones", "m": null}, {"n": 241, "t": "        env:", "m": null}, {"n": 242, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 243, "t": "          FILTER: ${{ needs.validate-inputs.outputs.filter }}", "m": null}, {"n": 244, "t": "          MODE: ${{ needs.validate-inputs.outputs.mode }}", "m": null}, {"n": 245, "t": "        run: |", "m": null}, {"gap": "comments"}, {"n": 251, "t": "          ZONES_JSON=$(aws route53 list-hosted-zones \\", "m": 3}, {"n": 252, "t": "            --query 'HostedZones[*].{Id:Id,Name:Name,Private:Config.PrivateZone}' \\", "m": null}, {"n": 253, "t": "            --output json)", "m": null}, {"gap": "pass 1: count how many zones share each name, and report split-horizon names"}, {"n": 321, "t": "          # Pass 2: derive each zone's stack_id, now that ZONE_NAME_COUNT is complete.", "m": null}, {"n": 322, "t": "          for ZID_BARE in \"${ZONE_IDS_ORDERED[@]}\"; do", "m": null}, {"n": 323, "t": "            ZNAME=\"${ZONE_NAME_BY_ID[$ZID_BARE]}\"", "m": null}, {"n": 324, "t": "            BASE_ID=\"dns-records-$(echo \"$ZNAME\" | sed 's/\\.$//' | sed 's/\\./-/g')\"", "m": 4}, {"n": 325, "t": "            if [[ ${ZONE_NAME_COUNT[$ZNAME]} -gt 1 ]]; then", "m": null}, {"n": 326, "t": "              SUFFIX=\"-public\"; [[ \"${ZONE_IS_PRIVATE[$ZID_BARE]}\" == \"true\" ]] && SUFFIX=\"-private\"", "m": 5}, {"n": 327, "t": "              STACK_ID=\"${BASE_ID}${SUFFIX}\"", "m": null}, {"n": 328, "t": "              if [[ -n \"${ZONE_MAP[$STACK_ID]:-}\" ]]; then", "m": null}, {"n": 329, "t": "                # Still colliding after the -public/-private suffix -- e.g. two", "m": null}, {"n": 330, "t": "                # private zones sharing a name across different VPCs. Last-resort", "m": null}, {"n": 331, "t": "                # tie-break on the zone id itself so no zone is ever silently", "m": null}, {"n": 332, "t": "                # dropped, even in this rare case.", "m": null}, {"n": 333, "t": "                STACK_ID=\"${STACK_ID}-$(echo \"$ZID_BARE\" | tr '[:upper:]' '[:lower:]' | tail -c 7)\"", "m": 6}, {"n": 334, "t": "              fi", "m": null}, {"n": 335, "t": "            else", "m": null}, {"n": 336, "t": "              STACK_ID=\"$BASE_ID\"", "m": null}, {"n": 337, "t": "            fi", "m": null}, {"n": 338, "t": "            ZONE_MAP[\"$STACK_ID\"]=\"$ZNAME\"", "m": null}, {"n": 339, "t": "            ZONE_ID_MAP[\"$STACK_ID\"]=\"$ZID_BARE\"", "m": null}, {"gap": "remember each zone’s ID"}, {"n": 347, "t": "          MATCHED_STACK_IDS=()", "m": null}, {"n": 348, "t": "", "m": null}, {"n": 349, "t": "          if [[ \"$MODE\" == \"specific\" ]]; then", "m": null}, {"n": 350, "t": "            # Compare the user-provided stack_id directly against the forward-derived map", "m": null}, {"n": 351, "t": "            # keys -- no reverse sed, so multi-label zone names resolve correctly.", "m": null}, {"n": 352, "t": "            if [[ -n \"${ZONE_MAP[$FILTER]:-}\" ]]; then", "m": 7}, {"n": 353, "t": "              MATCHED_STACK_IDS=(\"$FILTER\")", "m": null}, {"n": 354, "t": "              echo \"  [MATCH] $FILTER (zone: ${ZONE_MAP[$FILTER]})\"", "m": null}, {"n": 355, "t": "            else", "m": null}, {"gap": "otherwise match the zone’s real name (public zone first)…"}, {"n": 405, "t": "                FOUND_BY_CFN_STACK=\"\"", "m": null}, {"n": 406, "t": "                CFN_DESCRIBE_ERR=\"\"", "m": null}, {"n": 407, "t": "                CFN_ZONE_ID=$(aws cloudformation describe-stacks --stack-name \"$FILTER\" \\", "m": 8}, {"n": 408, "t": "                  --query \"Stacks[0].Outputs[?OutputKey=='HostedZoneId'].OutputValue | [0]\" \\", "m": null}, {"n": 409, "t": "                  --output text 2>/tmp/cfn_describe_err.txt) || \\", "m": null}, {"n": 410, "t": "                  CFN_DESCRIBE_ERR=$(cat /tmp/cfn_describe_err.txt 2>/dev/null)", "m": null}, {"gap": "error if nothing matched"}, {"n": 455, "t": "            # All mode: include every zone in the account (no filtering)", "m": null}, {"n": 456, "t": "            for SID in $(printf '%s\\n' \"${!ZONE_MAP[@]}\" | sort); do", "m": 9}, {"n": 457, "t": "              MATCHED_STACK_IDS+=(\"$SID\")", "m": null}, {"n": 458, "t": "              echo \"  [INCLUDE] $SID (zone: ${ZONE_MAP[$SID]})\"", "m": null}, {"n": 459, "t": "            done", "m": null}, {"n": 460, "t": "          fi", "m": null}, {"gap": "stop if no zone was chosen"}, {"n": 482, "t": "          ZONE_PAIRS=\"[]\"", "m": null}, {"n": 483, "t": "          for SID in \"${MATCHED_STACK_IDS[@]}\"; do", "m": null}, {"n": 484, "t": "            ZONE_PAIRS=$(echo \"$ZONE_PAIRS\" | jq --arg sid \"$SID\" --arg zn \"${ZONE_MAP[$SID]}\" --arg zid \"${ZONE_ID_MAP[$SID]}\" '. + [{\"stack_id\":$sid,\"zone_name\":$zn,\"zone_id\":$zid}]')", "m": 10}, {"n": 485, "t": "          done", "m": null}, {"gap": "why a file"}, {"n": 494, "t": "          echo \"$ZONE_PAIRS\" | jq -c '.' > /tmp/zone-list.json", "m": 11}, {"gap": "a summary in the log"}, {"n": 513, "t": "      - name: Upload zone list artifact", "m": null}, {"n": 514, "t": "        uses: actions/upload-artifact@v4", "m": 12}, {"n": 515, "t": "        with:", "m": null}, {"n": 516, "t": "          name: zone-list-${{ inputs.account }}-${{ github.run_id }}", "m": null}, {"n": 517, "t": "          path: /tmp/zone-list.json", "m": null}, {"n": 518, "t": "          retention-days: 1", "m": null}], "tone": ""}, "ex_gate": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 520, "t": "  gate-approval:", "m": null}, {"n": 521, "t": "    name: \"Gatekeeper Approval (all-zones export)\"", "m": 1}, {"n": 522, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 523, "t": "    needs: [validate-inputs, list-zones]", "m": null}, {"n": 524, "t": "    # Only \"export every zone\" needs a gate -- exporting one specific zone (stack_id", "m": null}, {"n": 525, "t": "    # or hosted_zone_id) is always an unambiguous, bounded action and never needs one.", "m": null}, {"n": 526, "t": "    # Sandbox is the canary tier -> auto (matches apply.yml / teardown.yml elsewhere", "m": null}, {"n": 527, "t": "    # in this estate); every other account routes through the same production gate.", "m": null}, {"n": 528, "t": "    if: ${{ needs.validate-inputs.outputs.mode == 'all' && inputs.account != 'sandbox' }}", "m": 2}, {"n": 529, "t": "    environment: production", "m": 3}, {"n": 530, "t": "    steps:", "m": null}, {"n": 531, "t": "      - name: \"Approval checkpoint\"", "m": null}, {"n": 532, "t": "        env:", "m": null}, {"n": 533, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 534, "t": "          COUNT: ${{ needs.list-zones.outputs.count }}", "m": null}, {"n": 535, "t": "        run: |", "m": null}, {"n": 536, "t": "          echo \"==========================================================\"", "m": null}, {"n": 537, "t": "          echo \"GATEKEEPER APPROVAL CHECKPOINT -- Export ALL zones\"", "m": null}, {"n": 538, "t": "          echo \"==========================================================\"", "m": null}, {"n": 539, "t": "          echo \"\"", "m": null}, {"n": 540, "t": "          echo \"Account: $ACCOUNT\"", "m": null}, {"n": 541, "t": "          echo \"Zones to export: $COUNT\"", "m": 4}, {"n": 542, "t": "          echo \"\"", "m": null}, {"n": 543, "t": "          echo \"This will export EVERY public/private hosted zone's DNS records in\"", "m": null}, {"n": 544, "t": "          echo \"'$ACCOUNT' and open a PR with the results. Review the full zone list\"", "m": null}, {"n": 545, "t": "          echo \"in the 'List zones matching filter' job's log above before approving.\"", "m": null}, {"n": 546, "t": "          echo \"\"", "m": null}, {"n": 547, "t": "          echo \"==========================================================\"", "m": null}], "tone": ""}, "ex_exporthead": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 549, "t": "  export:", "m": null}, {"n": 550, "t": "    name: Export live records -> config files", "m": 1}, {"n": 551, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 552, "t": "    needs: [validate-inputs, list-zones, gate-approval]", "m": null}, {"n": 553, "t": "    # gate-approval only runs for \"all zones on a non-sandbox account\" (see its own", "m": null}, {"n": 554, "t": "    # if: above); every other case skips it entirely. This condition lets export", "m": null}, {"n": 555, "t": "    # proceed whenever gate-approval was either approved OR correctly skipped --", "m": null}, {"n": 556, "t": "    # without it, a skipped (not \"successful\") dependency would block this job by", "m": null}, {"n": 557, "t": "    # GitHub Actions' default needs: behavior.", "m": null}, {"n": 558, "t": "    if: |", "m": null}, {"n": 559, "t": "      always() &&", "m": 2}, {"n": 560, "t": "      needs.validate-inputs.result == 'success' &&", "m": null}, {"n": 561, "t": "      needs.list-zones.result == 'success' &&", "m": null}, {"n": 562, "t": "      (needs.gate-approval.result == 'success' || needs.gate-approval.result == 'skipped')", "m": 3}, {"n": 563, "t": "    permissions:", "m": null}, {"n": 564, "t": "      id-token: write", "m": null}, {"n": 565, "t": "      contents: write", "m": 4}, {"n": 566, "t": "      pull-requests: write", "m": 5}, {"n": 567, "t": "    steps:", "m": null}, {"n": 568, "t": "      - name: Checkout repo", "m": null}, {"n": 569, "t": "        uses: actions/checkout@v4", "m": null}, {"n": 570, "t": "        with:", "m": null}, {"n": 571, "t": "          fetch-depth: 0", "m": 6}, {"n": 572, "t": "", "m": null}, {"n": 573, "t": "      - name: Set up Python", "m": null}, {"n": 574, "t": "        uses: actions/setup-python@v4", "m": 7}, {"n": 575, "t": "        with:", "m": null}, {"n": 576, "t": "          python-version: '3.11'", "m": null}, {"n": 577, "t": "", "m": null}, {"n": 578, "t": "      - name: Install dependencies", "m": null}, {"n": 579, "t": "        run: |", "m": null}, {"n": 580, "t": "          pip install -q boto3", "m": null}], "tone": ""}, "ex_access": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 602, "t": "      - name: Verify AWS access for account", "m": null}, {"n": 603, "t": "        run: |", "m": null}, {"n": 604, "t": "          echo \"[INFO] Verifying AWS access for account: ${{ inputs.account }}\"", "m": null}, {"n": 605, "t": "", "m": null}, {"n": 606, "t": "          # Try to call AWS to verify credentials work", "m": null}, {"n": 607, "t": "          if ! aws sts get-caller-identity >/dev/null 2>&1; then", "m": 1}, {"n": 608, "t": "            echo \"[ERROR] Failed to authenticate to AWS account: ${{ inputs.account }}\"", "m": null}, {"n": 609, "t": "            echo \"\"", "m": null}, {"n": 610, "t": "            echo \"Possible causes:\"", "m": null}, {"n": 611, "t": "            echo \"  1. Account name '${{ inputs.account }}' is not in DEPLOY_ROLE_ARNS_JSON secret\"", "m": 2}, {"n": 612, "t": "            echo \"  2. OIDC trust relationship not configured for this account\"", "m": null}, {"n": 613, "t": "            echo \"  3. IAM role missing required permissions\"", "m": null}, {"n": 614, "t": "            echo \"\"", "m": null}, {"n": 615, "t": "            exit 1", "m": null}, {"n": 616, "t": "          fi", "m": null}, {"n": 617, "t": "", "m": null}, {"n": 618, "t": "          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)", "m": 3}, {"n": 619, "t": "          echo \"[SUCCESS] AWS access verified for account: ${{ inputs.account }} (ID: $ACCOUNT_ID)\"", "m": null}], "tone": ""}, "ex_loop": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 621, "t": "      - name: Download zone list artifact", "m": null}, {"n": 622, "t": "        uses: actions/download-artifact@v4", "m": 1}, {"n": 623, "t": "        with:", "m": null}, {"n": 624, "t": "          name: zone-list-${{ inputs.account }}-${{ github.run_id }}", "m": null}, {"n": 625, "t": "          path: /tmp", "m": null}, {"n": 626, "t": "", "m": null}, {"n": 627, "t": "      - name: Export records for each zone", "m": null}, {"n": 628, "t": "        id: exports", "m": null}, {"n": 629, "t": "        env:", "m": null}, {"n": 630, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 631, "t": "        run: |", "m": null}, {"n": 632, "t": "          # Read from the artifact file the list-zones job uploaded, not a job", "m": null}, {"n": 633, "t": "          # output -- see the comment next to where it's written in the", "m": null}, {"n": 634, "t": "          # \"List zones matching filter\" step for why.", "m": null}, {"n": 635, "t": "          ZONES_JSON=$(cat /tmp/zone-list.json)", "m": null}, {"n": 636, "t": "          if ! echo \"$ZONES_JSON\" | jq -e 'type == \"array\" and length > 0' > /dev/null 2>&1; then", "m": 2}, {"n": 637, "t": "            echo \"[ERROR] Zone list artifact is missing, empty, or not a JSON array: $ZONES_JSON\"", "m": null}, {"n": 638, "t": "            exit 1", "m": null}, {"n": 639, "t": "          fi", "m": null}, {"n": 640, "t": "", "m": null}, {"n": 641, "t": "          mkdir -p config/accounts/$ACCOUNT/networking", "m": null}, {"gap": "counters for exported, skipped and failed zones"}, {"n": 653, "t": "          while IFS=$'\\t' read -r STACK_ID ZONE_NAME ZONE_ID; do", "m": null}, {"n": 654, "t": "            [[ -z \"$STACK_ID\" ]] && continue", "m": null}, {"n": 655, "t": "            CONFIG_PATH=\"config/accounts/$ACCOUNT/networking/${STACK_ID}.json\"", "m": 3}, {"n": 656, "t": "", "m": null}, {"n": 657, "t": "            echo \"======================================================\"", "m": null}, {"n": 658, "t": "            echo \"Exporting: $STACK_ID\"", "m": null}, {"n": 659, "t": "            echo \"Zone name: $ZONE_NAME\"", "m": null}, {"n": 660, "t": "            echo \"Zone id:   $ZONE_ID\"", "m": null}, {"n": 661, "t": "            echo \"======================================================\"", "m": null}, {"n": 662, "t": "", "m": null}, {"n": 663, "t": "            # --hosted-zone-id is passed explicitly (not just --zone-name) so", "m": null}, {"n": 664, "t": "            # dns_records_export.py fetches EXACTLY the zone list-zones resolved --", "m": null}, {"n": 665, "t": "            # its own name-based resolver prefers the public zone whenever a name", "m": null}, {"n": 666, "t": "            # matches more than one zone, which would silently export the wrong", "m": null}, {"n": 667, "t": "            # zone's records for the private half of a split-horizon pair.", "m": null}, {"n": 668, "t": "            EXPORT_OUTPUT=$(python3 pipeline/dns_records_export.py \\", "m": 4}, {"n": 669, "t": "              --account \"$ACCOUNT\" \\", "m": null}, {"n": 670, "t": "              --stack-id \"$STACK_ID\" \\", "m": null}, {"n": 671, "t": "              --zone-name \"$ZONE_NAME\" \\", "m": null}, {"n": 672, "t": "              --hosted-zone-id \"$ZONE_ID\" 2>&1)", "m": 5}, {"n": 673, "t": "            EXPORT_EXIT_CODE=$?", "m": null}, {"n": 674, "t": "", "m": null}, {"n": 675, "t": "            # Print the output", "m": null}, {"n": 676, "t": "            echo \"$EXPORT_OUTPUT\"", "m": null}, {"n": 677, "t": "", "m": null}, {"n": 678, "t": "            # Check result", "m": null}, {"n": 679, "t": "            if [[ $EXPORT_EXIT_CODE -eq 0 ]]; then", "m": null}, {"n": 680, "t": "              if [[ -f \"$CONFIG_PATH\" ]]; then", "m": 6}, {"n": 681, "t": "                ((++EXPORT_COUNT))", "m": null}, {"n": 682, "t": "                EXPORTED_FILES=\"$EXPORTED_FILES$CONFIG_PATH\"$'\\n'", "m": null}, {"n": 683, "t": "                echo \"\"", "m": null}, {"n": 684, "t": "                echo \"[SUCCESS] $STACK_ID\"", "m": null}, {"n": 685, "t": "              else", "m": null}, {"n": 686, "t": "                # Script exited 0 but no file created = soft warning (zone not found)", "m": 7}, {"n": 687, "t": "                ((++WARN_COUNT))", "m": null}, {"n": 688, "t": "                SKIP_REASON=$(echo \"$EXPORT_OUTPUT\" | grep -i \"WARN\\|SKIP\" | head -1)", "m": null}, {"n": 689, "t": "                WARNED_ZONES=\"$WARNED_ZONES  - $STACK_ID\"$'\\n'\"    Reason: ${SKIP_REASON:-Zone not found or inaccessible}\"$'\\n'", "m": null}, {"n": 690, "t": "                echo \"\"", "m": null}, {"n": 691, "t": "                echo \"[SKIPPED] $STACK_ID\"", "m": null}, {"n": 692, "t": "              fi", "m": null}, {"n": 693, "t": "            else", "m": null}, {"n": 694, "t": "              ((++FAIL_COUNT))", "m": 8}, {"n": 695, "t": "              FAIL_REASON=$(echo \"$EXPORT_OUTPUT\" | grep -i \"error\\|fail\" | head -1)", "m": null}, {"n": 696, "t": "              FAILED_ZONES=\"$FAILED_ZONES  - $STACK_ID\"$'\\n'\"    Reason: ${FAIL_REASON:-See logs above}\"$'\\n'", "m": null}, {"n": 697, "t": "              echo \"\"", "m": null}, {"n": 698, "t": "              echo \"[FAILED] $STACK_ID (exit code: $EXPORT_EXIT_CODE)\"", "m": null}, {"n": 699, "t": "            fi", "m": null}], "tone": ""}, "ex_results": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 703, "t": "          echo \"\"", "m": null}, {"n": 704, "t": "          echo \"==============================================================\"", "m": null}, {"n": 705, "t": "          echo \"EXPORT RESULTS MATRIX\"", "m": null}, {"n": 706, "t": "          echo \"==============================================================\"", "m": null}, {"n": 707, "t": "          TOTAL=$((EXPORT_COUNT + WARN_COUNT + FAIL_COUNT))", "m": null}, {"n": 708, "t": "", "m": null}, {"n": 709, "t": "          # Print as table", "m": null}, {"n": 710, "t": "          printf \"%-50s %s\\n\" \"Status\" \"Count\"", "m": null}, {"n": 711, "t": "          printf \"%-50s %s\\n\" \"----\" \"----\"", "m": null}, {"n": 712, "t": "          printf \"[OK] Successfully exported\" \"$EXPORT_COUNT\\n\"", "m": 1}, {"n": 713, "t": "          printf \"[SKIP] Skipped (zone not found/inaccessible)\" \"$WARN_COUNT\\n\"", "m": null}, {"n": 714, "t": "          printf \"[FAIL] Failed (unexpected errors)\" \"$FAIL_COUNT\\n\"", "m": null}, {"n": 715, "t": "          printf \"%-50s %s\\n\" \"----\" \"----\"", "m": null}, {"n": 716, "t": "          printf \"Total zones attempted\" \"$TOTAL\\n\"", "m": null}, {"n": 717, "t": "          echo \"\"", "m": null}, {"n": 718, "t": "", "m": null}, {"n": 719, "t": "          # Verification check", "m": null}, {"n": 720, "t": "          if [[ $TOTAL -eq 0 ]]; then", "m": 2}, {"n": 721, "t": "            echo \"[ERROR] No zones were processed!\"", "m": null}, {"n": 722, "t": "            exit 1", "m": null}, {"n": 723, "t": "          fi", "m": null}, {"n": 724, "t": "", "m": null}, {"n": 725, "t": "          if [[ $EXPORT_COUNT -eq 0 ]]; then", "m": 3}, {"n": 726, "t": "            echo \"[ERROR] No zones were successfully exported\"", "m": null}, {"n": 727, "t": "            if [[ $WARN_COUNT -gt 0 ]]; then", "m": null}, {"n": 728, "t": "              echo \"\"", "m": null}, {"n": 729, "t": "              echo \"[WARN] $WARN_COUNT skipped zone(s):\"", "m": null}, {"n": 730, "t": "              echo -e \"$WARNED_ZONES\"", "m": null}, {"n": 731, "t": "            fi", "m": null}, {"n": 732, "t": "            exit 1", "m": null}, {"n": 733, "t": "          fi", "m": null}, {"n": 734, "t": "", "m": null}, {"n": 735, "t": "          echo \"[OK] EXPORT SUCCESSFUL\"", "m": 4}], "tone": ""}, "ex_handover": {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 777, "t": "      - name: Upload artifacts (Option A - download)", "m": null}, {"n": 778, "t": "        if: success() && steps.exports.outputs.exported_count > 0", "m": 1}, {"n": 779, "t": "        uses: actions/upload-artifact@v4", "m": 2}, {"n": 780, "t": "        with:", "m": null}, {"n": 781, "t": "          name: dns-records-${{ inputs.account }}-${{ github.run_id }}", "m": null}, {"n": 782, "t": "          path: config/accounts/${{ inputs.account }}/networking/dns-records-*.json", "m": null}, {"n": 783, "t": "          retention-days: 30", "m": 3}, {"n": 784, "t": "", "m": null}, {"n": 785, "t": "      - name: Commit to feature branch (Option B - git review)", "m": 4}, {"n": 786, "t": "        if: success() && steps.exports.outputs.exported_count > 0", "m": null}, {"n": 787, "t": "        env:", "m": null}, {"n": 788, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 789, "t": "          MODE: ${{ needs.validate-inputs.outputs.mode }}", "m": null}, {"n": 790, "t": "          FILTER: ${{ needs.validate-inputs.outputs.filter }}", "m": null}, {"n": 791, "t": "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", "m": 5}, {"n": 792, "t": "        run: |", "m": null}, {"gap": "stage the exported files"}, {"n": 826, "t": "          # Format: YYYYMMDD-HHMMSS (e.g., 20260728-143022)", "m": null}, {"n": 827, "t": "          TIMESTAMP=$(date +%Y%m%d-%H%M%S)", "m": null}, {"n": 828, "t": "", "m": null}, {"n": 829, "t": "          # Determine branch name based on mode (each run gets unique timestamp)", "m": null}, {"n": 830, "t": "          case \"$MODE\" in", "m": null}, {"n": 831, "t": "            specific)", "m": null}, {"n": 832, "t": "              # Extract zone name from filter (dns-records-ZONE-NAME -> ZONE-NAME)", "m": null}, {"n": 833, "t": "              ACTIVITY=$(echo \"$FILTER\" | sed 's/^dns-records-//')", "m": null}, {"n": 834, "t": "              BRANCH_NAME=\"feat/export-zone-${ACTIVITY}-${ACCOUNT}-${TIMESTAMP}\"", "m": 6}, {"n": 835, "t": "              ;;", "m": null}, {"n": 836, "t": "            all)", "m": null}, {"n": 837, "t": "              BRANCH_NAME=\"feat/export-all-zones-${ACCOUNT}-${TIMESTAMP}\"", "m": null}, {"n": 838, "t": "              ;;", "m": null}, {"n": 839, "t": "            *)", "m": null}, {"n": 840, "t": "              BRANCH_NAME=\"feat/export-dns-records-${ACCOUNT}-${TIMESTAMP}\"", "m": null}, {"n": 841, "t": "              ;;", "m": null}, {"n": 842, "t": "          esac", "m": null}, {"n": 843, "t": "", "m": null}, {"n": 844, "t": "          # Create new branch (always unique due to timestamp - no conflicts possible)", "m": null}, {"n": 845, "t": "          echo \"[INFO] Creating new branch: $BRANCH_NAME\"", "m": null}, {"n": 846, "t": "          git checkout -b \"$BRANCH_NAME\"", "m": 7}, {"gap": "the commit message"}, {"n": 854, "t": "          # Check if there are staged changes", "m": null}, {"n": 855, "t": "          if git diff --cached --name-only | grep -q .; then", "m": null}, {"n": 856, "t": "            # Changes exist - commit normally", "m": null}, {"n": 857, "t": "            git commit -m \"$MSG\"", "m": null}, {"n": 858, "t": "            echo \"[SUCCESS] Exported config files with changes\"", "m": null}, {"n": 859, "t": "          else", "m": null}, {"n": 860, "t": "            # No changes - create empty commit so PR can be created", "m": null}, {"n": 861, "t": "            git commit --allow-empty -m \"$MSG\"", "m": 8}, {"n": 862, "t": "            echo \"[INFO] Exported config (no changes from live). Developer can override in PR.\"", "m": null}, {"n": 863, "t": "          fi", "m": null}, {"n": 864, "t": "", "m": null}, {"n": 865, "t": "          # Push the branch (always push, even if empty - clean push, no conflicts)", "m": null}, {"n": 866, "t": "          git push origin \"$BRANCH_NAME\" -u", "m": 9}, {"gap": "the pull request text, with a link to every exported file"}, {"n": 891, "t": "          PR_ERR=$(gh pr create --base main --head \"$BRANCH_NAME\" \\", "m": 10}, {"n": 892, "t": "            --title \"WS2: Export DNS records for $ACCOUNT ($MODE mode)\" \\", "m": null}, {"n": 893, "t": "            --body \"$BODY\" \\", "m": null}, {"n": 894, "t": "            --no-maintainer-edit 2>&1) && \\", "m": null}, {"n": 895, "t": "            echo \"[SUCCESS] PR created: ${{ github.server_url }}/${{ github.repository }}/pull/new/$BRANCH_NAME\" || \\", "m": null}, {"n": 896, "t": "            { echo \"[WARN] Could not auto-create PR: $PR_ERR\"; \\", "m": 11}, {"n": 897, "t": "              echo \"[WARN] Create manually: ${{ github.server_url }}/${{ github.repository }}/pull/new/$BRANCH_NAME\"; }", "m": null}], "tone": ""}, "ap_header": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 1, "t": "name: \"WS2 -- DNS Records Apply (Gated / Audited)\"", "m": null}, {"n": 2, "t": "", "m": null}, {"n": 3, "t": "# =============================================================================", "m": null}, {"n": 4, "t": "# PURPOSE", "m": null}, {"n": 5, "t": "# -------", "m": null}, {"n": 6, "t": "# WS2 scenarios 1-3 (add / modify / delete DNS records) via Route53 change-batch", "m": 1}, {"n": 7, "t": "# (Option B). Diffs the desired Layer 4 config against the LIVE zone and applies", "m": 2}, {"n": 8, "t": "# the delta: UPSERT for add/modify, DELETE (opt-in) for records removed from config.", "m": null}, {"n": 9, "t": "#", "m": null}, {"n": 10, "t": "# GOVERNANCE", "m": null}, {"n": 11, "t": "# ----------", "m": null}, {"n": 12, "t": "#   - ALWAYS previews first: the change summary (every UPSERT + DELETE) is printed", "m": 3}, {"n": 13, "t": "#     and written to the run summary BEFORE anything executes.", "m": null}, {"n": 14, "t": "#   - Gatekeeper approval is REQUIRED for non-sandbox accounts (ppe/prod/etc.) via", "m": 4}, {"n": 15, "t": "#     the `gate-dns-records` environment. Sandbox is the canary tier -> auto, no gate.", "m": null}, {"n": 16, "t": "#   - DELETES are opt-in (with_deletes=false by default). Nothing is dropped unless a", "m": 5}, {"n": 17, "t": "#     human both sets with_deletes=true AND approves the gate.", "m": null}, {"n": 18, "t": "#   - dry_run defaults to true: a plain dispatch only previews.", "m": 6}, {"n": 19, "t": "#", "m": null}, {"n": 20, "t": "# All inputs are passed via env: (never interpolated into run scripts) to avoid", "m": 7}, {"n": 21, "t": "# script injection.", "m": null}, {"n": 22, "t": "#", "m": null}, {"n": 23, "t": "# TRIGGER: manual dispatch only.", "m": null}, {"n": 24, "t": "# See: docs/runbooks/WS2-HOSTED-ZONE-MODIFICATIONS.md", "m": null}, {"n": 25, "t": "# =============================================================================", "m": null}], "tone": ""}, "ap_form": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 27, "t": "on:", "m": null}, {"n": 28, "t": "  workflow_dispatch:", "m": null}, {"n": 29, "t": "    inputs:", "m": null}, {"n": 30, "t": "      account:", "m": 1}, {"n": 31, "t": "        description: \"Account that owns the zone (sandbox = auto-approve canary; others = approval required for safety)\"", "m": null}, {"n": 32, "t": "        required: true", "m": null}, {"n": 33, "t": "        default: \"network-prod\"", "m": 2}, {"n": 34, "t": "      stack_id:", "m": 3}, {"n": 35, "t": "        description: \"REQUIRED (or hosted_zone_id): dns-records-* stack ID, a zone name, or the CFN stack that created the zone (any naming)\"", "m": null}, {"n": 36, "t": "        required: false", "m": null}, {"n": 37, "t": "      hosted_zone_id:", "m": 4}, {"n": 38, "t": "        description: \"REQUIRED (or stack_id): Route53 zone ID (e.g. Z060943926KMOQ012KNSW)\"", "m": null}, {"n": 39, "t": "        required: false", "m": null}, {"n": 40, "t": "      execute_changes:", "m": 5}, {"n": 41, "t": "        description: \"Apply changes to Route53 - LEAVE UNCHECKED for preview only (default); CHECK to actually apply\"", "m": null}, {"n": 42, "t": "        required: false", "m": null}, {"n": 43, "t": "        type: boolean", "m": null}, {"n": 44, "t": "        default: false", "m": null}, {"n": 45, "t": "      with_deletes:", "m": 6}, {"n": 46, "t": "        description: \"Allow record deletion - LEAVE UNCHECKED to only add/modify; CHECK to also delete\"", "m": null}, {"n": 47, "t": "        required: false", "m": null}, {"n": 48, "t": "        type: boolean", "m": null}, {"n": 49, "t": "        default: false", "m": null}, {"n": 50, "t": "", "m": null}, {"n": 51, "t": "permissions:", "m": null}, {"n": 52, "t": "  contents: read", "m": null}, {"n": 53, "t": "  id-token: write", "m": 7}, {"n": 54, "t": "", "m": null}, {"n": 55, "t": "env:", "m": null}, {"n": 56, "t": "  AWS_REGION: eu-west-1", "m": 8}], "tone": ""}, "ap_validate": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 63, "t": "  validate-account:", "m": null}, {"n": 64, "t": "    name: Validate account and resolve filter", "m": 1}, {"n": 65, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 66, "t": "    permissions:", "m": null}, {"n": 67, "t": "      contents: read", "m": null}, {"n": 68, "t": "      id-token: write", "m": null}, {"n": 69, "t": "    outputs:", "m": null}, {"n": 70, "t": "      stack_ids: ${{ steps.resolve.outputs.stack_ids }}", "m": 2}, {"n": 71, "t": "      count: ${{ steps.resolve.outputs.count }}", "m": null}, {"n": 72, "t": "      mode: ${{ steps.resolve.outputs.mode }}", "m": null}, {"n": 73, "t": "    steps:", "m": null}, {"n": 74, "t": "      - name: Checkout repo", "m": null}, {"n": 75, "t": "        uses: actions/checkout@v4", "m": null}, {"n": 76, "t": "", "m": null}, {"n": 77, "t": "      - name: Verify account in registry", "m": null}, {"n": 78, "t": "        env:", "m": null}, {"n": 79, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 80, "t": "        run: |", "m": null}, {"n": 81, "t": "          echo \"[INFO] Validating account: $ACCOUNT\"", "m": null}, {"n": 82, "t": "          if ! grep -q \"^  $ACCOUNT:\" config/_accounts-registry.yaml; then", "m": 3}, {"n": 83, "t": "            echo \"\"", "m": null}, {"n": 84, "t": "            echo \"[ERROR] Account not found: $ACCOUNT\"", "m": null}, {"n": 85, "t": "            echo \"\"", "m": null}, {"n": 86, "t": "            echo \"Valid accounts are:\"", "m": null}, {"n": 87, "t": "            grep \"^  [a-z]\" config/_accounts-registry.yaml | sed 's/^  /  - /' | sed 's/:$//'", "m": null}, {"n": 88, "t": "            echo \"\"", "m": null}, {"n": 89, "t": "            exit 1", "m": null}, {"n": 90, "t": "          fi", "m": null}, {"n": 91, "t": "          echo \"[SUCCESS] Account validated: $ACCOUNT\"", "m": null}, {"n": 92, "t": "", "m": null}, {"n": 93, "t": "      - name: \"Look up deploy role ARN\"", "m": null}, {"n": 94, "t": "        id: role", "m": null}, {"n": 95, "t": "        if: inputs.stack_id != '' || inputs.hosted_zone_id != ''", "m": 4}, {"n": 96, "t": "        env:", "m": null}, {"n": 97, "t": "          ARNS_JSON: ${{ secrets.DEPLOY_ROLE_ARNS_JSON }}", "m": 5}, {"n": 98, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 99, "t": "        run: |", "m": null}, {"n": 100, "t": "          set -eo pipefail", "m": null}, {"n": 101, "t": "          ROLE_ARN=$(echo \"${ARNS_JSON}\" | jq -r --arg a \"${ACCOUNT}\" '.[$a] // \"\"' 2>/dev/null || true)", "m": null}, {"n": 102, "t": "          if [[ -z \"$ROLE_ARN\" || \"$ROLE_ARN\" == \"null\" ]]; then", "m": null}, {"n": 103, "t": "            echo \"[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}\"; exit 1", "m": null}, {"n": 104, "t": "          fi", "m": null}, {"n": 105, "t": "          echo \"::add-mask::${ROLE_ARN}\"", "m": 6}, {"n": 106, "t": "          echo \"role_arn=${ROLE_ARN}\" >> \"$GITHUB_OUTPUT\"", "m": null}, {"n": 107, "t": "", "m": null}, {"n": 108, "t": "      - name: Configure AWS credentials (for stack_id/hosted_zone_id resolution)", "m": null}, {"n": 109, "t": "        if: inputs.stack_id != '' || inputs.hosted_zone_id != ''", "m": null}, {"n": 110, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": 7}, {"n": 111, "t": "        with:", "m": null}, {"n": 112, "t": "          role-to-assume: ${{ steps.role.outputs.role_arn }}", "m": null}, {"n": 113, "t": "          aws-region: eu-west-1", "m": null}], "tone": ""}, "ap_resolve": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 140, "t": "          if [[ -z \"$SPECIFIC\" ]] && [[ -z \"$ZONE_ID\" ]]; then", "m": 1}, {"n": 141, "t": "            echo \"[ERROR] MISSING REQUIRED INPUT\"", "m": null}, {"n": 142, "t": "            echo \"\"", "m": null}, {"n": 143, "t": "            echo \"For account '$ACCOUNT', you must provide ONE of:\"", "m": null}, {"n": 144, "t": "            echo \"  - Stack ID (e.g., dns-records-bbuk-customer-net)\"", "m": null}, {"n": 145, "t": "            echo \"  - Hosted Zone ID (e.g., Z060943926KMOQ012KNSW)\"", "m": null}, {"n": 146, "t": "            echo \"\"", "m": null}, {"n": 147, "t": "            echo \"Why? To prevent accidental mass changes to all zones in an account.\"", "m": 2}, {"n": 148, "t": "            echo \"You must explicitly specify which zone to apply changes to.\"", "m": null}, {"n": 149, "t": "            echo \"\"", "m": null}, {"n": 150, "t": "            exit 1", "m": null}, {"n": 151, "t": "          fi", "m": null}, {"gap": "resolve a stack_id against the live zones"}, {"n": 165, "t": "          if [[ -n \"$SPECIFIC\" ]]; then", "m": null}, {"n": 166, "t": "            echo \"[INFO] Resolving stack_id '$SPECIFIC' against live zones in '$ACCOUNT'...\"", "m": null}, {"n": 167, "t": "            ZONES_JSON=$(aws route53 list-hosted-zones --query 'HostedZones[*].{Id:Id,Name:Name}' --output json)", "m": 3}, {"n": 168, "t": "", "m": null}, {"n": 169, "t": "            declare -A ZONE_MAP", "m": null}, {"n": 170, "t": "            declare -A ZONE_ID_TO_STACK", "m": null}, {"n": 171, "t": "            while IFS=$'\\t' read -r ZID ZNAME; do", "m": null}, {"n": 172, "t": "              [[ -z \"$ZNAME\" ]] && continue", "m": null}, {"n": 173, "t": "              SID=\"dns-records-$(echo \"$ZNAME\" | sed 's/\\.$//' | sed 's/\\./-/g')\"", "m": 4}, {"n": 174, "t": "              ZONE_MAP[\"$SID\"]=\"$ZNAME\"", "m": null}, {"n": 175, "t": "              ZONE_ID_TO_STACK[\"${ZID#/hostedzone/}\"]=\"$SID\"", "m": null}, {"n": 176, "t": "            done < <(echo \"$ZONES_JSON\" | jq -r '.[] | [.Id, .Name] | @tsv')", "m": null}, {"gap": "or match the zone’s real name, then the CloudFormation stack that created it"}, {"n": 244, "t": "            SPECIFIC=\"$RESOLVED_STACK_ID\"  # normalize for the branches below", "m": 5}, {"gap": "both given: they must name the same zone"}, {"n": 291, "t": "          elif [[ -n \"$SPECIFIC\" ]]; then", "m": null}, {"n": 292, "t": "            # Specific mode: use provided stack_id directly", "m": null}, {"n": 293, "t": "            STACK_IDS=(\"$SPECIFIC\")", "m": 6}, {"n": 294, "t": "            MODE=\"stack_id\"", "m": null}, {"n": 295, "t": "            echo \"[OK] Using STACK_ID mode: $SPECIFIC\"", "m": null}, {"n": 296, "t": "", "m": null}, {"n": 297, "t": "          elif [[ -n \"$ZONE_ID\" ]]; then", "m": null}, {"n": 298, "t": "            # Hosted zone ID mode: query Route53 to get zone name, derive stack_id", "m": null}, {"n": 299, "t": "            echo \"[INFO] Resolving hosted zone ID to stack ID...\"", "m": null}, {"n": 300, "t": "            ZONE_ID_NORMALIZED=$(echo \"$ZONE_ID\" | sed 's|^/hostedzone/||')", "m": null}, {"n": 301, "t": "", "m": null}, {"n": 302, "t": "            if aws route53 get-hosted-zone --id \"$ZONE_ID_NORMALIZED\" \\", "m": null}, {"n": 303, "t": "              --query 'HostedZone.Name' --output text > /tmp/zone_name.txt 2>/dev/null; then", "m": null}, {"n": 304, "t": "              ZONE_NAME=$(cat /tmp/zone_name.txt)", "m": null}, {"n": 305, "t": "              DERIVED_STACK_ID=\"dns-records-$(echo \"$ZONE_NAME\" | sed 's/\\.$//' | sed 's/\\./-/g')\"", "m": 7}, {"n": 306, "t": "              STACK_IDS=(\"$DERIVED_STACK_ID\")", "m": null}, {"n": 307, "t": "              MODE=\"hosted_zone_id\"", "m": null}, {"gap": "error if the zone ID isn’t found"}, {"n": 330, "t": "          # Output as JSON array for matrix", "m": null}, {"n": 331, "t": "          echo \"\"", "m": null}, {"n": 332, "t": "          echo \"[OK] Validation passed\"", "m": null}, {"n": 333, "t": "          echo \"stack_ids=$(printf '%s\\n' \"${STACK_IDS[@]}\" | jq -R -s -c 'split(\"\\n\")[:-1]')\" >> $GITHUB_OUTPUT", "m": 8}, {"n": 334, "t": "          echo \"count=${#STACK_IDS[@]}\" >> $GITHUB_OUTPUT", "m": null}, {"n": 335, "t": "          echo \"mode=$MODE\" >> $GITHUB_OUTPUT", "m": null}], "tone": ""}, "ap_preview": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 341, "t": "  preview:", "m": null}, {"n": 342, "t": "    name: \"Preview change summary\"", "m": 1}, {"n": 343, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 344, "t": "    timeout-minutes: 15", "m": 2}, {"n": 345, "t": "    needs: validate-account", "m": null}, {"n": 346, "t": "    strategy:", "m": null}, {"n": 347, "t": "      matrix:", "m": 3}, {"n": 348, "t": "        stack_id: ${{ fromJson(needs.validate-account.outputs.stack_ids) }}", "m": null}, {"n": 349, "t": "      fail-fast: false", "m": 4}, {"n": 350, "t": "    steps:", "m": null}, {"n": 351, "t": "      - uses: actions/checkout@v4", "m": null}, {"n": 352, "t": "", "m": null}, {"n": 353, "t": "      - name: \"Set up Python + boto3\"", "m": null}, {"n": 354, "t": "        uses: actions/setup-python@v5", "m": 5}, {"n": 355, "t": "        with:", "m": null}, {"n": 356, "t": "          python-version: \"3.11\"", "m": null}, {"n": 357, "t": "      - run: pip install boto3 --quiet", "m": null}, {"gap": "(the same two sign-in steps: look up the role, then sign in)"}, {"n": 379, "t": "      - name: \"Preview (dry-run diff)\"", "m": null}, {"n": 380, "t": "        env:", "m": null}, {"n": 381, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 382, "t": "          STACK_ID: ${{ matrix.stack_id }}", "m": null}, {"n": 383, "t": "          WITH_DELETES: ${{ inputs.with_deletes }}", "m": null}, {"n": 384, "t": "          DRY_RUN: ${{ inputs.execute_changes }}", "m": 6}, {"n": 385, "t": "          ACTOR: ${{ github.actor }}", "m": null}, {"n": 386, "t": "          JOB_INDEX: ${{ strategy.job-index }}", "m": null}, {"n": 387, "t": "          JOB_TOTAL: ${{ strategy.job-total }}", "m": null}, {"n": 388, "t": "        run: |", "m": null}, {"n": 389, "t": "          set -eo pipefail", "m": null}, {"n": 390, "t": "", "m": null}, {"n": 391, "t": "          # Build command flags from boolean inputs", "m": null}, {"n": 392, "t": "          DEL_FLAG=\"\"", "m": null}, {"n": 393, "t": "          if [[ \"$WITH_DELETES\" == \"true\" ]]; then", "m": 7}, {"n": 394, "t": "            DEL_FLAG=\"--with-deletes\"", "m": null}, {"n": 395, "t": "          fi", "m": null}, {"n": 396, "t": "", "m": null}, {"n": 397, "t": "          # Always run preview (even if dry_run=false, preview runs first)", "m": null}, {"n": 398, "t": "          OUT=$(python3 pipeline/dns_records_apply.py \\", "m": 8}, {"n": 399, "t": "                  --account \"$ACCOUNT\" --stack-id \"$STACK_ID\" $DEL_FLAG 2>&1) || { echo \"$OUT\"; exit 1; }", "m": 9}, {"n": 400, "t": "          echo \"$OUT\"", "m": null}, {"gap": "write the preview to the Summary page"}, {"n": 403, "t": "          {", "m": null}, {"n": 404, "t": "            echo \"## WS2 DNS Records -- PREVIEW [${{ matrix.stack_id }}]\"", "m": 10}, {"n": 405, "t": "            echo \"\"", "m": null}, {"n": 406, "t": "            echo \"- Triggered by: \\`${ACTOR}\\`\"", "m": null}, {"n": 407, "t": "            echo \"- Account: \\`${ACCOUNT}\\`\"", "m": null}, {"n": 408, "t": "            echo \"- Stack: \\`${STACK_ID}\\`\"", "m": null}, {"n": 409, "t": "            echo \"- Delete records: \\`${WITH_DELETES}\\`\"", "m": null}, {"n": 410, "t": "            echo \"- Execute changes: \\`${DRY_RUN}\\`\"", "m": null}, {"n": 411, "t": "            echo \"- Matrix: \\`${JOB_NUM}/${JOB_TOTAL}\\`\"", "m": null}], "tone": ""}, "ap_gate": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 423, "t": "  gate-approval:", "m": null}, {"n": 424, "t": "    name: \"Gatekeeper Approval\"", "m": 1}, {"n": 425, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 426, "t": "    needs: [validate-account, preview]", "m": 2}, {"n": 427, "t": "    if: ${{ inputs.execute_changes == true }}", "m": 3}, {"n": 428, "t": "    # Dynamic environment: sandbox is ungated (auto), others require 'production' approval", "m": null}, {"n": 429, "t": "    environment: ${{ inputs.account == 'sandbox' && 'dns-records-sandbox' || 'production' }}", "m": 4}, {"n": 430, "t": "    steps:", "m": null}, {"n": 431, "t": "      - name: \"Approval checkpoint\"", "m": null}, {"n": 432, "t": "        env:", "m": null}, {"n": 433, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 434, "t": "          MODE: ${{ needs.validate-account.outputs.mode }}", "m": null}, {"n": 435, "t": "          COUNT: ${{ needs.validate-account.outputs.count }}", "m": null}, {"n": 436, "t": "          WITH_DELETES: ${{ inputs.with_deletes }}", "m": null}, {"n": 437, "t": "        run: |", "m": null}, {"n": 438, "t": "          echo \"==========================================================\"", "m": null}, {"n": 439, "t": "          echo \"GATEKEEPER APPROVAL CHECKPOINT (Stage 3)\"", "m": null}, {"n": 440, "t": "          echo \"==========================================================\"", "m": null}, {"n": 441, "t": "          echo \"\"", "m": null}, {"n": 442, "t": "          echo \"Account: $ACCOUNT\"", "m": null}, {"n": 443, "t": "          echo \"Mode: $MODE\"", "m": null}, {"n": 444, "t": "          echo \"Stack IDs: $COUNT\"", "m": null}, {"n": 445, "t": "          echo \"Delete records: $WITH_DELETES\"", "m": null}, {"n": 446, "t": "          echo \"\"", "m": null}, {"n": 447, "t": "          if [[ \"$ACCOUNT\" == \"sandbox\" ]]; then", "m": null}, {"n": 448, "t": "            echo \"[OK] SANDBOX ACCOUNT: Auto-approved (canary tier)\"", "m": 5}, {"n": 449, "t": "          else", "m": null}, {"n": 450, "t": "            echo \"[INFO] PRODUCTION ACCOUNT: Requires gatekeeper approval\"", "m": 6}, {"n": 451, "t": "            echo \"\"", "m": null}, {"n": 452, "t": "            echo \"This approval is required before changes are applied to Route53.\"", "m": null}, {"n": 453, "t": "            echo \"Review the preview above carefully before approving.\"", "m": null}, {"n": 454, "t": "          fi", "m": null}, {"n": 455, "t": "          echo \"\"", "m": null}, {"n": 456, "t": "          echo \"==========================================================\"", "m": null}], "tone": ""}, "ap_apply": {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 463, "t": "  apply:", "m": null}, {"n": 464, "t": "    name: \"Apply change batch\"", "m": 1}, {"n": 465, "t": "    runs-on: ubuntu-latest", "m": null}, {"n": 466, "t": "    timeout-minutes: 20", "m": null}, {"n": 467, "t": "    needs: [validate-account, preview, gate-approval]", "m": 2}, {"n": 468, "t": "    if: ${{ inputs.execute_changes == true }}", "m": 3}, {"n": 469, "t": "    strategy:", "m": null}, {"n": 470, "t": "      matrix:", "m": null}, {"n": 471, "t": "        stack_id: ${{ fromJson(needs.validate-account.outputs.stack_ids) }}", "m": 4}, {"n": 472, "t": "      fail-fast: false", "m": null}, {"n": 473, "t": "    # No environment: here -- gate-approval (above) already gates on the exact same", "m": 5}, {"n": 474, "t": "    # environment (production / dns-records-sandbox) and this job only ever runs", "m": null}, {"n": 475, "t": "    # after that approval succeeds (needs: gate-approval). Declaring the SAME", "m": null}, {"n": 476, "t": "    # protected environment a second time on this job made a reviewer approve the", "m": null}, {"n": 477, "t": "    # identical decision twice in one run, with nothing new to review in between.", "m": null}, {"n": 478, "t": "    # One approval per run is correct; the gate above is where it belongs.", "m": null}, {"n": 479, "t": "    steps:", "m": null}, {"n": 480, "t": "      - uses: actions/checkout@v4", "m": null}, {"n": 481, "t": "", "m": null}, {"n": 482, "t": "      - name: \"Set up Python + boto3\"", "m": null}, {"n": 483, "t": "        uses: actions/setup-python@v5", "m": null}, {"n": 484, "t": "        with:", "m": null}, {"n": 485, "t": "          python-version: \"3.11\"", "m": null}, {"n": 486, "t": "      - run: pip install boto3 --quiet", "m": null}, {"gap": "(the same two sign-in steps: look up the role, then sign in)"}, {"n": 508, "t": "      - name: \"Apply\"", "m": null}, {"n": 509, "t": "        env:", "m": null}, {"n": 510, "t": "          ACCOUNT: ${{ inputs.account }}", "m": null}, {"n": 511, "t": "          STACK_ID: ${{ matrix.stack_id }}", "m": null}, {"n": 512, "t": "          WITH_DELETES: ${{ inputs.with_deletes }}", "m": null}, {"n": 513, "t": "          ACTOR: ${{ github.actor }}", "m": null}, {"n": 514, "t": "          JOB_INDEX: ${{ strategy.job-index }}", "m": null}, {"n": 515, "t": "          JOB_TOTAL: ${{ strategy.job-total }}", "m": null}, {"n": 516, "t": "        run: |", "m": null}, {"n": 517, "t": "          set -eo pipefail", "m": null}, {"n": 518, "t": "          DEL_FLAG=\"\"", "m": null}, {"n": 519, "t": "          [[ \"$WITH_DELETES\" == \"true\" ]] && DEL_FLAG=\"--with-deletes\"", "m": null}, {"n": 520, "t": "          STATUS=APPLIED", "m": null}, {"n": 521, "t": "          OUT=$(python3 pipeline/dns_records_apply.py \\", "m": 6}, {"n": 522, "t": "                  --account \"$ACCOUNT\" --stack-id \"$STACK_ID\" $DEL_FLAG --execute 2>&1) || STATUS=FAILED", "m": 7}, {"n": 523, "t": "          echo \"$OUT\"", "m": null}, {"n": 524, "t": "", "m": null}, {"n": 525, "t": "          JOB_NUM=$((JOB_INDEX + 1))", "m": null}, {"n": 526, "t": "          {", "m": null}, {"n": 527, "t": "            echo \"## WS2 DNS Records -- ${STATUS} [${{ matrix.stack_id }}]\"", "m": 8}, {"n": 528, "t": "            echo \"\"", "m": null}, {"n": 529, "t": "            echo \"- Triggered by: \\`${ACTOR}\\`\"", "m": null}, {"n": 530, "t": "            echo \"- Account: \\`${ACCOUNT}\\`\"", "m": null}, {"n": 531, "t": "            echo \"- Stack: \\`${STACK_ID}\\`\"", "m": null}, {"n": 532, "t": "            echo \"- with_deletes: \\`${WITH_DELETES}\\`\"", "m": null}, {"n": 533, "t": "            echo \"- Matrix: \\`${JOB_NUM}/${JOB_TOTAL}\\`\"", "m": null}, {"n": 534, "t": "            echo \"\"", "m": null}, {"n": 535, "t": "            echo '```'", "m": null}, {"n": 536, "t": "            echo \"$OUT\"", "m": null}, {"n": 537, "t": "            echo '```'", "m": null}, {"n": 538, "t": "          } >> \"$GITHUB_STEP_SUMMARY\"", "m": null}, {"n": 539, "t": "          [[ \"${STATUS}\" == \"APPLIED\" ]] || exit 1", "m": 9}], "tone": ""}}, "players": {"ex": {"variants": [{"label": "One zone", "steps": [{"title": "You start the run", "parts": ["start"], "text": "Actions tab → <b>WS2 - DNS Records Export (batch)<\/b> → <b>Run workflow<\/b>. Type the account (for example <code>network-prod<\/code>) and name one zone: its hosted zone ID, or its stack_id, its name, or the stack that created it.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 5, "t": "      account:", "m": 1}, {"n": 6, "t": "        description: 'Target account (network-prod, sandbox, etc.)'", "m": null}, {"n": 7, "t": "        required: true", "m": null}, {"n": 8, "t": "        type: string", "m": null}, {"n": 9, "t": "      stack_id:", "m": null}, {"n": 10, "t": "        description: 'dns-records-* stack ID, a zone name, or the CFN stack that created the zone (any naming) - or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'", "m": null}, {"n": 11, "t": "        required: false", "m": null}, {"n": 12, "t": "        type: string", "m": null}, {"n": 13, "t": "      hosted_zone_id:", "m": 2}, {"n": 14, "t": "        description: 'Hosted zone ID (e.g., Z060943926KMOQ012KNSW) - auto-derives stack ID, or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'", "m": null}, {"n": 15, "t": "        required: false", "m": null}, {"n": 16, "t": "        type: string", "m": null}], "tone": ""}]}, {"title": "The account is checked", "parts": ["j1", "repo"], "text": "The first box reads <code>config/_accounts-registry.yaml<\/code> from your repo. An account name that isn’t listed stops the run, and the error lists the valid names. No AWS yet.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 33, "t": "          if ! grep -q \"^  $ACCOUNT:\" config/_accounts-registry.yaml; then", "m": 1}, {"n": 34, "t": "            echo \"\"", "m": null}, {"n": 35, "t": "            echo \"[ERROR] Account not found: $ACCOUNT\"", "m": null}, {"n": 36, "t": "            echo \"\"", "m": null}, {"n": 37, "t": "            echo \"Valid accounts are:\"", "m": null}, {"n": 38, "t": "            grep \"^  [a-z]\" config/_accounts-registry.yaml | sed 's/^  /  - /' | sed 's/:$//'", "m": null}, {"n": 39, "t": "            echo \"\"", "m": null}, {"n": 40, "t": "            echo \"Please use a valid account name and try again.\"", "m": null}, {"n": 41, "t": "            exit 1", "m": 2}, {"n": 42, "t": "          fi", "m": null}], "tone": ""}]}, {"title": "The zone ID is looked up", "parts": ["j2", "role", "zone"], "text": "Because you gave a zone ID, the second box signs in (the old way) and asks Route 53 for the zone’s name. It turns the name into the stack_id that the file will be named after.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 160, "t": "            if aws route53 get-hosted-zone --id \"$ZONE_ID_NORMALIZED\" \\", "m": 1}, {"n": 161, "t": "              --query 'HostedZone.Name' --output text > /tmp/zone_name.txt 2>/dev/null; then", "m": null}, {"n": 162, "t": "              ZONE_NAME=$(cat /tmp/zone_name.txt)", "m": null}, {"n": 163, "t": "", "m": null}, {"n": 164, "t": "              # Derive stack_id from zone name: zone.name. -> dns-records-zone-name", "m": null}, {"n": 165, "t": "              # Remove trailing dot, convert dots to dashes, prepend prefix", "m": null}, {"n": 166, "t": "              STACK_ID=\"dns-records-$(echo \"$ZONE_NAME\" | sed 's/\\.$//' | sed 's/\\./-/g')\"", "m": 2}, {"n": 167, "t": "", "m": null}, {"n": 168, "t": "              echo \"mode=specific\" >> $GITHUB_OUTPUT", "m": null}, {"n": 169, "t": "              echo \"filter=$STACK_ID\" >> $GITHUB_OUTPUT", "m": null}], "tone": ""}]}, {"title": "List zones signs in", "parts": ["j3", "role"], "text": "The third box looks up the role for your account in <code>DEPLOY_ROLE_ARNS_JSON<\/code> and signs straight in to that account, in one step.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 226, "t": "          ROLE_ARN=$(echo \"${ARNS_JSON}\" | jq -r --arg a \"${ACCOUNT}\" '.[$a] // \"\"' 2>/dev/null || true)", "m": 1}, {"n": 227, "t": "          if [[ -z \"$ROLE_ARN\" || \"$ROLE_ARN\" == \"null\" ]]; then", "m": null}, {"n": 228, "t": "            echo \"[ERR] No role ARN in DEPLOY_ROLE_ARNS_JSON for account: ${ACCOUNT}\"; exit 1", "m": null}, {"n": 229, "t": "          fi", "m": null}, {"n": 230, "t": "          echo \"::add-mask::${ROLE_ARN}\"", "m": null}, {"n": 231, "t": "          echo \"role_arn=${ROLE_ARN}\" >> \"$GITHUB_OUTPUT\"", "m": null}, {"n": 232, "t": "", "m": null}, {"n": 233, "t": "      - name: Configure AWS credentials (OIDC)", "m": null}, {"n": 234, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 235, "t": "        with:", "m": null}, {"n": 236, "t": "          role-to-assume: ${{ steps.role.outputs.role_arn }}", "m": 2}, {"n": 237, "t": "          aws-region: eu-west-1", "m": null}], "tone": ""}]}, {"title": "List zones picks the zone", "parts": ["j3", "zone"], "text": "It lists every zone in the account, gives each one a stack_id, and picks yours. The choice goes to the next box as a small file (an artifact).", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 251, "t": "          ZONES_JSON=$(aws route53 list-hosted-zones \\", "m": 1}, {"n": 252, "t": "            --query 'HostedZones[*].{Id:Id,Name:Name,Private:Config.PrivateZone}' \\", "m": null}, {"n": 253, "t": "            --output json)", "m": null}, {"gap": "…"}, {"n": 352, "t": "            if [[ -n \"${ZONE_MAP[$FILTER]:-}\" ]]; then", "m": 2}, {"n": 353, "t": "              MATCHED_STACK_IDS=(\"$FILTER\")", "m": null}, {"n": 354, "t": "              echo \"  [MATCH] $FILTER (zone: ${ZONE_MAP[$FILTER]})\"", "m": null}, {"gap": "…"}, {"n": 494, "t": "          echo \"$ZONE_PAIRS\" | jq -c '.' > /tmp/zone-list.json", "m": 3}], "tone": ""}]}, {"title": "Export signs in again", "parts": ["j5", "role"], "text": "One zone needs no approval, so the approval box is grey. The Export box signs in once more and checks that it really got into the account.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 607, "t": "          if ! aws sts get-caller-identity >/dev/null 2>&1; then", "m": 1}, {"gap": "…"}, {"n": 618, "t": "          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)", "m": 2}, {"n": 619, "t": "          echo \"[SUCCESS] AWS access verified for account: ${{ inputs.account }} (ID: $ACCOUNT_ID)\"", "m": null}], "tone": ""}]}, {"title": "The live records become a JSON file", "parts": ["j5", "zone", "repo"], "text": "<code>dns_records_export.py<\/code> reads the zone’s live records and writes <code>config/accounts/&lt;account&gt;/networking/&lt;stack_id&gt;.json<\/code>. ALIAS records, the SOA record and the zone’s own NS records are left out.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 655, "t": "            CONFIG_PATH=\"config/accounts/$ACCOUNT/networking/${STACK_ID}.json\"", "m": 1}, {"gap": "…"}, {"n": 668, "t": "            EXPORT_OUTPUT=$(python3 pipeline/dns_records_export.py \\", "m": 2}, {"n": 669, "t": "              --account \"$ACCOUNT\" \\", "m": null}, {"n": 670, "t": "              --stack-id \"$STACK_ID\" \\", "m": null}, {"n": 671, "t": "              --zone-name \"$ZONE_NAME\" \\", "m": null}, {"n": 672, "t": "              --hosted-zone-id \"$ZONE_ID\" 2>&1)", "m": null}], "tone": ""}]}, {"title": "A branch and a pull request", "parts": ["j5", "repo"], "text": "It commits the file to a new branch and opens a pull request into main, so the team can review it. The files are also kept on the run page for 30 days.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 846, "t": "          git checkout -b \"$BRANCH_NAME\"", "m": 1}, {"gap": "…"}, {"n": 861, "t": "            git commit --allow-empty -m \"$MSG\"", "m": null}, {"gap": "…"}, {"n": 866, "t": "          git push origin \"$BRANCH_NAME\" -u", "m": 2}, {"gap": "…"}, {"n": 891, "t": "          PR_ERR=$(gh pr create --base main --head \"$BRANCH_NAME\" \\", "m": 3}, {"n": 892, "t": "            --title \"WS2: Export DNS records for $ACCOUNT ($MODE mode)\" \\", "m": null}], "tone": ""}]}, {"title": "What you do next", "parts": ["repo"], "text": "To change records, edit the file in the pull request and merge it. Then run the Apply pipeline for the same zone to put the change live. The run’s Summary says the same:", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 939, "t": "          echo \"### Next: Choose Your Deployment Pipeline\" >> $GITHUB_STEP_SUMMARY", "m": null}, {"n": 940, "t": "          echo \"\" >> $GITHUB_STEP_SUMMARY", "m": null}, {"n": 941, "t": "          echo \"**To MODIFY existing records in those zones:**\" >> $GITHUB_STEP_SUMMARY", "m": 1}, {"n": 942, "t": "          echo \"Use workflow: \\`WS2 -- DNS Records Apply (Gated / Audited)\\`\" >> $GITHUB_STEP_SUMMARY", "m": null}, {"n": 943, "t": "          echo \"\" >> $GITHUB_STEP_SUMMARY", "m": null}, {"n": 944, "t": "          echo \"**To ADD new hosted zones (not in this export):**\" >> $GITHUB_STEP_SUMMARY", "m": null}, {"n": 945, "t": "          echo \"Raise PR and deploy via: \\`20-deploy-stack.yml\\`\" >> $GITHUB_STEP_SUMMARY", "m": 2}, {"n": 946, "t": "          echo \"\" >> $GITHUB_STEP_SUMMARY", "m": null}, {"n": 947, "t": "          echo \"**Runbook:** docs/runbooks/WS2-HOSTED-ZONE-MODIFICATIONS.md\" >> $GITHUB_STEP_SUMMARY", "m": null}], "tone": ""}]}], "caption": "Exporting one zone, named by its hosted zone ID. The top rows are GitHub: the boxes on the run page, and your repo. The bottom row is the AWS account you typed."}, {"label": "All zones", "steps": [{"title": "You leave the zone empty", "parts": ["start"], "text": "Type only the account. With no stack_id and no zone ID, the pipeline exports every zone in that account.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 9, "t": "      stack_id:", "m": null}, {"n": 10, "t": "        description: 'dns-records-* stack ID, a zone name, or the CFN stack that created the zone (any naming) - or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'", "m": 1}, {"n": 11, "t": "        required: false", "m": null}, {"n": 12, "t": "        type: string", "m": null}, {"n": 13, "t": "      hosted_zone_id:", "m": null}, {"n": 14, "t": "        description: 'Hosted zone ID (e.g., Z060943926KMOQ012KNSW) - auto-derives stack ID, or leave blank to export ALL zones (non-sandbox accounts require gatekeeper approval)'", "m": 2}, {"n": 15, "t": "        required: false", "m": null}, {"n": 16, "t": "        type: string", "m": null}], "tone": ""}]}, {"title": "“All” mode", "parts": ["j1", "j2"], "text": "After the account check, the second box sees that neither field is filled in and switches to all mode. It doesn’t need AWS for that.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 189, "t": "          else", "m": null}, {"n": 190, "t": "            # Neither stack_id nor hosted_zone_id given -- this means \"export EVERY", "m": null}, {"n": 191, "t": "            # zone in the account\". That's a legitimate use case (e.g. periodic backup).", "m": null}, {"n": 192, "t": "            # Non-sandbox accounts require gatekeeper approval further down the", "m": null}, {"n": 193, "t": "            # pipeline (see the gate-approval job) before this actually runs; sandbox", "m": null}, {"n": 194, "t": "            # is the canary tier and proceeds automatically.", "m": null}, {"n": 195, "t": "            echo \"mode=all\" >> $GITHUB_OUTPUT", "m": 1}, {"n": 196, "t": "            echo \"filter=dns-records-*\" >> $GITHUB_OUTPUT", "m": null}, {"n": 197, "t": "            echo \"[SUCCESS] Using ALL mode: exporting all dns-records-* zones in '$ACCOUNT'\"", "m": null}], "tone": ""}]}, {"title": "Every zone gets a name", "parts": ["j3", "role", "zone"], "text": "List zones signs in and names every zone. A public and a private zone with the same name (split-horizon) get <code class=\"nw\">-public<\/code> and <code class=\"nw\">-private<\/code> endings, so both are exported.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 324, "t": "            BASE_ID=\"dns-records-$(echo \"$ZNAME\" | sed 's/\\.$//' | sed 's/\\./-/g')\"", "m": null}, {"n": 325, "t": "            if [[ ${ZONE_NAME_COUNT[$ZNAME]} -gt 1 ]]; then", "m": null}, {"n": 326, "t": "              SUFFIX=\"-public\"; [[ \"${ZONE_IS_PRIVATE[$ZID_BARE]}\" == \"true\" ]] && SUFFIX=\"-private\"", "m": 1}, {"n": 327, "t": "              STACK_ID=\"${BASE_ID}${SUFFIX}\"", "m": null}], "tone": ""}]}, {"title": "Someone approves", "parts": ["j4"], "text": "For any account except sandbox, the approval box waits for a reviewer of the <code>production<\/code> environment. They should read the zone list in the List zones log first.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 528, "t": "    if: ${{ needs.validate-inputs.outputs.mode == 'all' && inputs.account != 'sandbox' }}", "m": 1}, {"n": 529, "t": "    environment: production", "m": 2}], "tone": ""}]}, {"title": "Export runs for every zone", "parts": ["j5", "role", "zone", "repo"], "text": "Once approved, Export writes one file per zone, counts the exported, skipped and failed zones, and opens one pull request with all of them.", "code": [{"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 558, "t": "    if: |", "m": null}, {"n": 559, "t": "      always() &&", "m": 1}, {"n": 560, "t": "      needs.validate-inputs.result == 'success' &&", "m": null}, {"n": 561, "t": "      needs.list-zones.result == 'success' &&", "m": null}, {"n": 562, "t": "      (needs.gate-approval.result == 'success' || needs.gate-approval.result == 'skipped')", "m": 2}], "tone": ""}, {"file": "ws2-dns-records-export.yml", "sub": "Export pipeline", "lang": "yaml", "rows": [{"n": 837, "t": "              BRANCH_NAME=\"feat/export-all-zones-${ACCOUNT}-${TIMESTAMP}\"", "m": 3}], "tone": ""}]}], "caption": "Exporting every zone of an account other than sandbox: the approval box waits for a reviewer."}]}, "ap": {"variants": [{"label": "Preview only", "steps": [{"title": "You start the run", "parts": ["start"], "text": "Actions tab → <b>WS2 -- DNS Records Apply (Gated / Audited)<\/b> → <b>Run workflow<\/b>. Type the account and name one zone. Leave both tick boxes empty: this run only previews.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 40, "t": "      execute_changes:", "m": 1}, {"n": 41, "t": "        description: \"Apply changes to Route53 - LEAVE UNCHECKED for preview only (default); CHECK to actually apply\"", "m": null}, {"n": 42, "t": "        required: false", "m": null}, {"n": 43, "t": "        type: boolean", "m": null}, {"n": 44, "t": "        default: false", "m": null}, {"n": 45, "t": "      with_deletes:", "m": 2}, {"n": 46, "t": "        description: \"Allow record deletion - LEAVE UNCHECKED to only add/modify; CHECK to also delete\"", "m": null}, {"n": 47, "t": "        required: false", "m": null}, {"n": 48, "t": "        type: boolean", "m": null}, {"n": 49, "t": "        default: false", "m": null}], "tone": ""}]}, {"title": "The account and the zone are checked", "parts": ["j1", "role", "zone", "repo"], "text": "The first box checks the account against the registry, signs in the old way, and works out the zone. With no zone named, it stops: one zone per run.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 140, "t": "          if [[ -z \"$SPECIFIC\" ]] && [[ -z \"$ZONE_ID\" ]]; then", "m": 1}, {"n": 141, "t": "            echo \"[ERROR] MISSING REQUIRED INPUT\"", "m": null}, {"n": 142, "t": "            echo \"\"", "m": null}, {"n": 143, "t": "            echo \"For account '$ACCOUNT', you must provide ONE of:\"", "m": null}, {"n": 144, "t": "            echo \"  - Stack ID (e.g., dns-records-bbuk-customer-net)\"", "m": null}, {"n": 145, "t": "            echo \"  - Hosted Zone ID (e.g., Z060943926KMOQ012KNSW)\"", "m": null}, {"n": 146, "t": "            echo \"\"", "m": null}, {"n": 147, "t": "            echo \"Why? To prevent accidental mass changes to all zones in an account.\"", "m": null}, {"n": 148, "t": "            echo \"You must explicitly specify which zone to apply changes to.\"", "m": null}, {"n": 149, "t": "            echo \"\"", "m": null}, {"n": 150, "t": "            exit 1", "m": null}], "tone": ""}, {"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 101, "t": "          ROLE_ARN=$(echo \"${ARNS_JSON}\" | jq -r --arg a \"${ACCOUNT}\" '.[$a] // \"\"' 2>/dev/null || true)", "m": 2}, {"gap": "…"}, {"n": 110, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": 3}, {"n": 111, "t": "        with:", "m": null}, {"n": 112, "t": "          role-to-assume: ${{ steps.role.outputs.role_arn }}", "m": null}], "tone": ""}]}, {"title": "Preview", "parts": ["j2", "role", "zone", "repo"], "text": "The second box signs in again and runs <code>dns_records_apply.py<\/code> without <code>--execute<\/code>: it compares the JSON file on the branch you ran with the live zone and prints every change it would make. Nothing changes.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 398, "t": "          OUT=$(python3 pipeline/dns_records_apply.py \\", "m": 1}, {"n": 399, "t": "                  --account \"$ACCOUNT\" --stack-id \"$STACK_ID\" $DEL_FLAG 2>&1) || { echo \"$OUT\"; exit 1; }", "m": null}], "tone": ""}]}, {"title": "The run ends", "parts": ["j2"], "text": "Approval and Apply are grey, because execute_changes wasn’t ticked. The preview is on the Summary page.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 427, "t": "    if: ${{ inputs.execute_changes == true }}", "m": 1}, {"gap": "…"}, {"n": 468, "t": "    if: ${{ inputs.execute_changes == true }}", "m": 2}], "tone": ""}]}], "caption": "A preview-only run: nothing in Route 53 changes."}, {"label": "Apply with approval", "steps": [{"title": "You tick execute_changes", "parts": ["start"], "text": "The same form, with <b>execute_changes<\/b> ticked. Tick <b>with_deletes<\/b> as well only if records you removed from the file should be deleted.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 40, "t": "      execute_changes:", "m": 1}, {"n": 41, "t": "        description: \"Apply changes to Route53 - LEAVE UNCHECKED for preview only (default); CHECK to actually apply\"", "m": null}, {"n": 42, "t": "        required: false", "m": null}, {"n": 43, "t": "        type: boolean", "m": null}, {"n": 44, "t": "        default: false", "m": null}, {"n": 45, "t": "      with_deletes:", "m": 2}, {"n": 46, "t": "        description: \"Allow record deletion - LEAVE UNCHECKED to only add/modify; CHECK to also delete\"", "m": null}, {"n": 47, "t": "        required: false", "m": null}, {"n": 48, "t": "        type: boolean", "m": null}, {"n": 49, "t": "        default: false", "m": null}], "tone": ""}]}, {"title": "Checks and the preview first", "parts": ["j1", "j2", "role", "zone", "repo"], "text": "The first two boxes run exactly as in a preview-only run, so the planned changes are on the Summary page before anyone approves.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 397, "t": "          # Always run preview (even if dry_run=false, preview runs first)", "m": null}, {"n": 398, "t": "          OUT=$(python3 pipeline/dns_records_apply.py \\", "m": 1}, {"n": 399, "t": "                  --account \"$ACCOUNT\" --stack-id \"$STACK_ID\" $DEL_FLAG 2>&1) || { echo \"$OUT\"; exit 1; }", "m": null}], "tone": ""}]}, {"title": "Someone approves", "parts": ["j3"], "text": "For any account except sandbox, the run waits for a reviewer of the <code>production<\/code> environment. Sandbox goes straight on.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 427, "t": "    if: ${{ inputs.execute_changes == true }}", "m": 1}, {"n": 428, "t": "    # Dynamic environment: sandbox is ungated (auto), others require 'production' approval", "m": null}, {"n": 429, "t": "    environment: ${{ inputs.account == 'sandbox' && 'dns-records-sandbox' || 'production' }}", "m": 2}], "tone": ""}]}, {"title": "Apply", "parts": ["j4", "role", "zone"], "text": "The last box signs in once more and runs the same script with <code>--execute<\/code>: Route 53 makes the changes (UPSERT, and DELETE if you allowed it).", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 521, "t": "          OUT=$(python3 pipeline/dns_records_apply.py \\", "m": 1}, {"n": 522, "t": "                  --account \"$ACCOUNT\" --stack-id \"$STACK_ID\" $DEL_FLAG --execute 2>&1) || STATUS=FAILED", "m": 2}], "tone": ""}]}, {"title": "The result", "parts": ["j4"], "text": "APPLIED or FAILED goes on the Summary page with the script’s output. A failure turns the box red.", "code": [{"file": "ws2-dns-records-apply.yml", "sub": "Apply pipeline", "lang": "yaml", "rows": [{"n": 527, "t": "            echo \"## WS2 DNS Records -- ${STATUS} [${{ matrix.stack_id }}]\"", "m": 1}, {"gap": "…"}, {"n": 539, "t": "          [[ \"${STATUS}\" == \"APPLIED\" ]] || exit 1", "m": 2}], "tone": ""}]}], "caption": "A run with execute_changes ticked: preview, approval, then the change batch."}]}}};
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function hl(text, lang) {
+  if (lang === 'plain') return esc(text);
+  let out = '', rest = text;
+  if (lang === 'yaml') {
+    const m = rest.match(/^(\s*(?:-\s+)?)([A-Za-z0-9_.:\/-]+?)(:)(?=\s|$)/);
+    if (m) { out += esc(m[1]) + '<span class="k">' + esc(m[2]) + '</span>' + m[3]; rest = rest.slice(m[0].length); }
+  }
+  const bash = /^\s*(case|esac|echo|if|elif|else|fi|while|for|do|done|then)\b/.test(text);
+  const re = new RegExp('(\\$\\{\\{.*?\\}\\})|("(?:[^"\\\\]|\\\\.)*")|(\'(?:[^\'\\\\]|\\\\.)*\')|((?:^|\\s)#.*$)|(!Sub|!Ref)\\b' +
+                        (bash ? '|\\b(case|esac|echo|if|elif|else|fi|while|for|do|done|then|in)\\b' : ''), 'g');
+  let last = 0, m;
+  while ((m = re.exec(rest))) {
+    out += esc(rest.slice(last, m.index));
+    const t = m[0];
+    if (m[1]) out += '<span class="x">' + esc(t) + '</span>';
+    else if (m[2]) out += '<span class="' + (lang === 'json' && /^\s*:/.test(rest.slice(m.index + t.length)) ? 'k' : 's') + '">' + esc(t) + '</span>';
+    else if (m[3]) out += '<span class="s">' + esc(t) + '</span>';
+    else if (m[4]) out += '<span class="c">' + esc(t) + '</span>';
+    else out += '<span class="w">' + esc(t) + '</span>';
+    last = m.index + t.length;
+  }
+  return out + esc(rest.slice(last));
+}
+
+function shot(b, badges) {
+  const numbered = b.rows.some((r) => r.n);
+  let rows = '';
+  for (const r of b.rows) {
+    if (r.gap !== undefined) {
+      rows += '<tr class="gap"><td class="ln">⋯</td>' + (badges ? '<td class="mk"></td>' : '') + '<td class="src">' + esc(r.gap) + '</td></tr>';
+      continue;
+    }
+    const lead = r.t.match(/^ */)[0].length;
+    rows += '<tr' + (r.m ? ' class="hl"' : '') + '><td class="ln">' + (r.n || '') + '</td>' +
+            (badges ? '<td class="mk">' + (r.m ? '<span class="badge">' + r.m + '</span>' : '') + '</td>' : '') +
+            '<td class="src" style="--n:' + lead + '"><span class="ind"></span>' + (hl(r.t.slice(lead), b.lang) || ' ') + '</td></tr>';
+  }
+  const pill = b.tone ? '<span class="pill pill-' + b.tone + '">' + b.tone + '</span>' : '';
+  return '<figure class="shot"><figcaption class="shot-bar"><span class="fname">' + esc(b.file) + '</span><span class="fsub">' +
+         esc(b.sub) + '</span>' + pill + '</figcaption><div class="shot-scroll"><table class="code' + (numbered ? '' : ' no-ln') +
+         '"><tbody>' + rows + '</tbody></table></div></figure>';
+}
+
+document.querySelectorAll('[data-panel]').forEach((el) => {
+  const b = DATA.panels[el.dataset.panel];
+  el.innerHTML = shot(b, b.rows.some((r) => r.m));
+});
+
+function initPlayer(root) {
+  const spec = DATA.players[root.dataset.player];
+  const q = (sel) => root.querySelector(sel);
+  const svg = q('svg.diagram'), box = svg.parentElement, panel = q('[role="tabpanel"]');
+  const tabs = [...root.querySelectorAll('[role="tab"]')];
+  let v = 0, idx = 0;
+  function show(focusTab) {
+    const variant = spec.variants[v], steps = variant.steps, s = steps[idx];
+    tabs.forEach((t, i) => { t.setAttribute('aria-selected', String(i === v)); t.tabIndex = i === v ? 0 : -1; });
+    if (panel && tabs[v]) panel.setAttribute('aria-labelledby', tabs[v].id);
+    if (focusTab) tabs[v].focus();
+    svg.classList.add('stepping');
+    svg.querySelectorAll('[data-part]').forEach((g) => g.classList.toggle('on', s.parts.includes(g.dataset.part)));
+    const lit = [...svg.querySelectorAll('[data-part].on')];
+    if (lit.length && box.scrollWidth > box.clientWidth + 1) {
+      const rs = lit.map((g) => g.getBoundingClientRect()), b = box.getBoundingClientRect();
+      const left = Math.min(...rs.map((r) => r.left)), right = Math.max(...rs.map((r) => r.right));
+      const x = right - left > box.clientWidth ? left - b.left - 8 : (left + right) / 2 - b.left - box.clientWidth / 2;
+      box.scrollTo({ left: Math.max(0, box.scrollLeft + x), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    q('.fig-cap').textContent = variant.caption;
+    q('.step-count').textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+    q('.step-title').textContent = s.title;
+    q('.step-text').innerHTML = s.text;
+    q('.step-code').innerHTML = s.code.map((c) => shot(c, false)).join('');
+    q('.prev').disabled = idx === 0;
+    q('.next').disabled = idx === steps.length - 1;
+    q('.dots').innerHTML = steps.map((st, i) => '<li><button type="button" data-i="' + i + '" aria-label="Step ' + (i + 1) + ': ' +
+      esc(st.title) + '"' + (i === idx ? ' aria-current="step"' : '') + '>' + (i + 1) + '</button></li>').join('');
+  }
+  q('.prev').addEventListener('click', () => { if (idx > 0) { idx--; show(); } });
+  q('.next').addEventListener('click', () => { if (idx < spec.variants[v].steps.length - 1) { idx++; show(); } });
+  q('.dots').addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) { idx = Number(b.dataset.i); show(); } });
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => { if (v !== i) { v = i; idx = 0; show(); } });
+    t.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      v = (v + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length; idx = 0; show(true);
+    });
+  });
+  show();
+}
+document.querySelectorAll('[data-player]').forEach(initPlayer);
+</script>
+
+</body></html>
