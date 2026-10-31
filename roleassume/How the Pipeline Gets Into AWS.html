@@ -1,0 +1,892 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>How the Pipeline Gets Into AWS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@600;800&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with wider exhibit bands for the run player and the code screenshots */
+:root {
+  --bg: #F1F3F6; --surface: #FFFFFF; --ink: #17202C; --muted: #566273; --line: #DCE1E8; --line-strong: #A6B0BE;
+  --accent: #A35C00; --accent-soft: #FFF0D2;            /* amber: where the run is now */
+  --good: #0D6E5B; --good-soft: #DDF1EC;                /* the new pipeline */
+  --bad: #A8372A; --bad-soft: #F9E3DF;                  /* the old pipeline */
+  --code-bg: #FAFBFC; --code-bar: #ECEFF4; --code-ln: #8A94A3; --code-hl: #FFF1D4;
+  --tk-key: #1C4FB0; --tk-str: #0B6B58; --tk-expr: #8B3DCB; --tk-cmt: #6C7787; --tk-kw: #A8372A;
+  --font-display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --measure: 46rem; --wide: 72rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+    --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+    --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+    --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141B; --surface: #161F29; --ink: #E6ECF3; --muted: #9AA6B5; --line: #26313E; --line-strong: #4A5869;
+  --accent: #F1AE45; --accent-soft: #3B2C10; --good: #52C7AC; --good-soft: #10322B; --bad: #F0826F; --bad-soft: #3A1D19;
+  --code-bg: #111921; --code-bar: #1A2430; --code-ln: #5D6A7A; --code-hl: #3A2D12;
+  --tk-key: #8DB4FF; --tk-str: #6BD3B7; --tk-expr: #C9A2FF; --tk-cmt: #7F8B9A; --tk-kw: #F0826F;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--font-body); }
+.page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+        padding-block: 40px 64px; display: grid; gap: 56px; }
+.page > * { width: 100%; max-width: var(--measure); margin-inline: auto; min-width: 0; }
+.page > .wide { max-width: var(--wide); }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 1.4rem + 2.6vw, 3.1rem); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 800; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bar); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+section { display: grid; gap: 18px; }
+.eyebrow { font: 600 0.78rem/1 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.hero { display: grid; gap: 16px; }
+.lede { font-size: 1.15rem; color: var(--ink); max-width: 40rem; }
+
+/* the short version */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 10px; align-content: start; }
+.card-old { border-top: 4px solid var(--bad); }
+.card-new { border-top: 4px solid var(--good); }
+.card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 8px; }
+.tag { font: 700 0.8rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.tag-old { color: var(--bad); } .tag-new { color: var(--good); }
+.note { color: var(--muted); }
+
+/* words */
+.glossary { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0 28px; }
+.glossary div { padding-block: 12px; border-top: 1px solid var(--line); display: grid; gap: 4px; align-content: start; }
+.glossary dt { font: 600 0.95rem var(--font-mono); color: var(--ink); }
+.glossary dd { margin: 0; color: var(--muted); }
+.glossary dd b { color: var(--ink); }
+
+/* run player */
+.tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--code-bar); border-radius: 10px; justify-self: start; flex-wrap: wrap; }
+.tabs button { font: 600 0.95rem var(--font-body); border: 0; background: transparent; color: var(--muted); padding: 8px 16px; border-radius: 7px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.tabs button[aria-selected="true"]#tab-new { color: var(--good); }
+.tabs button[aria-selected="true"]#tab-old { color: var(--bad); }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.player { display: grid; gap: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.diagram-fig { margin: 0; display: grid; gap: 8px; }
+.diagram-scroll { overflow-x: auto; }
+.diagram { display: block; width: 100%; min-width: 620px; height: auto; color: var(--muted); }
+.diagram[hidden] { display: none; }
+.diagram-fig figcaption { color: var(--muted); font-size: 0.95rem; }
+.diagram .zone { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 6 6; }
+.diagram .zone-label { fill: var(--muted); font: 700 11px var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.diagram .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+.diagram .box-bad { stroke: var(--bad); stroke-dasharray: 5 4; }
+.diagram .t-title { fill: var(--ink); font: 700 15px var(--font-display); }
+.diagram .t-sub { fill: var(--muted); font: 400 12px var(--font-body); }
+.diagram .t-bad { fill: var(--bad); font-weight: 700; }
+.diagram .t-mono { fill: var(--ink); font: 600 10.5px var(--font-mono); }
+.diagram .chip-neutral { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+.diagram .chip-good { fill: var(--good-soft); stroke: var(--good); stroke-width: 1.2; }
+.diagram .chip-bad { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; }
+.diagram .stack { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.2; }
+.diagram .arrow { color: var(--muted); }
+.diagram .arrow path { fill: none; stroke: currentColor; stroke-width: 2; }
+.diagram .arrow polygon { fill: currentColor; }
+.diagram .arrow.dashed path { stroke-dasharray: 6 5; }
+.diagram .arrow.bad { color: var(--bad); }
+.diagram .arrow-label { fill: currentColor; font: 700 12.5px var(--font-body); }
+.diagram [data-part] { transition: opacity 0.25s ease; }
+.diagram.stepping [data-part]:not(.on) { opacity: 0.2; }
+.diagram .arrow.on:not(.bad) { color: var(--accent); }
+.diagram .arrow.on path { stroke-width: 3; }
+.diagram g.on > .box:not(.box-bad) { stroke: var(--accent); stroke-width: 2.5; }
+.stepper { display: grid; gap: 14px; }
+.step-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.step-nav .nav { font: 700 0.95rem var(--font-body); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.step-nav .nav:disabled { opacity: 0.4; cursor: default; }
+.step-nav .nav.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+@media (max-width: 640px) { .step-nav .dots { order: -1; flex-basis: 100%; } .step-nav .nav { flex: 1; } }
+.dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+.dots button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--muted); font: 700 0.8rem var(--font-body); cursor: pointer; font-variant-numeric: tabular-nums; }
+.dots button[aria-current="step"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.step-body { display: grid; gap: 10px; min-width: 0; }
+.step-count { font: 700 0.78rem var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.step-code { display: grid; gap: 12px; min-width: 0; }
+
+/* code screenshots */
+.shot { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--code-bg); min-width: 0; }
+.shot-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--code-bar); border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.fname { font: 600 0.85rem var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
+.fsub { color: var(--muted); }
+.pill { margin-left: auto; font: 700 0.7rem/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 8px; border-radius: 99px; }
+.pill-old { color: var(--bad); background: var(--bad-soft); } .pill-new { color: var(--good); background: var(--good-soft); }
+.shot-scroll { overflow-x: auto; }
+table.code { border-collapse: collapse; width: 100%; font: 400 12.5px/1.65 var(--font-mono); }
+table.code td { padding: 0 10px; vertical-align: top; }
+table.code td.ln { width: 1%; text-align: right; color: var(--code-ln); user-select: none; font-variant-numeric: tabular-nums; padding-left: 12px; }
+table.code td.mk { width: 1%; padding: 0 2px; }
+/* long lines wrap with a hanging indent: --n = leading spaces of the line, --iu = width of one indent space */
+table.code { --iu: 1ch; }
+table.code td.src { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); padding-right: 16px;
+  padding-left: calc(10px + (var(--n, 0) + 4) * var(--iu)); text-indent: calc(-1 * (var(--n, 0) + 4) * var(--iu)); }
+table.code td.src .ind { display: inline-block; width: calc(var(--n, 0) * var(--iu)); }
+@media (max-width: 640px) { table.code { --iu: 0.5ch; } }
+table.code tr.hl td { background: var(--code-hl); }
+table.code tr.hl td.ln { color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+table.code tr.gap td { color: var(--code-ln); font-style: italic; font-family: var(--font-body); font-size: 12.5px; padding-block: 2px; }
+table.code.no-ln td.ln { display: none; }
+.badge { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 10.5px var(--font-body); margin-top: 2px; }
+.k { color: var(--tk-key); } .s { color: var(--tk-str); } .x { color: var(--tk-expr); font-weight: 600; } .c { color: var(--tk-cmt); font-style: italic; } .w { color: var(--tk-kw); font-weight: 600; }
+
+/* line-by-line exhibits */
+.exhibit { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .exhibit { grid-template-columns: minmax(0, 1fr); } }
+.callouts { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: c; }
+.callouts li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; counter-increment: c; }
+.callouts li::before { content: counter(c); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--surface); font: 700 12px var(--font-body); margin-top: 2px; }
+.callouts li.after { display: block; counter-increment: none; color: var(--muted); font-size: 0.95rem; }
+.callouts .after::before { content: none; }
+.sub-old { color: var(--bad); } .sub-new { color: var(--good); }
+.group { display: grid; gap: 22px; }
+
+/* side by side */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.side { border-collapse: collapse; width: 100%; min-width: 36rem; font-size: 0.97rem; }
+table.side th, table.side td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.side tr:last-child > * { border-bottom: 0; }
+
+table.side thead th { font: 700 0.8rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+table.side thead th.o { color: var(--bad); } table.side thead th.n { color: var(--good); }
+table.side tbody th { font-weight: 700; width: 26%; }
+@media (max-width: 640px) {
+  table.side { min-width: 0; }
+  table.side thead { display: none; }
+  table.side tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--line); }
+  table.side tbody tr:last-child { border-bottom: 0; }
+  table.side tbody th { grid-column: 1 / -1; width: auto; padding-bottom: 2px; }
+  table.side tbody th, table.side tbody td { border-bottom: 0; }
+  table.side td::before { content: attr(data-label); display: block; margin-bottom: 2px; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+  table.side td.o::before { color: var(--bad); }
+  table.side td.n::before { color: var(--good); }
+}
+/* next */
+.todo { margin: 0; padding-left: 1.4rem; display: grid; gap: 10px; }
+footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+/* how GitHub OIDC works */
+.seq .life { stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.seq .msg { color: var(--accent); }
+.seq .msg path { fill: none; stroke: currentColor; stroke-width: 2.2; }
+.seq .msg polygon { fill: currentColor; }
+.seq .msg.back path { stroke-dasharray: 6 5; }
+.seq .msg-label { fill: var(--ink); font: 700 12.5px var(--font-body); }
+.seq .msg-note { fill: var(--muted); font: 600 11px var(--font-mono); }
+.tag-plain { color: var(--muted); }
+.swipe-hint { display: none; }
+@media (max-width: 700px) { .swipe-hint { display: inline; font-weight: 700; } }
+.card h4 { margin: 0; font: 700 1.05rem var(--font-display); }
+.where { color: var(--muted); font-size: 0.95rem; }
+.where code { overflow-wrap: anywhere; }
+table.formats { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+table.formats caption { text-align: left; padding: 12px 14px 4px; font-weight: 700; }
+table.formats th, table.formats td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.formats tr:last-child > * { border-bottom: 0; }
+table.formats thead th { font: 700 0.75rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+table.formats tbody th { font-weight: 400; width: 34%; }
+.callout-box { max-width: var(--measure); margin: 0; border-left: 4px solid var(--accent); background: var(--accent-soft); color: var(--ink); padding: 12px 16px; border-radius: 0 10px 10px 0; }
+/* roles up close */
+.intro { max-width: var(--measure); }
+.jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.jump a { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 99px; background: var(--surface); color: var(--ink); text-decoration: none; font-size: 0.92rem; }
+.jump a:hover { border-color: var(--accent); }
+.jump code { background: none; padding: 0; }
+.jump .tag { font-size: 0.66rem; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 16px; }
+.glance h3 code, .role-head h3 code { background: none; padding: 0; font-size: 1.05em; }
+.kv { margin: 0; display: grid; gap: 10px; }
+.kv div { display: grid; gap: 2px; }
+.kv dt, .facts dt { font: 700 0.72rem var(--font-body); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.kv dd, .facts dd { margin: 0; min-width: 0; }
+.role { display: grid; gap: 16px; padding-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 16px; min-width: 0; }
+.role-head { display: grid; gap: 10px; max-width: var(--measure); }
+.role h4 { margin: 8px 0 0; font: 700 1.02rem var(--font-display); }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 10px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.facts div { display: grid; gap: 2px; min-width: 0; }
+.facts .full { grid-column: 1 / -1; }
+.shots { display: grid; gap: 12px; min-width: 0; }
+.callouts li.sub { display: block; counter-increment: none; font: 700 0.72rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.callouts li.sub::before { content: none; }
+@media (prefers-reduced-motion: reduce) { .diagram [data-part] { transition: none; } }
+</style>
+
+<main class="page">
+  <header class="hero">
+    <p class="eyebrow">Your CloudFormation pipeline · network accounts</p>
+    <h1>How the pipeline gets into AWS</h1>
+    <p class="lede">Your pipeline runs on GitHub’s computers, but the work happens inside your AWS accounts. To get in, it has to pick up a <b>role</b>: a set of permissions, a bit like an ID badge. This page uses your real code to show which badge the old pipeline used, which one the new pipeline uses, and why your client asked for the change.</p>
+  </header>
+
+  <section aria-labelledby="short-h">
+    <h2 id="short-h">The short version</h2>
+    <div class="compare">
+      <article class="card card-old">
+        <p class="tag tag-old">Old pipeline</p>
+        <ul>
+          <li>Went straight into the network account.</li>
+          <li>Used <code>AWSControlTowerExecution</code>: the master key that Control Tower, the system that runs your AWS organisation, keeps in every account for itself.</li>
+          <li>That key can do everything, and Control Tower’s safety rules make an exception for it.</li>
+        </ul>
+      </article>
+      <article class="card card-new">
+        <p class="tag tag-new">New pipeline</p>
+        <ul>
+          <li>Checks in first at <b>IMS Root</b>, the head office account.</li>
+          <li>Gets a badge there that is good for one thing only: swapping it for <code>iamr-net-prd-deploy</code> in the network account.</li>
+          <li>That badge was made for pipelines, and Control Tower’s safety rules apply to it.</li>
+        </ul>
+      </article>
+    </div>
+    <p class="note">Same pipeline, same <b>Run workflow</b> form, same Prepare → Drift check → Change set → Deploy boxes. Only the way in changed.</p>
+  </section>
+
+  <section aria-labelledby="words-h">
+    <h2 id="words-h">Words on this page</h2>
+    <dl class="glossary">
+      <div><dt>workflow · job · step</dt><dd>Your YAML file is a <b>workflow</b>. Each box on the run page (Prepare, Drift check…) is a <b>job</b>. Each <code>- name:</code> inside a job is a <b>step</b>.</dd></div>
+      <div><dt>AWS account</dt><dd>A separate building with its own contents and its own number. Network prd is <b>584477831165</b>.</dd></div>
+      <div><dt>role</dt><dd>A <b>badge</b>. Whoever holds it can do what the badge allows in that account. Every role has two lists: who may pick it up, and what it allows.</dd></div>
+      <div><dt>trust policy</dt><dd>The <b>list at the door</b> that says who may pick up the badge.</dd></div>
+      <div><dt>permissions</dt><dd>The list of <b>what the badge allows</b>. <code>AdministratorAccess</code> means everything; <code>ReadOnlyAccess</code> means look, don’t touch.</dd></div>
+      <div><dt>OIDC</dt><dd>How GitHub vouches for a run. GitHub gives each run a <b>short note, signed by GitHub</b>, saying which repo and branch it comes from. AWS checks the signature and the note, so no password is stored anywhere. (OIDC is short for OpenID Connect, the name of the standard.) <a href="#oidc-h">More below.</a></dd></div>
+      <div><dt>Control Tower</dt><dd>The AWS service that set up your organisation’s accounts and enforces its <b>safety rules</b> in all of them, for example “nobody may switch off AWS Config”, the service that records every setting change. The ones that block actions are called SCPs.</dd></div>
+      <div><dt>AWSControlTowerExecution</dt><dd>Control Tower’s own <b>master key</b>, in every account. The safety rules have an exception for it, because Control Tower uses it to look after the accounts.</dd></div>
+      <div><dt>IMS Root</dt><dd>Your organisation’s <b>head office</b> account, 390403857119 (AWS calls it the management account). In the new pipeline it is the reception desk.</dd></div>
+      <div><dt>iamr-net-prd-deploy · -read</dt><dd>The two badges made for network prd: <b>-deploy</b> can change things, <b>-read</b> can only look. Each exists <b>twice</b>: a copy at reception in IMS Root that can only be swapped, and the working copy in network prd.</dd></div>
+      <div><dt>role chaining</dt><dd><b>Swapping</b> one badge for another: hand in the reception badge, get the network badge. AWS lets a swapped badge work for one hour at most.</dd></div>
+    </dl>
+  </section>
+
+  <section class="wide" aria-labelledby="oidc-h">
+    <h2 id="oidc-h">How GitHub OIDC works</h2>
+    <p class="intro">OIDC lets a GitHub run sign in to AWS with nothing stored in GitHub: no password and no AWS keys. For every run, GitHub writes a short note and signs it. AWS checks the note, and if it matches what a role allows, hands back keys that stop working after an hour. Your old and new pipelines both sign in this way. What changed is which role the note opens.</p>
+
+    <figure class="diagram-fig">
+      <div class="diagram-scroll">
+        <svg class="diagram seq" viewBox="0 0 800 340" role="img" aria-label="One sign-in with GitHub OIDC: the workflow run asks GitHub's note service for a note, gets a signed note back, sends the note and the role name to AWS's sign-in service, AWS checks the signature with the identity provider and the repo against the role's trust policy in IMS Root, then returns temporary keys that last one hour.">
+          <rect class="zone" x="12" y="8" width="384" height="324" rx="14"/>
+          <text class="zone-label" x="28" y="30">GitHub</text>
+          <rect class="zone" x="404" y="8" width="384" height="324" rx="14"/>
+          <text class="zone-label" x="420" y="30">AWS</text>
+
+          <rect class="box" x="30" y="44" width="160" height="56" rx="10"/>
+          <text class="t-title" x="110" y="67" text-anchor="middle">Workflow run</text>
+          <text class="t-sub" x="110" y="86" text-anchor="middle">on a GitHub computer</text>
+          <rect class="box" x="214" y="44" width="164" height="56" rx="10"/>
+          <text class="t-title" x="296" y="67" text-anchor="middle">Note service</text>
+          <text class="t-sub" x="296" y="86" text-anchor="middle">run by GitHub</text>
+          <rect class="box" x="420" y="44" width="160" height="56" rx="10"/>
+          <text class="t-title" x="500" y="67" text-anchor="middle">AWS sign-in</text>
+          <text class="t-sub" x="500" y="86" text-anchor="middle">STS</text>
+          <rect class="box" x="606" y="44" width="168" height="56" rx="10"/>
+          <text class="t-title" x="690" y="67" text-anchor="middle">IAM in IMS Root</text>
+          <text class="t-sub" x="690" y="86" text-anchor="middle">identity provider + role</text>
+
+          <line class="life" x1="110" y1="100" x2="110" y2="322"/>
+          <line class="life" x1="296" y1="100" x2="296" y2="322"/>
+          <line class="life" x1="500" y1="100" x2="500" y2="322"/>
+          <line class="life" x1="690" y1="100" x2="690" y2="322"/>
+
+          <g class="msg">
+            <path d="M110,136 L287,136"/>
+            <polygon points="287,131 296,136 287,141"/>
+            <text class="msg-label" x="203" y="128" text-anchor="middle">① ask for a note</text>
+            <text class="msg-note" x="203" y="153" text-anchor="middle">id-token: write</text>
+          </g>
+          <g class="msg back">
+            <path d="M296,184 L119,184"/>
+            <polygon points="119,179 110,184 119,189"/>
+            <text class="msg-label" x="203" y="176" text-anchor="middle">② signed note</text>
+          </g>
+          <g class="msg">
+            <path d="M110,228 L491,228"/>
+            <polygon points="491,223 500,228 491,233"/>
+            <text class="msg-label" x="122" y="220">③ note + role name</text>
+          </g>
+          <g class="msg">
+            <path d="M500,272 L681,272"/>
+            <polygon points="681,267 690,272 681,277"/>
+            <text class="msg-label" x="595" y="248" text-anchor="middle">④ signed by GitHub?</text>
+            <text class="msg-label" x="595" y="263" text-anchor="middle">right repo and audience?</text>
+          </g>
+          <g class="msg back">
+            <path d="M500,310 L119,310"/>
+            <polygon points="119,305 110,310 119,315"/>
+            <text class="msg-label" x="122" y="302">⑤ keys, valid 1 hour</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption><span class="swipe-hint">Swipe the picture sideways to see all of it. </span>One sign-in, start to finish. ① and ② happen inside GitHub; ③ to ⑤ between the run and AWS. In the new pipeline, the role checked in ④ is the reception copy of <code>iamr-net-prd-deploy</code>.</figcaption>
+    </figure>
+
+    <h3>The three pieces, and where each one is set up</h3>
+    <div class="glance">
+      <article class="card">
+        <p class="tag tag-plain">In GitHub · your workflow file</p>
+        <h4>Permission to ask for the note</h4>
+        <p><code>id-token: write</code> lets the run ask GitHub for a signed note. The <code>configure-aws-credentials</code> step then fetches the note and hands it to AWS, together with the role it wants (<code>role-to-assume</code>).</p>
+        <p class="where"><b>Where:</b> latest_cft_deployment.yml, lines 62–63 and 176–181. GitHub runs the note service itself, at <code>https://token.actions.tescoims.ghe.com</code>. There is nothing else to set up in GitHub, and no secret.</p>
+      </article>
+      <article class="card">
+        <p class="tag tag-plain">In AWS · once per account</p>
+        <h4>The identity provider</h4>
+        <p>Tells the account which GitHub to believe: its address, and the audience GitHub writes on its notes (<code>sts.amazonaws.com</code>). AWS uses it to check that GitHub really signed the note.</p>
+        <p class="where"><b>Where:</b> IAM → Identity providers → <code>token.actions.tescoims.ghe.com</code>, in IMS Root (390403857119). It isn’t in <code>iam-roles-template.yml</code>, so it was set up separately. The old way needs one in every account it signs in to; the new way only in IMS Root.</p>
+      </article>
+      <article class="card">
+        <p class="tag tag-plain">In AWS · one per job</p>
+        <h4>The role</h4>
+        <p>Its trust policy says which repos and branches may sign in with a note. Its permissions say what the run may do once it is in.</p>
+        <p class="where"><b>Where:</b> IAM → Roles → <code>iamr-net-prd-deploy</code> → the <i>Trust relationships</i> and <i>Permissions</i> tabs, in IMS Root. Written in <code>plat-eng/AWS-Landing-Zone</code> → <code>cloudformation/ims-root/iam-roles/iam-roles-template.yml</code>.</p>
+      </article>
+    </div>
+
+    <h3>What a typical OIDC role looks like</h3>
+    <p class="intro">The smallest complete set-up, written the way the client’s templates are (CloudFormation). The real roles follow the same pattern; they are in <a href="#roles-h">The roles up close</a>.</p>
+    <div class="exhibit">
+      <div data-panel="typical"></div>
+      <ol class="callouts">
+        <li class="sub">The identity provider</li>
+        <li><span>GitHub’s note service. AWS gets GitHub’s public signing keys from this address, to check signatures.</span></li>
+        <li><span>The audience AWS accepts on notes: <code>sts.amazonaws.com</code>, AWS’s sign-in service.</span></li>
+        <li class="sub">The role</li>
+        <li><span>How long the keys last: 1 hour here. AWS allows up to 12 hours, but only 1 hour after a swap.</span></li>
+        <li class="sub">Who may sign in · trust policy</li>
+        <li><span>Only notes the identity provider above can verify. The client’s roles name the IMS Root provider by its full address instead (<code>arn:aws:iam::390403857119:oidc-provider/…</code>).</span></li>
+        <li><span><code>sts:AssumeRoleWithWebIdentity</code>: sign in with a signed note instead of AWS keys.</span></li>
+        <li><span>The note must be addressed to AWS…</span></li>
+        <li><span>…and its <code>sub</code> must match. This example lets in only the main branch of AWS-Landing-Zone.</span></li>
+        <li class="sub">What it can do · permissions</li>
+        <li><span>Look-only here (<code>ReadOnlyAccess</code>). A real pipeline role gets what its job needs.</span></li>
+        <li class="after">An example only. An account can have just one identity provider per GitHub address, and IMS Root already has one, so the client’s template only adds roles.</li>
+      </ol>
+    </div>
+
+    <h3>What’s in the signed note</h3>
+    <div class="exhibit">
+      <div data-panel="claims"></div>
+      <ol class="callouts">
+        <li><span><code>iss</code>: who wrote the note. It must match the identity provider’s address.</span></li>
+        <li><span><code>aud</code>: who the note is for. It must be an audience the identity provider accepts, and match the role’s <code>aud</code> condition.</span></li>
+        <li><span><code>sub</code>: the line trust policies check most. It says which repo, and which branch, environment or pull request.</span></li>
+        <li><span>More facts about the run. The client’s roles don’t check these; they check only <code>aud</code> and <code>sub</code>.</span></li>
+      </ol>
+    </div>
+    <div class="table-wrap">
+      <table class="formats">
+        <caption>How GitHub writes <code>sub</code></caption>
+        <thead><tr><th scope="col">When the job runs from…</th><th scope="col"><code>sub</code> looks like</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">a branch (a push, or Run workflow)</th><td><code>repo:plat-eng/AWS-Landing-Zone:ref:refs/heads/main</code></td></tr>
+          <tr><th scope="row">a job that uses an environment</th><td><code>repo:plat-eng/AWS-Landing-Zone:environment:prod</code></td></tr>
+          <tr><th scope="row">a pull request</th><td><code>repo:plat-eng/AWS-Landing-Zone:pull_request</code></td></tr>
+          <tr><th scope="row">a tag</th><td><code>repo:plat-eng/AWS-Landing-Zone:ref:refs/tags/v1.0</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="intro">In a trust policy, <code>*</code> matches anything. <code>repo:plat-eng/AWS-Landing-Zone:*</code> lets in all four lines above; <code>repo:tescoims/*</code> lets in every repo of that organisation. The client’s ppe and tst roles also list each organisation as <code>repo:&lt;org&gt;@*</code>: GitHub writes <code>sub</code> differently for repos created since 15 July 2026, and that second form lets them in.</p>
+
+    <h3>How it helps</h3>
+    <div class="table-wrap">
+      <table class="side">
+        <thead><tr><th scope="col"></th><th scope="col" class="o">AWS keys saved as a GitHub secret</th><th scope="col" class="n">GitHub OIDC</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Stored in GitHub</th><td class="o" data-label="AWS keys in GitHub">A permanent key pair</td><td class="n" data-label="GitHub OIDC">Nothing</td></tr>
+          <tr><th scope="row">If it leaks</th><td class="o" data-label="AWS keys in GitHub">It keeps working until someone notices and deletes it</td><td class="n" data-label="GitHub OIDC">The note is only valid for a short time, and the keys it buys last an hour at most</td></tr>
+          <tr><th scope="row">Upkeep</th><td class="o" data-label="AWS keys in GitHub">Someone has to change the keys regularly</td><td class="n" data-label="GitHub OIDC">Nothing to change</td></tr>
+          <tr><th scope="row">Who decides which repo gets in</th><td class="o" data-label="AWS keys in GitHub">Anyone who can use the secret</td><td class="n" data-label="GitHub OIDC">The role’s trust policy, kept in AWS</td></tr>
+          <tr><th scope="row">Tracing</th><td class="o" data-label="AWS keys in GitHub">AWS’s activity log shows only the key’s owner</td><td class="n" data-label="GitHub OIDC">AWS’s activity log (CloudTrail) shows the repo and branch, and the new pipeline names each session after its run (<code>cft-&lt;run id&gt;</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="callout-box">Your old pipeline already used OIDC. The client’s problem is not OIDC itself, but which role the note opened: Control Tower’s master key, in every account. The new pipeline uses OIDC the way the client set it up: one identity provider in IMS Root, and roles made for the job.</p>
+  </section>
+
+  <section class="wide" aria-labelledby="run-h">
+    <h2 id="run-h">Watch one run</h2>
+    <p style="max-width: var(--measure)">Pick a pipeline and step through a run. The picture shows where the run is. Under it is the code that does that step, copied from the real files with their real line numbers.</p>
+    <div class="tabs" role="tablist" aria-label="Pipeline">
+      <button role="tab" id="tab-new" aria-selected="true" aria-controls="player">New pipeline</button>
+      <button role="tab" id="tab-old" aria-selected="false" aria-controls="player" tabindex="-1">Old pipeline</button>
+    </div>
+    <div class="player" id="player" role="tabpanel" aria-labelledby="tab-new">
+      <figure class="diagram-fig">
+        <div class="diagram-scroll">
+          <svg id="svg-new" class="diagram" viewBox="0 0 800 300" role="img" aria-label="New pipeline: GitHub sends a signed note to IMS Root and gets the reception badge, swaps it for iamr-net-prd-deploy in network prd, and that badge deploys the stack.">
+            <rect class="zone" x="292" y="8" width="500" height="284" rx="14"/>
+            <text class="zone-label" x="776" y="28" text-anchor="end">AWS · your organisation</text>
+            <g data-part="gh">
+              <rect class="box" x="16" y="104" width="176" height="92" rx="12"/>
+              <text class="t-title" x="104" y="136" text-anchor="middle">GitHub</text>
+              <text class="t-sub" x="104" y="156" text-anchor="middle">your workflow run</text>
+              <text class="t-mono" x="104" y="178" text-anchor="middle">plat-eng/AWS-Landing-Zone</text>
+            </g>
+            <g data-part="root">
+              <rect class="box" x="316" y="28" width="196" height="128" rx="12"/>
+              <text class="t-title" x="414" y="56" text-anchor="middle">IMS Root</text>
+              <text class="t-sub" x="414" y="75" text-anchor="middle">head office · 390403857119</text>
+              <rect class="chip-neutral" x="334" y="90" width="160" height="30" rx="15"/>
+              <text class="t-mono" x="414" y="109" text-anchor="middle">iamr-net-prd-deploy</text>
+              <text class="t-sub" x="414" y="142" text-anchor="middle">reception copy · can only swap</text>
+            </g>
+            <g data-part="net">
+              <rect class="box" x="604" y="96" width="176" height="184" rx="12"/>
+              <text class="t-title" x="692" y="124" text-anchor="middle">Network prd</text>
+              <text class="t-mono" x="692" y="143" text-anchor="middle">584477831165</text>
+              <rect class="chip-good" x="618" y="158" width="148" height="30" rx="15"/>
+              <text class="t-mono" x="692" y="177" text-anchor="middle">iamr-net-prd-deploy</text>
+            </g>
+            <g data-part="stack">
+              <rect class="stack" x="636" y="222" width="112" height="44" rx="6"/>
+              <text class="t-sub" x="692" y="240" text-anchor="middle">CloudFormation</text>
+              <text class="t-sub" x="692" y="256" text-anchor="middle">stack</text>
+            </g>
+            <g class="arrow" data-part="a1">
+              <path d="M192,138 C250,138 262,105 307,105"/>
+              <polygon points="307,100 316,105 307,110"/>
+              <text class="arrow-label" x="242" y="96" text-anchor="middle">① signed note</text>
+            </g>
+            <g class="arrow" data-part="a2">
+              <path d="M512,105 C560,105 560,173 595,173"/>
+              <polygon points="595,168 604,173 595,178"/>
+              <text class="arrow-label" x="558" y="94" text-anchor="middle">② swap badge</text>
+            </g>
+            <g class="arrow" data-part="a3">
+              <path d="M692,190 L692,212"/>
+              <polygon points="687,212 692,221 697,212"/>
+              <text class="arrow-label" x="700" y="209">③ deploys</text>
+            </g>
+          </svg>
+          <svg id="svg-old" class="diagram" viewBox="0 0 800 300" role="img" aria-label="Old pipeline: GitHub sends a signed note straight to Control Tower's master key in network prd. Control Tower owns that key, and its door list also lets in any tescoims repo on github.com." hidden>
+            <rect class="zone" x="292" y="8" width="500" height="284" rx="14"/>
+            <text class="zone-label" x="776" y="28" text-anchor="end">AWS · your organisation</text>
+            <g data-part="gh">
+              <rect class="box" x="16" y="104" width="176" height="92" rx="12"/>
+              <text class="t-title" x="104" y="136" text-anchor="middle">GitHub</text>
+              <text class="t-sub" x="104" y="156" text-anchor="middle">your workflow run</text>
+              <text class="t-mono" x="104" y="178" text-anchor="middle">plat-eng/AWS-Landing-Zone</text>
+            </g>
+            <g data-part="any">
+              <rect class="box box-bad" x="16" y="226" width="176" height="56" rx="10"/>
+              <text class="t-sub" x="104" y="249" text-anchor="middle">any repo of tescoims</text>
+              <text class="t-sub" x="104" y="267" text-anchor="middle">on github.com</text>
+            </g>
+            <g data-part="ct">
+              <rect class="box" x="316" y="28" width="196" height="96" rx="12"/>
+              <text class="t-title" x="414" y="56" text-anchor="middle">Control Tower</text>
+              <text class="t-sub" x="414" y="75" text-anchor="middle">head office · 390403857119</text>
+              <text class="t-sub" x="414" y="104" text-anchor="middle">owns the master key</text>
+            </g>
+            <g data-part="net">
+              <rect class="box" x="604" y="96" width="176" height="184" rx="12"/>
+              <text class="t-title" x="692" y="124" text-anchor="middle">Network prd</text>
+              <text class="t-mono" x="692" y="143" text-anchor="middle">584477831165</text>
+              <rect class="chip-bad" x="612" y="152" width="160" height="44" rx="10"/>
+              <text class="t-mono" x="692" y="170" text-anchor="middle">AWSControlTowerExecution</text>
+              <text class="t-sub t-bad" x="692" y="187" text-anchor="middle">master key · full admin</text>
+            </g>
+            <g data-part="stack">
+              <rect class="stack" x="636" y="222" width="112" height="44" rx="6"/>
+              <text class="t-sub" x="692" y="240" text-anchor="middle">CloudFormation</text>
+              <text class="t-sub" x="692" y="256" text-anchor="middle">stack</text>
+            </g>
+            <g class="arrow" data-part="a1">
+              <path d="M192,150 C400,150 470,174 595,174"/>
+              <polygon points="595,169 604,174 595,179"/>
+              <text class="arrow-label" x="340" y="140" text-anchor="middle">① signed note</text>
+            </g>
+            <g class="arrow bad dashed" data-part="aany">
+              <path d="M192,254 C430,254 520,190 595,186"/>
+              <polygon points="595,181 604,186 595,191"/>
+              <text class="arrow-label" x="200" y="243">also let in</text>
+            </g>
+            <g class="arrow bad dashed" data-part="act">
+              <path d="M512,70 C620,70 692,60 692,86"/>
+              <polygon points="687,86 692,95 697,86"/>
+              <text class="arrow-label" x="600" y="54" text-anchor="middle">owns it · may reset it</text>
+            </g>
+            <g class="arrow" data-part="a3">
+              <path d="M692,198 L692,212"/>
+              <polygon points="687,212 692,221 697,212"/>
+              <text class="arrow-label" x="700" y="211">② deploys</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption id="fig-cap"></figcaption>
+      </figure>
+      <div class="stepper">
+        <div class="step-nav">
+          <button class="nav" id="prev" type="button">← Back</button>
+          <ol class="dots" id="dots" aria-label="Steps"></ol>
+          <button class="nav primary" id="next" type="button">Next →</button>
+        </div>
+        <div class="step-body" aria-live="polite">
+          <p class="step-count" id="step-count"></p>
+          <h3 id="step-title"></h3>
+          <p id="step-text"></p>
+          <div class="step-code" id="step-code"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="code-h">
+    <h2 id="code-h">The pipeline files, line by line</h2>
+    <p class="intro">The numbers on the highlighted lines match the notes next to each file.</p>
+    <div class="group">
+      <h3 class="sub-old">Old pipeline</h3>
+      <div class="exhibit">
+        <div data-panel="oldwf"></div>
+        <ol class="callouts">
+          <li><span>You pick <b>NETWORK</b> in the Run workflow form. This line only finds the <b>name</b> of a GitHub secret: <code>NETWORK_SERVICES_ROLE</code>.</span></li>
+          <li><span>A ready-made step from AWS (<code>configure-aws-credentials</code>). It asks GitHub for a signed note about this run and gives it to AWS, together with the badge it wants.</span></li>
+          <li><span>The badge comes out of the secret. Its value is <code>arn:aws:iam::584477831165:role/AWSControlTowerExecution</code>: Control Tower’s master key in network prd.</span></li>
+        </ol>
+      </div>
+    </div>
+    <div class="group">
+      <h3 class="sub-new">New pipeline</h3>
+      <div class="exhibit">
+        <div data-panel="newwf"></div>
+        <ol class="callouts">
+          <li><span>Lets the run ask GitHub for a signed note. The old file had this too.</span></li>
+          <li><span>The head office account number, written once near the top of the file. Line 131 uses it as <code>$IMS_ROOT_ACCOUNT</code>.</span></li>
+          <li><span>You still pick <b>NETWORK</b>. It now means the badge <code>iamr-net-prd-deploy</code> in account 584477831165. No secret.</span></li>
+          <li><span>Builds the two full badge names: the reception copy in IMS Root (390403857119) and the working copy in the network account.</span></li>
+          <li><span><b>Hop 1.</b> The same AWS step as before, now pointed at the reception copy in IMS Root.</span></li>
+          <li><span><b>Hop 2.</b> The same AWS step again, this time to swap badges.</span></li>
+          <li><span><code>role-chaining: true</code> means: use the badge from hop 1, don’t ask GitHub again.</span></li>
+          <li><span>The network badge lasts one hour, the longest AWS allows after a swap.</span></li>
+          <li><span>Swap without name tags, because the network badge’s door list doesn’t accept them.</span></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="roles-h">
+    <h2 id="roles-h">The roles up close</h2>
+    <p class="intro">Every role has two lists. The <b>trust policy</b> says who may pick the badge up. The <b>permissions</b> say what the badge lets you do. Here are both lists for the three roles your pipelines deal with, copied from the IAM console and the client’s templates.</p>
+    <nav class="jump" aria-label="Roles in this section">
+      <a href="#role-ct"><code>AWSControlTowerExecution</code><span class="tag tag-old">old</span></a>
+      <a href="#role-deploy"><code>iamr-net-prd-deploy</code><span class="tag tag-new">new · deploy</span></a>
+      <a href="#role-read"><code>iamr-net-prd-read</code><span class="tag tag-new">new · read</span></a>
+    </nav>
+
+    <div class="glance">
+      <article class="card card-old">
+        <p class="tag tag-old">Old · Control Tower’s master key</p>
+        <h3><code>AWSControlTowerExecution</code></h3>
+        <dl class="kv">
+          <div><dt>Lives in</dt><dd>Every account Control Tower looks after. Shown here: network prd, 584477831165.</dd></div>
+          <div><dt>Who may use it</dt><dd>The head office account, plus two GitHub entries added later: AWS-Landing-Zone on your GitHub, and <b>any</b> <code>tescoims</code> repo on public github.com.</dd></div>
+          <div><dt>What it can do</dt><dd>Everything (<code>AdministratorAccess</code>).</dd></div>
+          <div><dt>Control Tower’s safety rules</dt><dd>Make an exception for it.</dd></div>
+          <div><dt>Longest session</dt><dd>1 hour.</dd></div>
+          <div><dt>Belongs to</dt><dd>Control Tower.</dd></div>
+          <div><dt>Used by</dt><dd>The old pipelines: 17 of the 19 role secrets.</dd></div>
+        </dl>
+      </article>
+      <article class="card card-new">
+        <p class="tag tag-new">New · deploy</p>
+        <h3><code>iamr-net-prd-deploy</code></h3>
+        <dl class="kv">
+          <div><dt>Lives in</dt><dd>Two places: a reception copy in IMS Root (390403857119) and the working copy in network prd (584477831165).</dd></div>
+          <div><dt>Who may use it</dt><dd>Reception copy: only AWS-Landing-Zone and ims-app-identity on your GitHub. Working copy: only IMS Root.</dd></div>
+          <div><dt>What it can do</dt><dd>Reception copy: only swap into the working copy. Working copy: everything in network prd (<code>AdministratorAccess</code>).</dd></div>
+          <div><dt>Control Tower’s safety rules</dt><dd>Apply.</dd></div>
+          <div><dt>Longest session</dt><dd>1 hour.</dd></div>
+          <div><dt>Belongs to</dt><dd>The client’s templates: <code>iam-roles-template.yml</code> and the network account’s template.</dd></div>
+          <div><dt>Used by</dt><dd>The new pipelines, in every box.</dd></div>
+        </dl>
+      </article>
+      <article class="card card-new">
+        <p class="tag tag-new">New · read only</p>
+        <h3><code>iamr-net-prd-read</code></h3>
+        <dl class="kv">
+          <div><dt>Lives in</dt><dd>The same two places as the deploy role.</dd></div>
+          <div><dt>Who may use it</dt><dd>The same as the deploy role.</dd></div>
+          <div><dt>What it can do</dt><dd>Reception copy: only swap into the working copy. Working copy: look at everything in network prd, change nothing (<code>ReadOnlyAccess</code>).</dd></div>
+          <div><dt>Control Tower’s safety rules</dt><dd>Apply.</dd></div>
+          <div><dt>Longest session</dt><dd>1 hour.</dd></div>
+          <div><dt>Belongs to</dt><dd>The same templates as the deploy role.</dd></div>
+          <div><dt>Used by</dt><dd>None of your pipelines yet. It is there for jobs that only need to look.</dd></div>
+        </dl>
+      </article>
+    </div>
+
+    <article class="role" id="role-ct">
+      <div class="role-head">
+        <p class="tag tag-old">Old pipeline · Control Tower’s master key</p>
+        <h3><code>AWSControlTowerExecution</code></h3>
+        <p>Control Tower keeps this role in every account it looks after, and uses it to set the account up and repair it. The old pipelines borrowed it. These details are from the IAM console in network prd.</p>
+        <dl class="facts">
+          <div class="full"><dt>ARN</dt><dd><code>arn:aws:iam::584477831165:role/AWSControlTowerExecution</code></dd></div>
+          <div><dt>Created</dt><dd>14 July 2025</dd></div>
+          <div><dt>Maximum session</dt><dd>1 hour</dd></div>
+          <div><dt>Permissions boundary</dt><dd>Not set</dd></div>
+        </dl>
+      </div>
+      <h4>Who may pick it up · trust policy</h4>
+      <div class="exhibit">
+        <div data-panel="ct_trust"></div>
+        <ol class="callouts">
+          <li><span>The head office account, 390403857119. Anyone there who is allowed to switch roles can use this key: Control Tower itself, and admins in IMS Root.</span></li>
+          <li><span>A plain role switch, from a role in that account.</span></li>
+          <li class="sub">Added later, not by Control Tower</li>
+          <li><span>Notes signed by your GitHub, <code>tescoims.ghe.com</code>. For this to work, network prd needs its own GitHub sign-in set up (an <i>identity provider</i>). The old way needs one in every account it signs in to.</span></li>
+          <li><span>The note must be addressed to AWS (<code>aud</code>, the audience).</span></li>
+          <li><span>…and be about the AWS-Landing-Zone repo, from any branch (<code>sub</code>, who the note is about).</span></li>
+          <li><span>Notes signed by public github.com, a different GitHub from yours…</span></li>
+          <li><span>…about <b>any repo</b> in the <code>tescoims</code> organisation there, from any branch.</span></li>
+        </ol>
+      </div>
+      <h4>What it can do · permissions</h4>
+      <div class="exhibit">
+        <div class="shots"><div data-panel="ct_perms"></div><div data-panel="ct_admin"></div></div>
+        <ol class="callouts">
+          <li><span>One permissions policy: <code>AdministratorAccess</code>, the AWS managed policy meant for full administrators.</span></li>
+          <li><span>No permissions boundary, so nothing caps what that policy allows.</span></li>
+          <li class="sub">Inside AdministratorAccess</li>
+          <li><span><code>"Action": "*"</code>: every action in every AWS service: create, change, delete and read.</span></li>
+          <li><span><code>"Resource": "*"</code>: on everything in the account.</span></li>
+        </ol>
+      </div>
+      <h4>Why Control Tower’s safety rules don’t stop it</h4>
+      <div class="exhibit">
+        <div data-panel="ct_scp"></div>
+        <ol class="callouts">
+          <li><span>A safety rule (an SCP) is a list of things <b>nobody may do</b>. It applies to every role in the accounts it covers, even to full administrators.</span></li>
+          <li><span>This one: nobody may switch off or change AWS Config, the service that records every setting change in the account…</span></li>
+          <li><span>…<b>unless</b> they are <code>AWSControlTowerExecution</code>. All of Control Tower’s mandatory blocking rules carry this exception, so that Control Tower can manage its own set-up. A pipeline holding this key can do the same: change or switch off Control Tower’s own logs, records, alerts and roles.</span></li>
+          <li class="after">This rule (GRCONFIGENABLED) is copied from the AWS Control Tower documentation. Your organisation may have more rules of its own.</li>
+        </ol>
+      </div>
+    </article>
+
+    <article class="role" id="role-deploy">
+      <div class="role-head">
+        <p class="tag tag-new">New pipeline · deploy</p>
+        <h3><code>iamr-net-prd-deploy</code></h3>
+        <p>The badge made for deploying to network prd. It exists twice, and the new pipeline uses both copies in turn: it checks in with the reception copy, then swaps it for the working copy, which does the deploying.</p>
+        <dl class="facts">
+          <div class="full"><dt>Reception copy</dt><dd><code>arn:aws:iam::390403857119:role/iamr-net-prd-deploy</code></dd></div>
+          <div class="full"><dt>Working copy</dt><dd><code>arn:aws:iam::584477831165:role/iamr-net-prd-deploy</code></dd></div>
+          <div><dt>Maximum session</dt><dd>1 hour (the templates don’t change it)</dd></div>
+          <div><dt>Permissions boundary</dt><dd>Not set</dd></div>
+        </dl>
+      </div>
+      <h4>Reception copy, in IMS Root</h4>
+      <div class="exhibit">
+        <div data-panel="dep_rec"></div>
+        <ol class="callouts">
+          <li><span>The role’s name. The working copy has the same name.</span></li>
+          <li class="sub">Who may pick it up</li>
+          <li><span>Notes signed by your GitHub, checked by IMS Root’s GitHub sign-in set-up. In the new way, only IMS Root needs one.</span></li>
+          <li><span>The note must be addressed to AWS (<code>GitHubAudience</code> = <code>sts.amazonaws.com</code>)…</span></li>
+          <li><span>…and be about <code>ims-app/ims-app-identity</code>, from any branch…</span></li>
+          <li><span>…or about <code>plat-eng/AWS-Landing-Zone</code>, your repo, from any branch. Nothing else gets in.</span></li>
+          <li class="sub">What it can do</li>
+          <li><span><code>sts:AssumeRole</code>: switch to another role…</span></li>
+          <li><span><code>sts:TagSession</code>: attach name tags while switching. Allowed here, but the working copy doesn’t accept tags, so the pipeline switches without them.</span></li>
+          <li><span><code>sts:GetCallerIdentity</code>: ask “who am I?”. Harmless.</span></li>
+          <li><span>…and the only role it may switch to is <code>iamr-net-prd-deploy</code> in network prd (<code>prdnwaccid</code> = 584477831165). It can’t touch anything in IMS Root or anywhere else.</span></li>
+          <li class="after">For network ppe and tst the reception copies accept more: any repo of 13 GitHub organisations on your GitHub (archive, eng-lib, eng-tf, fin, ims-api, ims-app, ims-data, ims-plat, ims-tool, plat-eng, tu-plat, tu-data and test), from any branch.</li>
+        </ol>
+      </div>
+      <h4>Working copy, in network prd</h4>
+      <div class="exhibit">
+        <div data-panel="dep_work"></div>
+        <ol class="callouts">
+          <li><span>The working copy. This is the PPE file you shared, so it says ppe; network prd’s copy should be the same with prd in the name.</span></li>
+          <li class="sub">Who may pick it up</li>
+          <li><span>The head office account (<code>SourceAccountId</code> = 390403857119): anyone there who is allowed to switch into this role…</span></li>
+          <li><span>…with a plain switch only. There is no <code>sts:TagSession</code>, so no name tags.</span></li>
+          <li><span>The reception copy, named directly. GitHub itself is not on this list, so it can’t come here without checking in at IMS Root first.</span></li>
+          <li class="sub">What it can do</li>
+          <li><span><code>AdministratorAccess</code>: everything in this account, the same policy the master key has. The difference: Control Tower’s safety rules apply to this role, and the only way in is through IMS Root.</span></li>
+        </ol>
+      </div>
+    </article>
+
+    <article class="role" id="role-read">
+      <div class="role-head">
+        <p class="tag tag-new">New · read only</p>
+        <h3><code>iamr-net-prd-read</code></h3>
+        <p>The look-but-don’t-touch twin of the deploy role: the same two copies and the same door lists, but the working copy can only read. None of your pipelines uses it yet.</p>
+        <dl class="facts">
+          <div class="full"><dt>Reception copy</dt><dd><code>arn:aws:iam::390403857119:role/iamr-net-prd-read</code></dd></div>
+          <div class="full"><dt>Working copy</dt><dd><code>arn:aws:iam::584477831165:role/iamr-net-prd-read</code></dd></div>
+          <div><dt>Maximum session</dt><dd>1 hour (the templates don’t change it)</dd></div>
+          <div><dt>Permissions boundary</dt><dd>Not set</dd></div>
+        </dl>
+      </div>
+      <h4>Reception copy, in IMS Root</h4>
+      <div class="exhibit">
+        <div data-panel="read_rec"></div>
+        <ol class="callouts">
+          <li><span>The read role’s name.</span></li>
+          <li><span>The same GitHub check as the deploy role…</span></li>
+          <li><span>…and the same two repos, from any branch.</span></li>
+          <li><span>Its only permissions policy, <code>assume-network-prd-read</code>…</span></li>
+          <li><span>…lets it switch to just one role: <code>iamr-net-prd-read</code> in network prd.</span></li>
+        </ol>
+      </div>
+      <h4>Working copy, in network prd</h4>
+      <div class="exhibit">
+        <div data-panel="read_work"></div>
+        <ol class="callouts">
+          <li><span>The working copy (the PPE file again; network prd’s should be the same with prd in the name).</span></li>
+          <li><span>Who may pick it up: the head office account, with a plain switch…</span></li>
+          <li><span>…and the read role’s reception copy, named directly.</span></li>
+          <li><span><code>ReadOnlyAccess</code>: an AWS managed policy that lets you look at settings and data across AWS services, but not create, change or delete anything. A job with this role could look at a stack, but not create a change set or deploy.</span></li>
+        </ol>
+      </div>
+    </article>
+  </section>
+
+  <section aria-labelledby="side-h">
+    <h2 id="side-h">Old and new side by side</h2>
+    <div class="table-wrap">
+      <table class="side">
+        <thead><tr><th scope="col"></th><th scope="col" class="o">Old pipeline</th><th scope="col" class="n">New pipeline</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Where GitHub is checked</th><td class="o" data-label="Old pipeline">In each account, on the master key’s door list</td><td class="n" data-label="New pipeline">Only at IMS Root</td></tr>
+          <tr><th scope="row">Badge that does the work</th><td class="o" data-label="Old pipeline"><code>AWSControlTowerExecution</code>, Control Tower’s master key</td><td class="n" data-label="New pipeline"><code>iamr-net-prd-deploy</code>, made for pipelines</td></tr>
+          <tr><th scope="row">What the badge can do</th><td class="o" data-label="Old pipeline">Everything (<code>AdministratorAccess</code>), in every account it is used in</td><td class="n" data-label="New pipeline">Everything in network prd (<code>AdministratorAccess</code>); the read role can only look</td></tr>
+          <tr><th scope="row">Control Tower’s safety rules</th><td class="o" data-label="Old pipeline">Make an exception for this key</td><td class="n" data-label="New pipeline">Apply</td></tr>
+          <tr><th scope="row">Which repos get in</th><td class="o" data-label="Old pipeline">AWS-Landing-Zone on your GitHub, and <b>any</b> repo of <code>tescoims</code> on public github.com</td><td class="n" data-label="New pipeline">For network prd: only AWS-Landing-Zone and ims-app-identity, on your GitHub</td></tr>
+          <tr><th scope="row">GitHub secrets for the accounts</th><td class="o" data-label="Old pipeline">18, one badge name per account</td><td class="n" data-label="New pipeline">None</td></tr>
+          <tr><th scope="row">Who owns the badge</th><td class="o" data-label="Old pipeline">Control Tower, which may change it</td><td class="n" data-label="New pipeline">Your own templates: <code>iam-roles-template.yml</code> and the network account’s template</td></tr>
+          <tr><th scope="row">Hops</th><td class="o" data-label="Old pipeline">One</td><td class="n" data-label="New pipeline">Two: check in, then swap</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="next-h">
+    <h2 id="next-h">What to do next</h2>
+    <ol class="todo">
+      <li>Ask the client to confirm that <code>iamr-net-prd-deploy</code> and <code>iamr-net-tst-deploy</code> exist in network prd (584477831165) and tst (762649987860). You shared the PPE file only.</li>
+      <li>Commit the new <code>latest_cft_deployment.yml</code> and run it once with <b>Deploy = no</b> on PPE-NETWORK. The Prepare box should show <b>Signed in as iamr-net-ppe-deploy</b>.</li>
+      <li>The other 14 accounts (directory, security, shared services, log archive, core audit, monitoring, backup, CRV and sandbox, with their dev and ppe versions) only have the master key. The client has to create <code>iamr</code> roles for them first; until then they are not in the new pipeline’s account list.</li>
+      <li>MANAGEMENT already uses an <code>iamr</code> role, <code>iamr-plat-prd-deploy</code> in IMS Root. If you deploy there, it can be added to the new pipeline as a one-step sign-in.</li>
+      <li>Large templates are first uploaded to S3, and that step still uses the secret <code>S3_ACCESS_GITHUB_ROLE</code>. It holds <code>S3-github-actions-oidc-role</code> in the shared services account (356666487118): a role made for this job, not the master key. Ask the client whether it should also go through IMS Root.</li>
+      <li>When nothing uses the old way any more, ask the Control Tower owner to remove the GitHub entries from <code>AWSControlTowerExecution</code>’s door list in each account, and delete the old role secrets.</li>
+    </ol>
+  </section>
+
+  <footer>Code is copied from latest_cft_deployment.yml (old: the _6 file; new: the converted file), iam-roles-template.yml and nw-ppe-template.yml as shared on 30 October 2026. The AWSControlTowerExecution details come from the IAM console copy you shared (Network-Services-role_details.txt). The AdministratorAccess policy text and the GRCONFIGENABLED safety rule come from the AWS documentation (layout tidied). The signed note and the run log are shortened examples.</footer>
+</main>
+
+<script>
+const DATA = {"panels": {"oldwf": {"file": "latest_cft_deployment.yml", "sub": "old pipeline", "lang": "yaml", "rows": [{"n": 110, "t": "      - name: Set role from alias", "m": null}, {"n": 111, "t": "        id: setrole", "m": null}, {"n": 112, "t": "        run: |", "m": null}, {"gap": "region check"}, {"n": 126, "t": "          case \"$ROLE_ALIAS\" in", "m": null}, {"n": 127, "t": "            NETWORK)            secret=NETWORK_SERVICES_ROLE ;;", "m": 1}, {"gap": "13 more accounts"}, {"n": 141, "t": "            TST-NETWORK)        secret=TST_NETWORK_SERVICE_ROLE ;;", "m": null}, {"n": 142, "t": "            PPE-NETWORK)        secret=PPE_NETWORK_SERVICE_ROLE ;;", "m": null}, {"gap": "2 more accounts and the error case"}, {"n": 150, "t": "          esac", "m": null}, {"n": 151, "t": "          echo \"🔑 Role alias : $ROLE_ALIAS → secret $secret\"", "m": null}, {"n": 152, "t": "          echo \"secret=$secret\" >> \"$GITHUB_OUTPUT\"", "m": null}, {"gap": "the Find template and params step"}, {"n": 197, "t": "      - name: Configure AWS credentials for deployment", "m": 2}, {"n": 198, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 199, "t": "        with:", "m": null}, {"n": 200, "t": "          role-to-assume: ${{ secrets[steps.setrole.outputs.secret] }}", "m": 3}, {"n": 201, "t": "          role-session-name: cft_deployment", "m": null}, {"n": 202, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "old"}, "newwf": {"file": "latest_cft_deployment.yml", "sub": "new pipeline", "lang": "yaml", "rows": [{"n": 62, "t": "permissions:", "m": null}, {"n": 63, "t": "  id-token: write", "m": 1}, {"n": 64, "t": "  contents: read", "m": null}, {"gap": "one run per stack at a time"}, {"n": 71, "t": "env:", "m": null}, {"n": 72, "t": "  BUCKET_NAME: ss-cfts3", "m": null}, {"n": 73, "t": "  IMS_ROOT_ACCOUNT: \"390403857119\"   # where GitHub signs in; the iamr roles there switch into the target accounts", "m": 2}, {"gap": "more settings, then the Prepare job starts"}, {"n": 103, "t": "      - name: Pick the roles", "m": null}, {"gap": "region check and comments"}, {"n": 119, "t": "          case \"$ROLE_ALIAS\" in", "m": null}, {"n": 120, "t": "            NETWORK)     role=iamr-net-prd-deploy; account=584477831165 ;;", "m": 3}, {"n": 121, "t": "            PPE-NETWORK) role=iamr-net-ppe-deploy; account=097357356161 ;;", "m": null}, {"n": 122, "t": "            TST-NETWORK) role=iamr-net-tst-deploy; account=762649987860 ;;", "m": null}, {"gap": "the error case"}, {"n": 128, "t": "          esac", "m": null}, {"n": 129, "t": "          echo \"🔑 Role alias : $ROLE_ALIAS → $role in account $account (signed in through IMS Root $IMS_ROOT_ACCOUNT)\"", "m": null}, {"n": 130, "t": "          {", "m": null}, {"n": 131, "t": "            echo \"broker_role=arn:aws:iam::$IMS_ROOT_ACCOUNT:role/$role\"", "m": 4}, {"n": 132, "t": "            echo \"target_role=arn:aws:iam::$account:role/$role\"", "m": null}, {"n": 133, "t": "            echo \"account=$account\"", "m": null}, {"n": 134, "t": "          } >> \"$GITHUB_OUTPUT\"", "m": null}, {"gap": "the Find template and params step"}, {"n": 176, "t": "      - name: Sign in to IMS Root", "m": 5}, {"n": 177, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 178, "t": "        with:", "m": null}, {"n": 179, "t": "          role-to-assume: ${{ steps.setrole.outputs.broker_role }}", "m": null}, {"n": 180, "t": "          role-session-name: ims-root-${{ github.run_id }}", "m": null}, {"n": 181, "t": "          aws-region: ${{ env.REGION }}", "m": null}, {"n": 182, "t": "", "m": null}, {"n": 183, "t": "      - name: Switch to the deploy role in the target account", "m": 6}, {"n": 184, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 185, "t": "        with:", "m": null}, {"n": 186, "t": "          role-chaining: true", "m": 7}, {"n": 187, "t": "          role-to-assume: ${{ steps.setrole.outputs.target_role }}", "m": null}, {"n": 188, "t": "          role-session-name: cft-${{ github.run_id }}", "m": null}, {"n": 189, "t": "          role-duration-seconds: 3600", "m": 8}, {"n": 190, "t": "          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession", "m": 9}, {"n": 191, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "new"}, "typical": {"file": "A typical GitHub OIDC set-up", "sub": "example · CloudFormation", "lang": "yaml", "rows": [{"n": 1, "t": "Resources:", "m": null}, {"n": 2, "t": "  GitHubIdentityProvider:", "m": null}, {"n": 3, "t": "    Type: AWS::IAM::OIDCProvider", "m": null}, {"n": 4, "t": "    Properties:", "m": null}, {"n": 5, "t": "      Url: https://token.actions.tescoims.ghe.com", "m": 1}, {"n": 6, "t": "      ClientIdList:", "m": null}, {"n": 7, "t": "        - sts.amazonaws.com", "m": 2}, {"n": 8, "t": "", "m": null}, {"n": 9, "t": "  GitHubExampleRole:", "m": null}, {"n": 10, "t": "    Type: AWS::IAM::Role", "m": null}, {"n": 11, "t": "    Properties:", "m": null}, {"n": 12, "t": "      RoleName: example-github-role", "m": null}, {"n": 13, "t": "      MaxSessionDuration: 3600", "m": 3}, {"n": 14, "t": "      AssumeRolePolicyDocument:", "m": null}, {"n": 15, "t": "        Version: \"2012-10-17\"", "m": null}, {"n": 16, "t": "        Statement:", "m": null}, {"n": 17, "t": "          - Effect: Allow", "m": null}, {"n": 18, "t": "            Principal:", "m": null}, {"n": 19, "t": "              Federated: !Ref GitHubIdentityProvider", "m": 4}, {"n": 20, "t": "            Action: sts:AssumeRoleWithWebIdentity", "m": 5}, {"n": 21, "t": "            Condition:", "m": null}, {"n": 22, "t": "              StringEquals:", "m": null}, {"n": 23, "t": "                token.actions.tescoims.ghe.com:aud: sts.amazonaws.com", "m": 6}, {"n": 24, "t": "              StringLike:", "m": null}, {"n": 25, "t": "                token.actions.tescoims.ghe.com:sub: repo:plat-eng/AWS-Landing-Zone:ref:refs/heads/main", "m": 7}, {"n": 26, "t": "      ManagedPolicyArns:", "m": null}, {"n": 27, "t": "        - arn:aws:iam::aws:policy/ReadOnlyAccess", "m": 8}], "tone": ""}, "claims": {"file": "The signed note, opened up", "sub": "example for one run · shortened", "lang": "yaml", "rows": [{"n": null, "t": "iss: https://token.actions.tescoims.ghe.com", "m": 1}, {"n": null, "t": "aud: sts.amazonaws.com", "m": 2}, {"n": null, "t": "sub: repo:plat-eng/AWS-Landing-Zone:ref:refs/heads/main", "m": 3}, {"n": null, "t": "repository: plat-eng/AWS-Landing-Zone", "m": 4}, {"n": null, "t": "ref: refs/heads/main", "m": null}, {"n": null, "t": "event_name: workflow_dispatch", "m": null}, {"n": null, "t": "workflow: CloudFormation Stack using S3 as required", "m": null}, {"n": null, "t": "actor: <who clicked Run workflow>", "m": null}, {"n": null, "t": "run_id: <this run’s number>", "m": null}], "tone": ""}, "ct_trust": {"file": "AWSControlTowerExecution · Trust relationships", "sub": "IAM console · network prd", "lang": "json", "rows": [{"n": 1, "t": "{", "m": null}, {"n": 2, "t": "    \"Version\": \"2012-10-17\",", "m": null}, {"n": 3, "t": "    \"Statement\": [", "m": null}, {"n": 4, "t": "        {", "m": null}, {"n": 5, "t": "            \"Effect\": \"Allow\",", "m": null}, {"n": 6, "t": "            \"Principal\": {", "m": null}, {"n": 7, "t": "                \"AWS\": \"arn:aws:iam::390403857119:root\"", "m": 1}, {"n": 8, "t": "            },", "m": null}, {"n": 9, "t": "            \"Action\": \"sts:AssumeRole\"", "m": 2}, {"n": 10, "t": "        },", "m": null}, {"n": 11, "t": "        {", "m": null}, {"n": 12, "t": "            \"Sid\": \"AllowNewGithubOIDC\",", "m": null}, {"n": 13, "t": "            \"Effect\": \"Allow\",", "m": null}, {"n": 14, "t": "            \"Principal\": {", "m": null}, {"n": 15, "t": "                \"Federated\": \"arn:aws:iam::584477831165:oidc-provider/token.actions.tescoims.ghe.com\"", "m": 3}, {"n": 16, "t": "            },", "m": null}, {"n": 17, "t": "            \"Action\": \"sts:AssumeRoleWithWebIdentity\",", "m": null}, {"n": 18, "t": "            \"Condition\": {", "m": null}, {"n": 19, "t": "                \"StringEquals\": {", "m": null}, {"n": 20, "t": "                    \"token.actions.tescoims.ghe.com:aud\": \"sts.amazonaws.com\"", "m": 4}, {"n": 21, "t": "                },", "m": null}, {"n": 22, "t": "                \"StringLike\": {", "m": null}, {"n": 23, "t": "                    \"token.actions.tescoims.ghe.com:sub\": \"repo:plat-eng/AWS-Landing-Zone:*\"", "m": 5}, {"n": 24, "t": "                }", "m": null}, {"n": 25, "t": "            }", "m": null}, {"n": 26, "t": "        },", "m": null}, {"n": 27, "t": "        {", "m": null}, {"n": 28, "t": "            \"Sid\": \"AllowGithubOIDC\",", "m": null}, {"n": 29, "t": "            \"Effect\": \"Allow\",", "m": null}, {"n": 30, "t": "            \"Principal\": {", "m": null}, {"n": 31, "t": "                \"Federated\": \"arn:aws:iam::584477831165:oidc-provider/token.actions.githubusercontent.com\"", "m": 6}, {"n": 32, "t": "            },", "m": null}, {"n": 33, "t": "            \"Action\": \"sts:AssumeRoleWithWebIdentity\",", "m": null}, {"n": 34, "t": "            \"Condition\": {", "m": null}, {"n": 35, "t": "                \"StringEquals\": {", "m": null}, {"n": 36, "t": "                    \"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\"", "m": null}, {"n": 37, "t": "                },", "m": null}, {"n": 38, "t": "                \"StringLike\": {", "m": null}, {"n": 39, "t": "                    \"token.actions.githubusercontent.com:sub\": \"repo:tescoims/*\"", "m": 7}, {"n": 40, "t": "                }", "m": null}, {"n": 41, "t": "            }", "m": null}, {"n": 42, "t": "        }", "m": null}, {"n": 43, "t": "    ]", "m": null}, {"n": 44, "t": "}", "m": null}], "tone": "old"}, "ct_perms": {"file": "AWSControlTowerExecution · Permissions", "sub": "IAM console · network prd", "lang": "plain", "rows": [{"n": null, "t": "Permissions policies (1)", "m": null}, {"n": null, "t": "AdministratorAccess          AWS managed - job function", "m": 1}, {"n": null, "t": "Permissions boundary (not set)", "m": 2}], "tone": "old"}, "ct_admin": {"file": "AdministratorAccess · policy document", "sub": "AWS managed policy", "lang": "json", "rows": [{"n": 1, "t": "{", "m": null}, {"n": 2, "t": "    \"Version\": \"2012-10-17\",", "m": null}, {"n": 3, "t": "    \"Statement\": [", "m": null}, {"n": 4, "t": "        {", "m": null}, {"n": 5, "t": "            \"Effect\": \"Allow\",", "m": null}, {"n": 6, "t": "            \"Action\": \"*\",", "m": 3}, {"n": 7, "t": "            \"Resource\": \"*\"", "m": 4}, {"n": 8, "t": "        }", "m": null}, {"n": 9, "t": "    ]", "m": null}, {"n": 10, "t": "}", "m": null}], "tone": ""}, "ct_scp": {"file": "Control Tower safety rule (SCP) · GRCONFIGENABLED", "sub": "AWS documentation · mandatory control", "lang": "json", "rows": [{"n": 1, "t": "{", "m": null}, {"n": 2, "t": "    \"Version\": \"2012-10-17\",", "m": null}, {"n": 3, "t": "    \"Statement\": [", "m": null}, {"n": 4, "t": "        {", "m": null}, {"n": 5, "t": "            \"Sid\": \"GRCONFIGENABLED\",", "m": null}, {"n": 6, "t": "            \"Effect\": \"Deny\",", "m": 1}, {"n": 7, "t": "            \"Action\": [", "m": 2}, {"n": 8, "t": "                \"config:DeleteConfigurationRecorder\",", "m": null}, {"n": 9, "t": "                \"config:DeleteDeliveryChannel\",", "m": null}, {"n": 10, "t": "                \"config:DeleteRetentionConfiguration\",", "m": null}, {"n": 11, "t": "                \"config:PutConfigurationRecorder\",", "m": null}, {"n": 12, "t": "                \"config:PutDeliveryChannel\",", "m": null}, {"n": 13, "t": "                \"config:PutRetentionConfiguration\",", "m": null}, {"n": 14, "t": "                \"config:StopConfigurationRecorder\"", "m": null}, {"n": 15, "t": "            ],", "m": null}, {"n": 16, "t": "            \"Resource\": [\"*\"],", "m": null}, {"n": 17, "t": "            \"Condition\": {", "m": null}, {"n": 18, "t": "                \"ArnNotLike\": {", "m": null}, {"n": 19, "t": "                    \"aws:PrincipalARN\": \"arn:aws:iam::*:role/AWSControlTowerExecution\"", "m": 3}, {"n": 20, "t": "                }", "m": null}, {"n": 21, "t": "            }", "m": null}, {"n": 22, "t": "        }", "m": null}, {"n": 23, "t": "    ]", "m": null}, {"n": 24, "t": "}", "m": null}], "tone": ""}, "dep_rec": {"file": "iam-roles-template.yml", "sub": "IMS Root · plat-eng/AWS-Landing-Zone", "lang": "yaml", "rows": [{"n": 3134, "t": "  PRDNWDeployRole:", "m": null}, {"n": 3135, "t": "    Type: AWS::IAM::Role", "m": null}, {"n": 3136, "t": "    Properties:", "m": null}, {"n": 3137, "t": "      RoleName: iamr-net-prd-deploy", "m": 1}, {"n": 3138, "t": "      AssumeRolePolicyDocument:", "m": null}, {"n": 3139, "t": "        Version: \"2012-10-17\"", "m": null}, {"n": 3140, "t": "        Statement:", "m": null}, {"n": 3141, "t": "          - Effect: Allow", "m": null}, {"n": 3142, "t": "            Principal:", "m": null}, {"n": 3143, "t": "              Federated: !Sub \"arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com\"", "m": 2}, {"n": 3144, "t": "            Action: \"sts:AssumeRoleWithWebIdentity\"", "m": null}, {"n": 3145, "t": "            Condition:", "m": null}, {"n": 3146, "t": "              StringEquals:", "m": null}, {"n": 3147, "t": "                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience", "m": 3}, {"n": 3148, "t": "              StringLike:", "m": null}, {"n": 3149, "t": "                token.actions.tescoims.ghe.com:sub:", "m": null}, {"n": 3150, "t": "                  - !Sub \"repo:${GithubOwner6}/ims-app-identity:*\"", "m": 4}, {"n": 3151, "t": "                  - !Sub \"repo:${GithubOwner10}/AWS-Landing-Zone:*\"", "m": 5}, {"n": 3152, "t": "      Policies:", "m": null}, {"n": 3153, "t": "        - PolicyName: assume-network-prd-deploy", "m": null}, {"n": 3154, "t": "          PolicyDocument:", "m": null}, {"n": 3155, "t": "            Version: \"2012-10-17\"", "m": null}, {"n": 3156, "t": "            Statement:", "m": null}, {"n": 3157, "t": "              - Effect: Allow", "m": null}, {"n": 3158, "t": "                Action:", "m": null}, {"n": 3159, "t": "                  - \"sts:AssumeRole\"", "m": 6}, {"n": 3160, "t": "                  - \"sts:TagSession\"", "m": 7}, {"n": 3161, "t": "                  - \"sts:GetCallerIdentity\"", "m": 8}, {"n": 3162, "t": "                Resource: !Sub \"arn:aws:iam::${prdnwaccid}:role/iamr-net-prd-deploy\"", "m": 9}], "tone": "new"}, "dep_work": {"file": "nw-ppe-template.yml", "sub": "network account", "lang": "yaml", "rows": [{"n": 11, "t": "  DeployRole:", "m": null}, {"n": 12, "t": "    Type: AWS::IAM::Role", "m": null}, {"n": 13, "t": "    Properties:", "m": null}, {"n": 14, "t": "      RoleName: \"iamr-net-ppe-deploy\"", "m": 1}, {"n": 15, "t": "      AssumeRolePolicyDocument:", "m": null}, {"n": 16, "t": "        Version: \"2012-10-17\"", "m": null}, {"n": 17, "t": "        Statement:", "m": null}, {"n": 18, "t": "          - Effect: Allow", "m": null}, {"n": 19, "t": "            Principal:", "m": null}, {"n": 20, "t": "              AWS:", "m": null}, {"n": 21, "t": "                - !Sub \"arn:aws:iam::${SourceAccountId}:root\"", "m": 2}, {"n": 22, "t": "            Action: \"sts:AssumeRole\"", "m": 3}, {"n": 23, "t": "          - Effect: Allow", "m": null}, {"n": 24, "t": "            Principal:", "m": null}, {"n": 25, "t": "              AWS:", "m": null}, {"n": 26, "t": "                - !Sub \"arn:aws:iam::${SourceAccountId}:role/iamr-net-ppe-deploy\"", "m": 4}, {"n": 27, "t": "            Action: \"sts:AssumeRole\"", "m": null}, {"n": 28, "t": "      ManagedPolicyArns:", "m": null}, {"n": 29, "t": "        - \"arn:aws:iam::aws:policy/AdministratorAccess\"", "m": 5}], "tone": "new"}, "read_rec": {"file": "iam-roles-template.yml", "sub": "IMS Root · plat-eng/AWS-Landing-Zone", "lang": "yaml", "rows": [{"n": 3163, "t": "  PRDNWReadRole:", "m": null}, {"n": 3164, "t": "    Type: AWS::IAM::Role", "m": null}, {"n": 3165, "t": "    Properties:", "m": null}, {"n": 3166, "t": "      RoleName: iamr-net-prd-read", "m": 1}, {"n": 3167, "t": "      AssumeRolePolicyDocument:", "m": null}, {"n": 3168, "t": "        Version: \"2012-10-17\"", "m": null}, {"n": 3169, "t": "        Statement:", "m": null}, {"n": 3170, "t": "          - Effect: Allow", "m": null}, {"n": 3171, "t": "            Principal:", "m": null}, {"n": 3172, "t": "              Federated: !Sub \"arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com\"", "m": 2}, {"n": 3173, "t": "            Action: \"sts:AssumeRoleWithWebIdentity\"", "m": null}, {"n": 3174, "t": "            Condition:", "m": null}, {"n": 3175, "t": "              StringEquals:", "m": null}, {"n": 3176, "t": "                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience", "m": null}, {"n": 3177, "t": "              StringLike:", "m": null}, {"n": 3178, "t": "                token.actions.tescoims.ghe.com:sub:", "m": null}, {"n": 3179, "t": "                  - !Sub \"repo:${GithubOwner6}/ims-app-identity:*\"", "m": 3}, {"n": 3180, "t": "                  - !Sub \"repo:${GithubOwner10}/AWS-Landing-Zone:*\"", "m": null}, {"n": 3181, "t": "      Policies:", "m": null}, {"n": 3182, "t": "        - PolicyName: assume-network-prd-read", "m": 4}, {"n": 3183, "t": "          PolicyDocument:", "m": null}, {"n": 3184, "t": "            Version: \"2012-10-17\"", "m": null}, {"n": 3185, "t": "            Statement:", "m": null}, {"n": 3186, "t": "              - Effect: Allow", "m": null}, {"n": 3187, "t": "                Action:", "m": null}, {"n": 3188, "t": "                  - \"sts:AssumeRole\"", "m": null}, {"n": 3189, "t": "                  - \"sts:TagSession\"", "m": null}, {"n": 3190, "t": "                  - \"sts:GetCallerIdentity\"", "m": null}, {"n": 3191, "t": "                Resource: !Sub \"arn:aws:iam::${prdnwaccid}:role/iamr-net-prd-read\"", "m": 5}], "tone": "new"}, "read_work": {"file": "nw-ppe-template.yml", "sub": "network account", "lang": "yaml", "rows": [{"n": 31, "t": "  ReadRole:", "m": null}, {"n": 32, "t": "    Type: AWS::IAM::Role", "m": null}, {"n": 33, "t": "    Properties:", "m": null}, {"n": 34, "t": "      RoleName: \"iamr-net-ppe-read\"", "m": 1}, {"n": 35, "t": "      AssumeRolePolicyDocument:", "m": null}, {"n": 36, "t": "        Version: \"2012-10-17\"", "m": null}, {"n": 37, "t": "        Statement:", "m": null}, {"n": 38, "t": "          - Effect: Allow", "m": null}, {"n": 39, "t": "            Principal:", "m": null}, {"n": 40, "t": "              AWS:", "m": null}, {"n": 41, "t": "                - !Sub \"arn:aws:iam::${SourceAccountId}:root\"", "m": 2}, {"n": 42, "t": "            Action: \"sts:AssumeRole\"", "m": null}, {"n": 43, "t": "          - Effect: Allow", "m": null}, {"n": 44, "t": "            Principal:", "m": null}, {"n": 45, "t": "              AWS:", "m": null}, {"n": 46, "t": "                - !Sub \"arn:aws:iam::${SourceAccountId}:role/iamr-net-ppe-read\"", "m": 3}, {"n": 47, "t": "            Action: \"sts:AssumeRole\"", "m": null}, {"n": 48, "t": "      ManagedPolicyArns:", "m": null}, {"n": 49, "t": "        - \"arn:aws:iam::aws:policy/ReadOnlyAccess\"", "m": 4}], "tone": "new"}}, "steps": {"new": [{"title": "You start the run", "parts": ["gh"], "text": "On the Actions tab you choose <b>Run workflow<\/b> and pick <b>NETWORK<\/b>. Nothing has touched AWS yet.", "code": [{"file": "latest_cft_deployment.yml", "sub": "new pipeline", "lang": "yaml", "rows": [{"n": 31, "t": "      roleAlias:", "m": null}, {"n": 32, "t": "        description: \"Account to deploy to (only accounts with an iamr role in IMS Root)\"", "m": null}, {"n": 33, "t": "        required: true", "m": null}, {"n": 34, "t": "        type: choice", "m": null}, {"n": 35, "t": "        default: 'NETWORK'", "m": null}, {"n": 36, "t": "        options:", "m": null}, {"n": 37, "t": "          - NETWORK", "m": 1}, {"n": 38, "t": "          - PPE-NETWORK", "m": null}, {"n": 39, "t": "          - TST-NETWORK", "m": null}], "tone": "new"}]}, {"title": "The pipeline works out the badge", "parts": ["gh"], "text": "The <b>Pick the roles<\/b> step turns NETWORK into a badge name, <code>iamr-net-prd-deploy<\/code>, and an account number, <code>584477831165<\/code>. It is plain text in the file. No GitHub secret is involved.", "code": [{"file": "latest_cft_deployment.yml", "sub": "new pipeline", "lang": "yaml", "rows": [{"n": 119, "t": "          case \"$ROLE_ALIAS\" in", "m": null}, {"n": 120, "t": "            NETWORK)     role=iamr-net-prd-deploy; account=584477831165 ;;", "m": 1}, {"n": 121, "t": "            PPE-NETWORK) role=iamr-net-ppe-deploy; account=097357356161 ;;", "m": null}, {"n": 122, "t": "            TST-NETWORK) role=iamr-net-tst-deploy; account=762649987860 ;;", "m": null}, {"gap": "the error case"}, {"n": 128, "t": "          esac", "m": null}, {"n": 129, "t": "          echo \"🔑 Role alias : $ROLE_ALIAS → $role in account $account (signed in through IMS Root $IMS_ROOT_ACCOUNT)\"", "m": null}, {"n": 130, "t": "          {", "m": null}, {"n": 131, "t": "            echo \"broker_role=arn:aws:iam::$IMS_ROOT_ACCOUNT:role/$role\"", "m": 2}, {"n": 132, "t": "            echo \"target_role=arn:aws:iam::$account:role/$role\"", "m": 3}, {"n": 133, "t": "            echo \"account=$account\"", "m": null}, {"n": 134, "t": "          } >> \"$GITHUB_OUTPUT\"", "m": null}], "tone": "new"}]}, {"title": "GitHub writes a signed note", "parts": ["gh", "a1"], "text": "The next step asks GitHub for a short note about this run, and GitHub signs it so AWS can tell it is genuine. This is what <b>OIDC<\/b> means. The line <code>id-token: write<\/code> at the top of the file allows the run to ask for the note.", "code": [{"file": "latest_cft_deployment.yml", "sub": "new pipeline", "lang": "yaml", "rows": [{"n": 62, "t": "permissions:", "m": null}, {"n": 63, "t": "  id-token: write", "m": 1}], "tone": "new"}, {"file": "The note GitHub signs for the run", "sub": "shortened", "lang": "yaml", "rows": [{"n": null, "t": "iss: https://token.actions.tescoims.ghe.com", "m": null}, {"n": null, "t": "aud: sts.amazonaws.com", "m": null}, {"n": null, "t": "sub: repo:plat-eng/AWS-Landing-Zone:ref:refs/heads/main", "m": 2}, {"n": null, "t": "repository: plat-eng/AWS-Landing-Zone", "m": null}, {"n": null, "t": "ref: refs/heads/main", "m": null}, {"n": null, "t": "workflow: CloudFormation Stack using S3 as required", "m": null}], "tone": ""}]}, {"title": "Hop 1: check in at IMS Root", "parts": ["gh", "a1", "root"], "text": "The <b>Sign in to IMS Root<\/b> step hands the note to AWS and asks for the reception copy of the badge, in IMS Root. AWS reads that badge’s door list: the note must come from your GitHub, and from AWS-Landing-Zone or ims-app-identity. It does, so the run gets the reception badge for one hour.", "code": [{"file": "latest_cft_deployment.yml", "sub": "new pipeline", "lang": "yaml", "rows": [{"n": 176, "t": "      - name: Sign in to IMS Root", "m": 1}, {"n": 177, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 178, "t": "        with:", "m": null}, {"n": 179, "t": "          role-to-assume: ${{ steps.setrole.outputs.broker_role }}", "m": 2}, {"n": 180, "t": "          role-session-name: ims-root-${{ github.run_id }}", "m": null}, {"n": 181, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "new"}, {"file": "iam-roles-template.yml", "sub": "IMS Root · plat-eng/AWS-Landing-Zone", "lang": "yaml", "rows": [{"n": 3143, "t": "              Federated: !Sub \"arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com\"", "m": 3}, {"gap": ""}, {"n": 3148, "t": "              StringLike:", "m": null}, {"n": 3149, "t": "                token.actions.tescoims.ghe.com:sub:", "m": null}, {"n": 3150, "t": "                  - !Sub \"repo:${GithubOwner6}/ims-app-identity:*\"", "m": null}, {"n": 3151, "t": "                  - !Sub \"repo:${GithubOwner10}/AWS-Landing-Zone:*\"", "m": 4}], "tone": "new"}]}, {"title": "Hop 2: swap it for the network badge", "parts": ["root", "a2", "net"], "text": "The <b>Switch to the deploy role<\/b> step hands in the reception badge and asks for <code>iamr-net-prd-deploy<\/code> in network prd. AWS checks two things: the reception badge is allowed to make exactly this swap, and the network badge’s door list accepts the reception badge. The run now holds the network badge for one hour.", "code": [{"file": "latest_cft_deployment.yml", "sub": "new pipeline", "lang": "yaml", "rows": [{"n": 183, "t": "      - name: Switch to the deploy role in the target account", "m": null}, {"n": 184, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 185, "t": "        with:", "m": null}, {"n": 186, "t": "          role-chaining: true", "m": 1}, {"n": 187, "t": "          role-to-assume: ${{ steps.setrole.outputs.target_role }}", "m": null}, {"n": 188, "t": "          role-session-name: cft-${{ github.run_id }}", "m": null}, {"n": 189, "t": "          role-duration-seconds: 3600", "m": 2}, {"n": 190, "t": "          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession", "m": 3}, {"n": 191, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "new"}, {"file": "iam-roles-template.yml", "sub": "IMS Root · plat-eng/AWS-Landing-Zone", "lang": "yaml", "rows": [{"n": 3162, "t": "                Resource: !Sub \"arn:aws:iam::${prdnwaccid}:role/iamr-net-prd-deploy\"", "m": 4}], "tone": "new"}, {"file": "nw-ppe-template.yml", "sub": "network account", "lang": "yaml", "rows": [{"n": 23, "t": "          - Effect: Allow", "m": null}, {"n": 24, "t": "            Principal:", "m": null}, {"n": 25, "t": "              AWS:", "m": null}, {"n": 26, "t": "                - !Sub \"arn:aws:iam::${SourceAccountId}:role/iamr-net-ppe-deploy\"", "m": 5}, {"n": 27, "t": "            Action: \"sts:AssumeRole\"", "m": null}], "tone": "new"}]}, {"title": "The work happens in network prd", "parts": ["net", "a3", "stack"], "text": "Every AWS command after this (drift check, change set, deploy) runs as <code>iamr-net-prd-deploy<\/code> in 584477831165, and Control Tower’s safety rules apply to it. The run log shows where it signed in:", "code": [{"file": "Run log · 🧰 Prepare", "sub": "example run", "lang": "plain", "rows": [{"n": null, "t": "🔑 Role alias : NETWORK → iamr-net-prd-deploy in account 584477831165 (signed in through IMS Root 390403857119)", "m": null}, {"n": null, "t": "☁️  Account    : 584477831165 (eu-west-1) as iamr-net-prd-deploy", "m": 1}], "tone": ""}]}, {"title": "Each box on the run page repeats both hops", "parts": ["gh", "a1", "root", "a2", "net", "a3", "stack"], "text": "Each box (Prepare, Drift check, Change set, Deploy) starts on a fresh computer, so each one checks in at IMS Root and swaps again. After an hour the badges stop working on their own, and no account badge is kept in a GitHub secret.", "code": []}], "old": [{"title": "You start the run", "parts": ["gh"], "text": "You choose <b>Run workflow<\/b> and pick <b>NETWORK<\/b> from 18 accounts. Nothing has touched AWS yet.", "code": [{"file": "latest_cft_deployment.yml", "sub": "old pipeline", "lang": "yaml", "rows": [{"n": 26, "t": "      roleAlias:", "m": null}, {"n": 27, "t": "        description: \"Alias for the IAM role to assume\"", "m": null}, {"n": 28, "t": "        required: true", "m": null}, {"n": 29, "t": "        type: choice", "m": null}, {"n": 30, "t": "        default: 'SANDBOX'", "m": null}, {"n": 31, "t": "        options:", "m": null}, {"n": 32, "t": "          - NETWORK", "m": 1}, {"n": 33, "t": "          - DIRECTORY", "m": null}, {"n": 34, "t": "          - SECURITY", "m": null}, {"gap": "15 more accounts"}], "tone": "old"}]}, {"title": "The pipeline looks up a secret", "parts": ["gh"], "text": "NETWORK maps to the name of a GitHub secret, <code>NETWORK_SERVICES_ROLE<\/code>. The value inside that secret is <code>arn:aws:iam::584477831165:role/AWSControlTowerExecution<\/code>.", "code": [{"file": "latest_cft_deployment.yml", "sub": "old pipeline", "lang": "yaml", "rows": [{"n": 126, "t": "          case \"$ROLE_ALIAS\" in", "m": null}, {"n": 127, "t": "            NETWORK)            secret=NETWORK_SERVICES_ROLE ;;", "m": 1}, {"gap": "…"}, {"n": 150, "t": "          esac", "m": null}, {"n": 151, "t": "          echo \"🔑 Role alias : $ROLE_ALIAS → secret $secret\"", "m": null}, {"n": 152, "t": "          echo \"secret=$secret\" >> \"$GITHUB_OUTPUT\"", "m": 2}], "tone": "old"}]}, {"title": "GitHub writes a signed note", "parts": ["gh", "a1"], "text": "Same as the new pipeline: the run asks GitHub for a signed note saying which repo and branch it comes from.", "code": [{"file": "latest_cft_deployment.yml", "sub": "old pipeline", "lang": "yaml", "rows": [{"n": 72, "t": "permissions:", "m": null}, {"n": 73, "t": "  id-token: write", "m": 1}], "tone": "old"}, {"file": "The note GitHub signs for the run", "sub": "shortened", "lang": "yaml", "rows": [{"n": null, "t": "iss: https://token.actions.tescoims.ghe.com", "m": null}, {"n": null, "t": "aud: sts.amazonaws.com", "m": null}, {"n": null, "t": "sub: repo:plat-eng/AWS-Landing-Zone:ref:refs/heads/main", "m": 2}, {"n": null, "t": "repository: plat-eng/AWS-Landing-Zone", "m": null}, {"n": null, "t": "ref: refs/heads/main", "m": null}, {"n": null, "t": "workflow: CloudFormation Stack using S3 as required", "m": null}], "tone": ""}]}, {"title": "One hop, straight to the master key", "parts": ["gh", "a1", "net"], "text": "The <b>Configure AWS credentials<\/b> step hands the note to AWS and asks for <code>AWSControlTowerExecution<\/code> in network prd. Someone added your repo to that key’s door list, so AWS says yes.", "code": [{"file": "latest_cft_deployment.yml", "sub": "old pipeline", "lang": "yaml", "rows": [{"n": 197, "t": "      - name: Configure AWS credentials for deployment", "m": null}, {"n": 198, "t": "        uses: aws-actions/configure-aws-credentials@v4", "m": null}, {"n": 199, "t": "        with:", "m": null}, {"n": 200, "t": "          role-to-assume: ${{ secrets[steps.setrole.outputs.secret] }}", "m": 1}, {"n": 201, "t": "          role-session-name: cft_deployment", "m": null}, {"n": 202, "t": "          aws-region: ${{ env.REGION }}", "m": null}], "tone": "old"}, {"file": "AWSControlTowerExecution · Trust relationships", "sub": "IAM console · network prd", "lang": "json", "rows": [{"n": 22, "t": "                \"StringLike\": {", "m": null}, {"n": 23, "t": "                    \"token.actions.tescoims.ghe.com:sub\": \"repo:plat-eng/AWS-Landing-Zone:*\"", "m": 2}, {"n": 24, "t": "                }", "m": null}], "tone": "old"}]}, {"title": "The work runs with the master key", "parts": ["net", "a3", "stack"], "text": "Every AWS command runs as Control Tower’s own master key: it can do everything, and Control Tower’s safety rules make an exception for it.", "code": [{"file": "AWSControlTowerExecution · Permissions", "sub": "IAM console · network prd", "lang": "plain", "rows": [{"n": null, "t": "Permissions policies (1)", "m": null}, {"n": null, "t": "AdministratorAccess          AWS managed - job function", "m": 1}, {"n": null, "t": "Permissions boundary (not set)", "m": null}], "tone": "old"}]}, {"title": "Why the client wants it gone", "parts": ["ct", "act", "any", "aany", "net"], "text": "Control Tower owns this key and can rewrite its door list when the landing zone is updated, which would break the pipeline without warning. The door list also lets in any repo of the <code>tescoims<\/code> organisation on github.com, from any branch.", "code": [{"file": "AWSControlTowerExecution · Trust relationships", "sub": "IAM console · network prd", "lang": "json", "rows": [{"n": 5, "t": "            \"Effect\": \"Allow\",", "m": null}, {"n": 6, "t": "            \"Principal\": {", "m": null}, {"n": 7, "t": "                \"AWS\": \"arn:aws:iam::390403857119:root\"", "m": 1}, {"n": 8, "t": "            },", "m": null}, {"n": 9, "t": "            \"Action\": \"sts:AssumeRole\"", "m": null}, {"gap": "…"}, {"n": 27, "t": "        {", "m": null}, {"n": 28, "t": "            \"Sid\": \"AllowGithubOIDC\",", "m": null}, {"n": 29, "t": "            \"Effect\": \"Allow\",", "m": null}, {"n": 30, "t": "            \"Principal\": {", "m": null}, {"n": 31, "t": "                \"Federated\": \"arn:aws:iam::584477831165:oidc-provider/token.actions.githubusercontent.com\"", "m": null}, {"gap": "…"}, {"n": 38, "t": "                \"StringLike\": {", "m": null}, {"n": 39, "t": "                    \"token.actions.githubusercontent.com:sub\": \"repo:tescoims/*\"", "m": 2}], "tone": "old"}]}]}};
+const CAPTIONS = {
+  new: 'New: GitHub is only let in at IMS Root. From there the run can only swap into iamr-net-prd-deploy in network prd, and that badge does the work.',
+  old: 'Old: GitHub went straight to Control Tower’s master key in network prd. Control Tower owns that key, and its door list also lets in any tescoims repo on github.com.',
+};
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function hl(text, lang) {
+  if (lang === 'plain') return esc(text);
+  let out = '', rest = text;
+  if (lang === 'yaml') {
+    const m = rest.match(/^(\s*(?:-\s+)?)([A-Za-z0-9_.:\/-]+?)(:)(?=\s|$)/);
+    if (m) { out += esc(m[1]) + '<span class="k">' + esc(m[2]) + '</span>' + m[3]; rest = rest.slice(m[0].length); }
+  }
+  const bash = /^\s*(case|esac|echo)\b/.test(text);
+  const re = new RegExp('(\\$\\{\\{.*?\\}\\})|("(?:[^"\\\\]|\\\\.)*")|(\'(?:[^\'\\\\]|\\\\.)*\')|((?:^|\\s)#.*$)|(!Sub|!Ref)\\b' +
+                        (bash ? '|\\b(case|esac|echo|in)\\b' : ''), 'g');
+  let last = 0, m;
+  while ((m = re.exec(rest))) {
+    out += esc(rest.slice(last, m.index));
+    const t = m[0];
+    if (m[1]) out += '<span class="x">' + esc(t) + '</span>';
+    else if (m[2]) out += '<span class="' + (lang === 'json' && /^\s*:/.test(rest.slice(m.index + t.length)) ? 'k' : 's') + '">' + esc(t) + '</span>';
+    else if (m[3]) out += '<span class="s">' + esc(t) + '</span>';
+    else if (m[4]) out += '<span class="c">' + esc(t) + '</span>';
+    else out += '<span class="w">' + esc(t) + '</span>';
+    last = m.index + t.length;
+  }
+  return out + esc(rest.slice(last));
+}
+
+function shot(b, badges) {
+  const numbered = b.rows.some((r) => r.n);
+  let rows = '';
+  for (const r of b.rows) {
+    if (r.gap !== undefined) {
+      rows += '<tr class="gap"><td class="ln">⋯</td>' + (badges ? '<td class="mk"></td>' : '') + '<td class="src">' + esc(r.gap) + '</td></tr>';
+      continue;
+    }
+    const lead = r.t.match(/^ */)[0].length;
+    rows += '<tr' + (r.m ? ' class="hl"' : '') + '><td class="ln">' + (r.n || '') + '</td>' +
+            (badges ? '<td class="mk">' + (r.m ? '<span class="badge">' + r.m + '</span>' : '') + '</td>' : '') +
+            '<td class="src" style="--n:' + lead + '"><span class="ind"></span>' + (hl(r.t.slice(lead), b.lang) || ' ') + '</td></tr>';
+  }
+  const pill = b.tone ? '<span class="pill pill-' + b.tone + '">' + b.tone + '</span>' : '';
+  return '<figure class="shot"><figcaption class="shot-bar"><span class="fname">' + esc(b.file) + '</span><span class="fsub">' +
+         esc(b.sub) + '</span>' + pill + '</figcaption><div class="shot-scroll"><table class="code' + (numbered ? '' : ' no-ln') +
+         '"><tbody>' + rows + '</tbody></table></div></figure>';
+}
+
+document.querySelectorAll('[data-panel]').forEach((el) => { el.innerHTML = shot(DATA.panels[el.dataset.panel], true); });
+
+const $ = (id) => document.getElementById(id);
+const svgs = { new: $('svg-new'), old: $('svg-old') };
+const tabs = { new: $('tab-new'), old: $('tab-old') };
+let way = 'new', idx = 0;
+
+function show() {
+  const steps = DATA.steps[way], s = steps[idx];
+  for (const k of ['new', 'old']) {
+    svgs[k].toggleAttribute('hidden', k !== way);   // SVG elements have no .hidden property
+    tabs[k].setAttribute('aria-selected', String(k === way));
+    tabs[k].tabIndex = k === way ? 0 : -1;
+  }
+  $('player').setAttribute('aria-labelledby', tabs[way].id);
+  const svg = svgs[way];
+  svg.classList.add('stepping');
+  svg.querySelectorAll('[data-part]').forEach((g) => g.classList.toggle('on', s.parts.includes(g.dataset.part)));
+  const box = svg.parentElement;
+  const lit = [...svg.querySelectorAll('[data-part].on')];
+  if (lit.length && box.scrollWidth > box.clientWidth + 1) {
+    const rs = lit.map((g) => g.getBoundingClientRect()), b = box.getBoundingClientRect();
+    const left = Math.min(...rs.map((r) => r.left)), right = Math.max(...rs.map((r) => r.right));
+    const x = right - left > box.clientWidth ? left - b.left - 8 : (left + right) / 2 - b.left - box.clientWidth / 2;
+    box.scrollTo({ left: Math.max(0, box.scrollLeft + x), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+  $('fig-cap').textContent = CAPTIONS[way];
+  $('step-count').textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+  $('step-title').textContent = s.title;
+  $('step-text').innerHTML = s.text;
+  $('step-code').innerHTML = s.code.map((b) => shot(b, false)).join('');
+  $('prev').disabled = idx === 0;
+  $('next').disabled = idx === steps.length - 1;
+  $('dots').innerHTML = steps.map((st, i) => '<li><button type="button" data-i="' + i + '" aria-label="Step ' + (i + 1) + ': ' +
+    esc(st.title) + '"' + (i === idx ? ' aria-current="step"' : '') + '>' + (i + 1) + '</button></li>').join('');
+}
+
+$('prev').addEventListener('click', () => { if (idx > 0) { idx--; show(); } });
+$('next').addEventListener('click', () => { if (idx < DATA.steps[way].length - 1) { idx++; show(); } });
+$('dots').addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) { idx = Number(b.dataset.i); show(); } });
+for (const k of ['new', 'old']) {
+  tabs[k].addEventListener('click', () => { if (way !== k) { way = k; idx = 0; show(); } });
+  tabs[k].addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { way = way === 'new' ? 'old' : 'new'; idx = 0; show(); tabs[way].focus(); }
+  });
+}
+show();
+</script>
+
+</body></html>
