@@ -1,0 +1,971 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#   🧰 Prepare  →  🔎 Drift check  →  📝 Change set  →  🚀 Deploy (only when Deploy = yes)
+#
+#   Every stage is its own job, so the run page draws them as connected boxes
+#   that turn green (passed), red (failed) or grey (skipped).
+#     • Drift check runs only for an existing stack. It reports any drift (changes
+#       made outside CloudFormation) for information – it never stops the run.
+#     • Change set: for an existing stack it is a DRIFT-AWARE change set, compared with
+#       the live resources. It lists the manual changes that executing it would REMOVE
+#       (put back to the template), then the template changes it would APPLY, and
+#       links to it in the AWS console. A new stack gets a normal CREATE change set.
+#     • Deploy = no (default): the pipeline stops there and nothing is deployed –
+#       you review the change set and execute it in the AWS console yourself.
+#     • Deploy = yes: the Deploy stage executes that same change set and follows the
+#       stack events until it finishes. It is skipped when there is nothing to change.
+#     • Remove manual changes (only matters with Deploy = yes): if the change set would
+#       remove manual changes, the Deploy stage executes it only when this is 'yes'.
+#       With 'no' (default) it stops before executing and nothing is deployed.
+#   Sign-in (IMS standard): GitHub → iamr-<name> in IMS Root (390403857119) → the
+#   same-named role in the target account – the roles iam-roles-template.yml creates
+#   (plat-eng/AWS-Landing-Zone). No role ARNs in secrets, and never AWSControlTowerExecution.
+#   Only accounts that have an iamr role can be picked; add one to the roleAlias options
+#   and to "Pick the roles" once the template has a role for it.
+#   BUCKET_NAME is as before; the only secret left is S3_ACCESS_GITHUB_ROLE (large templates).
+# ─────────────────────────────────────────────────────────────────────────────
+name: CloudFormation Stack using S3 as required
+run-name: "${{ inputs.deploy == 'yes' && '🚀' || '📝' }} ${{ inputs.stackName }} · ${{ inputs.roleAlias }} · ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      folderPath:
+        description: "Path under cloudformation/ (e.g. 'vpc' or 'network/peering')"
+        required: true
+      stackName:
+        description: "Name of CloudFormation stack to deploy"
+        required: true
+      roleAlias:
+        description: "Account to deploy to (only accounts with an iamr role in IMS Root)"
+        required: true
+        type: choice
+        default: 'NETWORK'
+        options:
+          - NETWORK
+          - PPE-NETWORK
+          - TST-NETWORK
+      AWS_REGION:
+        description: "AWS Region for deployment – pick one, or 'other' and type it under Custom region"
+        required: false
+        type: choice
+        default: 'eu-west-1'
+        options:
+          - eu-west-1
+          - us-east-1
+          - other
+      CUSTOM_REGION:
+        description: "Only used when AWS Region is 'other' (e.g. ap-south-1)"
+        required: false
+        default: ''
+      deploy:
+        description: "Deploy the change set once it is created? 'no' = stop at the change set (you execute it in the console)"
+        required: false
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+      removeManualChanges:
+        description: "Remove manual changes when deploying? 'no' = Deploy stops if the change set would undo changes made outside CloudFormation"
+        required: false
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+
+permissions:
+  id-token: write
+  contents: read
+
+# One run per stack at a time: a second run on the same stack waits instead of colliding.
+concurrency:
+  group: cfn-${{ inputs.roleAlias }}-${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}-${{ inputs.stackName }}
+  cancel-in-progress: false
+
+env:
+  BUCKET_NAME: ss-cfts3
+  IMS_ROOT_ACCOUNT: "390403857119"   # where GitHub signs in; the iamr roles there switch into the target accounts
+  # The workflow inputs, handed to the scripts as plain env vars (nothing new to configure).
+  STACK_NAME: ${{ inputs.stackName }}
+  FOLDER_PATH: ${{ inputs.folderPath }}
+  ROLE_ALIAS: ${{ inputs.roleAlias }}
+  # Region = the dropdown pick, or the Custom region text when the pick is 'other'
+  REGION: ${{ inputs.AWS_REGION == 'other' && inputs.CUSTOM_REGION || inputs.AWS_REGION }}
+  DEPLOY: ${{ inputs.deploy }}
+  REMOVE_MANUAL: ${{ inputs.removeManualChanges }}
+
+defaults:
+  run:
+    shell: bash   # runs as bash -eo pipefail: any failing command fails the stage
+
+jobs:
+  # ── 1 · Prepare: resolve the role, find the files, check the stack ─────────────
+  prepare:
+    name: 🧰 Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      broker_role: ${{ steps.setrole.outputs.broker_role }}
+      target_role: ${{ steps.setrole.outputs.target_role }}
+      account: ${{ steps.setrole.outputs.account }}
+      template_file: ${{ steps.find_files.outputs.template_file }}
+      params_file: ${{ steps.find_files.outputs.params_file }}
+      large: ${{ steps.find_files.outputs.large }}
+      mode: ${{ steps.stack.outputs.mode }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pick the roles
+        id: setrole
+        run: |
+          # IMS sign-in: GitHub → iamr-<name> in IMS Root → the same-named role in the target account.
+          # Role names and account IDs as in iam-roles-template.yml / its params (plat-eng/AWS-Landing-Zone).
+          region_re='^[a-z]{2}(-[a-z]+)+-[0-9]+$'
+          if [[ ! "$REGION" =~ $region_re ]]; then
+            if [ "$REGION" = other ]; then
+              msg="Choose a region, or type one under 'Custom region' (e.g. ap-south-1)."
+            else
+              msg="'$REGION' is not a valid AWS region (e.g. eu-west-1)."
+            fi
+            echo "::error title=Invalid region::$msg"
+            exit 1
+          fi
+
+          case "$ROLE_ALIAS" in
+            NETWORK)     role=iamr-net-prd-deploy; account=584477831165 ;;
+            PPE-NETWORK) role=iamr-net-ppe-deploy; account=097357356161 ;;
+            TST-NETWORK) role=iamr-net-tst-deploy; account=762649987860 ;;
+            # Add an account here (and to the roleAlias options) once iam-roles-template.yml has an iamr role for it
+            *)
+              echo "::error title=Unknown role alias::No iamr role for alias '$ROLE_ALIAS'"
+              exit 1
+              ;;
+          esac
+          echo "🔑 Role alias : $ROLE_ALIAS → $role in account $account (signed in through IMS Root $IMS_ROOT_ACCOUNT)"
+          {
+            echo "broker_role=arn:aws:iam::$IMS_ROOT_ACCOUNT:role/$role"
+            echo "target_role=arn:aws:iam::$account:role/$role"
+            echo "account=$account"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find template and params
+        id: find_files
+        run: |
+          fail() { echo "::error title=Prepare failed::$1"; exit 1; }
+
+          [[ "$STACK_NAME" =~ ^[A-Za-z][A-Za-z0-9-]{0,127}$ ]] ||
+            fail "'$STACK_NAME' is not a valid stack name (letters, digits and hyphens, starting with a letter)."
+
+          dir="cloudformation/${FOLDER_PATH}"
+          [ -d "$dir" ] || fail "Folder $dir not found."
+
+          # Template directly in the folder first; sub-folders only as a fallback (as before).
+          match=( -type f \( -iname "*-template.yaml" -o -iname "*-template.yml" \) )
+          mapfile -t found < <(find "$dir" -maxdepth 1 "${match[@]}" | sort)
+          [ "${#found[@]}" -gt 0 ] || mapfile -t found < <(find "$dir" "${match[@]}" | sort)
+          [ "${#found[@]}" -gt 0 ] || fail "No template matching '*-template.y[a]ml' found in $dir"
+          if [ "${#found[@]}" -gt 1 ]; then
+            echo "::warning title=More than one template::${#found[@]} templates in $dir – using ${found[0]}"
+          fi
+          template_file="${found[0]}"
+
+          params_file="$dir/params.json"
+          [ -f "$params_file" ] || fail "params.json not found in $dir"
+          jq -e 'type == "array"' "$params_file" > /dev/null ||
+            fail "$params_file must be a JSON list of ParameterKey/ParameterValue objects."
+
+          size=$(stat --format=%s "$template_file")
+          large=false
+          if [ "$size" -gt 51200 ]; then large=true; fi
+
+          echo "📄 Template   : $template_file ($size bytes)"
+          echo "📄 Parameters : $params_file ($(jq length "$params_file") entries)"
+          if [ "$large" = true ]; then echo "📦 Over 51,200 bytes – the template will go through S3."; fi
+          {
+            echo "template_file=$template_file"
+            echo "params_file=$params_file"
+            echo "size=$size"
+            echo "large=$large"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to IMS Root
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.setrole.outputs.broker_role }}
+          role-session-name: ims-root-${{ github.run_id }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Switch to the deploy role in the target account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-chaining: true
+          role-to-assume: ${{ steps.setrole.outputs.target_role }}
+          role-session-name: cft-${{ github.run_id }}
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession
+          aws-region: ${{ env.REGION }}
+
+      - name: Check stack status
+        id: stack
+        env:
+          TEMPLATE_FILE: ${{ steps.find_files.outputs.template_file }}
+          PARAMS_FILE: ${{ steps.find_files.outputs.params_file }}
+          SIZE: ${{ steps.find_files.outputs.size }}
+          LARGE: ${{ steps.find_files.outputs.large }}
+          EXPECTED_ACCOUNT: ${{ steps.setrole.outputs.account }}
+          TARGET_ROLE: ${{ steps.setrole.outputs.target_role }}
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          echo "☁️  Account    : $account ($REGION) as ${TARGET_ROLE##*/}"
+          if [ "$account" != "$EXPECTED_ACCOUNT" ]; then
+            echo "::error title=Wrong account::Signed in to $account, but $ROLE_ALIAS is account $EXPECTED_ACCOUNT."
+            exit 1
+          fi
+
+          if ! status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                          --query 'Stacks[0].StackStatus' --output text 2> "$RUNNER_TEMP/err"); then
+            grep -q 'does not exist' "$RUNNER_TEMP/err" || { cat "$RUNNER_TEMP/err"; exit 1; }
+            status=NOT_FOUND
+          fi
+
+          case "$status" in
+            NOT_FOUND|REVIEW_IN_PROGRESS)
+              mode=create
+              plan="🆕 New stack → CREATE change set (drift check not needed)" ;;
+            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE|IMPORT_COMPLETE|IMPORT_ROLLBACK_COMPLETE)
+              mode=update
+              plan="🔄 Exists ($status) → drift check (information only), then drift-aware UPDATE change set" ;;
+            ROLLBACK_COMPLETE)
+              echo "::error title=Stack can't be updated::$STACK_NAME is in ROLLBACK_COMPLETE (its first create failed). Delete the stack in the console, then re-run."
+              exit 1 ;;
+            *_IN_PROGRESS)
+              echo "::error title=Stack is busy::$STACK_NAME is $status. Wait for it to finish, then re-run."
+              exit 1 ;;
+            *)
+              echo "::error title=Stack can't be updated::$STACK_NAME is in $status. Fix it in the CloudFormation console, then re-run."
+              exit 1 ;;
+          esac
+          echo "🏗️  Stack      : $STACK_NAME – $plan"
+          if [ "$DEPLOY" = yes ]; then
+            dep="🚀 yes – the change set is executed right after it is created"
+          else
+            dep="✋ no – stops at the change set, you execute it in the console"
+          fi
+          echo "🚀 Deploy     : $dep"
+          man=""
+          if [ "$DEPLOY" = yes ] && [ "$mode" = update ]; then
+            if [ "$REMOVE_MANUAL" = yes ]; then
+              man="🧹 yes – manual changes the change set finds are put back to the template"
+            else
+              man="✋ no – the deploy stops if the change set would remove manual changes"
+            fi
+            echo "🧹 Manual     : $man"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+          how="sent inline"
+          if [ "$LARGE" = true ]; then how="uploaded to S3 – over 51,200 bytes"; fi
+          {
+            echo "### 🧰 Prepare"
+            echo "| | |"
+            echo "|---|---|"
+            printf '| **Stack** | `%s` |\n' "$STACK_NAME"
+            printf '| **Account** | %s · `%s` · %s |\n' "$ROLE_ALIAS" "$account" "$REGION"
+            printf '| **Signed in as** | `%s` (via IMS Root) |\n' "${TARGET_ROLE##*/}"
+            printf '| **Template** | `%s` (%s bytes, %s) |\n' "$TEMPLATE_FILE" "$SIZE" "$how"
+            printf '| **Parameters** | `%s` |\n' "$PARAMS_FILE"
+            printf '| **Plan** | %s |\n' "$plan"
+            printf '| **Deploy** | %s |\n' "$dep"
+            if [ -n "$man" ]; then printf '| **Manual changes** | %s |\n' "$man"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 2 · Drift check: existing stacks only – reports drift, never stops the run ─
+  drift:
+    name: 🔎 Drift check
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'update'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sign in to IMS Root
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ needs.prepare.outputs.broker_role }}
+          role-session-name: ims-root-${{ github.run_id }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Switch to the deploy role in the target account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-chaining: true
+          role-to-assume: ${{ needs.prepare.outputs.target_role }}
+          role-session-name: cft-${{ github.run_id }}
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession
+          aws-region: ${{ env.REGION }}
+
+      - name: Detect drift
+        run: |
+          # Information only: whatever this finds – or fails to check – the run carries on
+          # to the change set, which compares the template with the live resources itself.
+          skip() {
+            echo "⚠️  $1 – continuing to the change set."
+            echo "::warning title=Drift check incomplete::$1 – continuing to the change set."
+            printf '### 🔎 Drift check\n⚠️ %s – continuing (information only).\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          echo "🔎 Checking $STACK_NAME for drift (changes made outside CloudFormation)…"
+          id=$(aws cloudformation detect-stack-drift --stack-name "$STACK_NAME" \
+                 --query StackDriftDetectionId --output text) || skip "Could not start drift detection"
+          while :; do
+            res=$(aws cloudformation describe-stack-drift-detection-status \
+                    --stack-drift-detection-id "$id" --output json) || skip "Could not read the drift detection result"
+            [ "$(jq -r .DetectionStatus <<< "$res")" = DETECTION_IN_PROGRESS ] || break
+            echo "   … still checking"
+            sleep 10
+          done
+          detection=$(jq -r .DetectionStatus <<< "$res")
+          drift=$(jq -r '.StackDriftStatus // "UNKNOWN"' <<< "$res")
+          count=$(jq -r '.DriftedStackResourceCount // 0' <<< "$res")
+          reason=$(jq -r '.DetectionStatusReason // ""' <<< "$res")
+
+          if [ "$drift" = DRIFTED ]; then
+            aws cloudformation describe-stack-resource-drifts --stack-name "$STACK_NAME" \
+              --stack-resource-drift-status-filters MODIFIED DELETED --output json > "$RUNNER_TEMP/drift.json" ||
+              skip "Drift found in $count resource(s), but the details could not be read"
+
+            # Drifted resources as a table, then the property-level differences
+            jq -r '
+              def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+              "   \("DRIFT" | pad(10))\("RESOURCE" | pad(40))\("TYPE" | pad(42))PHYSICAL ID",
+              (.StackResourceDrifts[]
+               | "   \(.StackResourceDriftStatus | pad(10))\(.LogicalResourceId | pad(40))\(.ResourceType | pad(42))\(.PhysicalResourceId // "-")")
+            ' "$RUNNER_TEMP/drift.json" > "$RUNNER_TEMP/drift_table.txt"
+            jq -r '
+              .StackResourceDrifts[] | select(.StackResourceDriftStatus == "MODIFIED")
+              | .LogicalResourceId as $id | .PropertyDifferences[]?
+              | "• \($id) → \(.PropertyPath) (\(.DifferenceType))\n    expected: \(.ExpectedValue)\n    actual  : \(.ActualValue)"
+            ' "$RUNNER_TEMP/drift.json" > "$RUNNER_TEMP/drift_diff.txt"
+
+            echo
+            echo "⚠️  DRIFT FOUND – $count resource(s) no longer match the template:"
+            echo
+            cat "$RUNNER_TEMP/drift_table.txt"
+            if [ -s "$RUNNER_TEMP/drift_diff.txt" ]; then
+              echo
+              echo "What changed (expected = template, actual = live in AWS):"
+              cat "$RUNNER_TEMP/drift_diff.txt"
+            fi
+            echo
+            echo "ℹ️  Information only – the run continues. The drift-aware change set in the next"
+            echo "   stage lists which of these manual changes executing it would remove."
+
+            {
+              echo "### 🔎 Drift check"
+              echo "⚠️ **Drift found in $count resource(s)** – information only, the run continues. The **Change set** stage lists which manual changes executing it would remove."
+              echo
+              echo "| Drift | Resource | Type | Physical ID |"
+              echo "|---|---|---|---|"
+              jq -r '.StackResourceDrifts[] | "| \(.StackResourceDriftStatus) | `\(.LogicalResourceId)` | \(.ResourceType) | \(.PhysicalResourceId // "-") |"' "$RUNNER_TEMP/drift.json"
+              if [ -s "$RUNNER_TEMP/drift_diff.txt" ]; then
+                echo
+                echo '```text'
+                cat "$RUNNER_TEMP/drift_diff.txt"
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Drift detected::$count resource(s) in $STACK_NAME drifted from the template – see the Change set stage for what executing it would remove."
+            exit 0
+          fi
+
+          if [ "$drift" = IN_SYNC ] && [ "$detection" = DETECTION_COMPLETE ]; then
+            echo "✅ No drift – every resource matches the template."
+            printf '### 🔎 Drift check\n✅ No drift – the stack matches its template.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            msg="Drift check couldn't cover every resource ($detection, $drift)${reason:+: $reason}"
+            echo "⚠️  $msg – continuing."
+            echo "::warning title=Drift check incomplete::$msg"
+            printf '### 🔎 Drift check\n⚠️ %s – continuing.\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── 3 · Change set: drift-aware – what executing it would remove and apply ────
+  changeset:
+    name: 📝 Change set
+    needs: [prepare, drift]
+    # Waits for the drift report, but the drift check is information only – its result never blocks this.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.cs.outputs.has_changes }}
+      change_set: ${{ steps.cs.outputs.change_set }}
+      stack_id: ${{ steps.cs.outputs.stack_id }}
+      manual_changes: ${{ steps.cs.outputs.manual_changes }}
+    env:
+      TEMPLATE_FILE: ${{ needs.prepare.outputs.template_file }}
+      PARAMS_FILE: ${{ needs.prepare.outputs.params_file }}
+      MODE: ${{ needs.prepare.outputs.mode }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials for S3 upload
+        if: needs.prepare.outputs.large == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.S3_ACCESS_GITHUB_ROLE }}
+          role-session-name: s3_upload
+          aws-region: ${{ env.REGION }}
+
+      - name: Generate pre-signed PUT/GET URLs and upload template
+        if: needs.prepare.outputs.large == 'true'
+        id: presign_upload
+        run: |
+          key="${STACK_NAME}-$(date +%s).yaml"   # unique key per run
+          echo "📦 Uploading the large template to S3 as $key"
+          pip install --quiet boto3
+          urls=$(python cloudformation/production/shared_services/Github_s3/presign.py "$key")
+          put_url=$(grep '^put_url=' <<< "$urls" | cut -d'=' -f2- || true)
+          get_url=$(grep '^get_url=' <<< "$urls" | cut -d'=' -f2- || true)
+          if [ -z "$put_url" ] || [ -z "$get_url" ]; then
+            echo "::error title=Upload failed::presign.py did not return put_url and get_url"
+            exit 1
+          fi
+          curl --fail --silent --show-error -X PUT -T "$TEMPLATE_FILE" "$put_url" ||
+            { echo "::error title=Upload failed::Could not upload the template to S3"; exit 1; }
+          echo "✔ Uploaded"
+          echo "get_url=$get_url" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to IMS Root
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ needs.prepare.outputs.broker_role }}
+          role-session-name: ims-root-${{ github.run_id }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Switch to the deploy role in the target account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-chaining: true
+          role-to-assume: ${{ needs.prepare.outputs.target_role }}
+          role-session-name: cft-${{ github.run_id }}
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession
+          aws-region: ${{ env.REGION }}
+
+      - name: Create change set
+        id: cs
+        env:
+          TEMPLATE_URL: ${{ steps.presign_upload.outputs.get_url }}
+        run: |
+          if [ -n "$TEMPLATE_URL" ]; then
+            tpl=(--template-url "$TEMPLATE_URL")
+          else
+            tpl=(--template-body "file://$TEMPLATE_FILE")
+          fi
+
+          echo "🧪 Checking template…"
+          aws cloudformation get-template-summary "${tpl[@]}" --output json > "$RUNNER_TEMP/template.json"
+          echo "✔ Template OK – $(jq '.Parameters // [] | length' "$RUNNER_TEMP/template.json") parameter(s) declared"
+
+          # Parameters follow the same rules as `aws cloudformation deploy`:
+          #   • value from params.json when it's there
+          #   • not in params.json → existing stack keeps its current value, new stack uses the template default
+          #   • keys in params.json that the template doesn't declare are ignored (with a warning)
+          if [ "$MODE" = update ]; then
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+              --query 'Stacks[0].Parameters[].ParameterKey' --output json > "$RUNNER_TEMP/current.json"
+          else
+            echo '[]' > "$RUNNER_TEMP/current.json"
+          fi
+          jq --slurpfile tpl "$RUNNER_TEMP/template.json" --slurpfile cur "$RUNNER_TEMP/current.json" '
+            . as $given
+            | ($cur[0] // []) as $current
+            | [ ($tpl[0].Parameters // [])[].ParameterKey as $k
+                | ([$given[] | select(.ParameterKey == $k)][0]) as $p
+                | if $p != null and ($p | has("ParameterValue")) then
+                    {ParameterKey: $k, ParameterValue: ($p.ParameterValue | if type == "array" then join(",") else tostring end)}
+                  elif ($current | index($k)) != null then
+                    {ParameterKey: $k, UsePreviousValue: true}
+                  else empty end ]
+          ' "$PARAMS_FILE" > "$RUNNER_TEMP/params.json"
+
+          # NoEcho parameter values are masked everywhere in this log
+          jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
+            [($tpl[0].Parameters // [])[] | select(.NoEcho) | .ParameterKey] as $hidden
+            | .[] | select(.ParameterKey as $k | $hidden | index($k) != null)
+            | .ParameterValue // empty | select(length > 0)
+          ' "$RUNNER_TEMP/params.json" | while IFS= read -r value; do echo "::add-mask::$value"; done
+
+          jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
+            (($tpl[0].Parameters // []) | map(.ParameterKey)) as $declared
+            | .[].ParameterKey | select(. as $k | $declared | index($k) == null)
+          ' "$PARAMS_FILE" | while read -r key; do
+            echo "::warning title=Unused parameter::'$key' is in params.json but not in the template – ignored"
+          done
+
+          echo "::group::📋 Parameters ($(jq length "$RUNNER_TEMP/params.json"))"
+          jq -r --slurpfile tpl "$RUNNER_TEMP/template.json" '
+            [($tpl[0].Parameters // [])[] | select(.NoEcho) | .ParameterKey] as $hidden
+            | .[] | "   \(.ParameterKey) = " + (
+                if .UsePreviousValue then "(keeps current value)"
+                elif (.ParameterKey as $k | $hidden | index($k)) != null then "****"
+                else .ParameterValue end)
+          ' "$RUNNER_TEMP/params.json"
+          echo "::endgroup::"
+
+          params=()
+          if [ "$(jq length "$RUNNER_TEMP/params.json")" -gt 0 ]; then
+            params=(--parameters "file://$RUNNER_TEMP/params.json")
+          fi
+
+          cs_name="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "$MODE" = create ]; then
+            cs_type=CREATE; kind=""; drift_aware=()
+            echo "📝 Creating CREATE change set $cs_name…"
+          else
+            # Drift-aware: CloudFormation compares the template with the LIVE resources (not just
+            # the last template), so changes made outside CloudFormation show up – and executing
+            # the change set puts them back to the template.
+            cs_type=UPDATE; kind=", drift-aware"; drift_aware=(--deployment-mode REVERT_DRIFT)
+            echo "📝 Creating drift-aware UPDATE change set $cs_name (compared with the live resources)…"
+          fi
+          if ! created=$(aws cloudformation create-change-set \
+                           --stack-name "$STACK_NAME" \
+                           --change-set-name "$cs_name" \
+                           --change-set-type "$cs_type" \
+                           "${drift_aware[@]}" \
+                           "${tpl[@]}" "${params[@]}" \
+                           --capabilities CAPABILITY_NAMED_IAM \
+                           --description "GitHub Actions run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}" \
+                           --output json); then
+            echo "::error title=Change set failed::CloudFormation rejected the change set – see the error above."
+            exit 1
+          fi
+          cs_id=$(jq -r .Id <<< "$created")
+          stack_id=$(jq -r .StackId <<< "$created")
+
+          while :; do
+            cs=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" \
+                   --change-set-name "$cs_name" --include-property-values --output json)
+            status=$(jq -r .Status <<< "$cs")
+            case "$status" in
+              CREATE_PENDING|CREATE_IN_PROGRESS) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+          reason=$(jq -r '.StatusReason // ""' <<< "$cs")
+
+          # Nothing to change → this stage passes and there is nothing to execute
+          if [ "$status" = FAILED ] && grep -qE "didn't contain changes|No updates are to be performed" <<< "$reason"; then
+            echo "✅ No changes – the stack already matches this template and these parameters, and nothing needs putting back. Nothing to execute."
+            aws cloudformation delete-change-set --stack-name "$STACK_NAME" --change-set-name "$cs_name" || true
+            printf '### 📝 Change set\n✅ No changes – the stack is already up to date. Nothing to execute.\n' >> "$GITHUB_STEP_SUMMARY"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$status" != CREATE_COMPLETE ]; then
+            echo "❌ Change set $status: $reason"
+            echo "::error title=Change set failed::$reason"
+            printf '### 📝 Change set\n❌ **%s** – %s\n' "$status" "$reason" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # ── What executing it would do ──
+          # A drift-aware change set (existing stack) compares the template with the LIVE resources,
+          # so every property change is one of:
+          #   🧹 manual change removed – changed outside CloudFormation; executing puts the template value back
+          #   📋 template change       – what this template / these parameters change
+          #   ✋ manual change kept    – the template now matches the live value; only the drift record is reset
+          jq '
+            def drifted: .Drift != null and .Drift.ActualValue != .Drift.PreviousValue;
+            [.Changes[]?.ResourceChange // empty
+             | ([.Details[]?.Target // empty
+                 | {path: (.Path // ("/" + .Attribute + (if .Name then "/" + .Name else "" end))),
+                    type: (.AttributeChangeType // ""), before: .BeforeValue, after: .AfterValue,
+                    rec: (.RequiresRecreation // "Never"), drifted: drifted,
+                    synced: (.AttributeChangeType == "SyncWithActual"),
+                    live: .Drift.ActualValue, last: .Drift.PreviousValue}]
+                | unique_by([.path, .type, .before, .after])) as $p
+             | (.ResourceDriftStatus // "") as $ds
+             | . + {drift: $ds,
+                    gone: ($ds == "DELETED" and (.Action | IN("Remove", "SyncWithActual") | not)),
+                    tmpl: [$p[] | select((.synced | not) and ((.drifted | not) or .after != .last))],
+                    undo: [$p[] | select(.drifted and (.synced | not))],
+                    kept: [$p[] | select(.synced)],
+                    nprops: ($p | length),
+                    ignored: (.ResourceDriftIgnoredAttributes // .ResourceDriftIgnoredProperties // [])}
+             | . + {is_tmpl: (((.Action | IN("Add", "Remove", "Import", "Dynamic")) and (.gone | not))
+                              or (.Action == "Modify" and ((.tmpl | length) > 0
+                                  or (.nprops == 0 and (.drift | IN("MODIFIED", "DELETED") | not))))),
+                    is_undo: ((.undo | length) > 0 or .gone
+                              or (.drift == "MODIFIED" and .Action == "Modify" and .nprops == 0)),
+                    is_kept: ((.kept | length) > 0 or .Action == "SyncWithActual")}]
+          ' <<< "$cs" > "$RUNNER_TEMP/changes.json"
+
+          read -r n_all n_add n_mod n_del n_rep n_undo n_kept n_unchecked <<< "$(jq -r '
+            [length,
+             (map(select(.is_tmpl and .Action == "Add")) | length),
+             (map(select(.is_tmpl and (.Action | IN("Modify", "Dynamic", "Import")))) | length),
+             (map(select(.is_tmpl and .Action == "Remove")) | length),
+             (map(select(.Replacement == "True")) | length),
+             (map(select(.is_undo)) | length),
+             (map(select(.is_kept)) | length),
+             (map(select(.drift | IN("UNSUPPORTED", "UNKNOWN"))) | length)] | @tsv' "$RUNNER_TEMP/changes.json")"
+
+          # One text block per list – printed in the log here and reused in the run summary
+          jq '
+            def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+            def clip: if length > 300 then .[:300] + " …" else . end;
+            # JSON values print as-is, plain text gets quotes
+            def fmt: if . == null then "(none)" else tostring | . as $s
+                     | (try ($s | fromjson | type) catch "string") as $t
+                     | (if $t == "string" then ($s | tojson) else $s end) | clip end;
+            def secretish: test("password|secret|token|passphrase|credential|privatekey"; "i");
+            def show($v): if (.path | secretish) and $v != null then "(hidden)" else ($v | fmt) end;
+            def mark: if .type == "Add" then "+" elif .type == "Remove" then "-" elif .type == "Modify" then "~" else "•" end;
+            def icon: if .Action == "Add" then "➕" elif .Action == "Remove" then "➖"
+                      elif .Replacement == "True" then "🔄" elif .Action == "Modify" then "🔧" else "• " end;
+            def row($icon; $note): ("   \($icon) \(.LogicalResourceId | pad(38)) \(.ResourceType | pad(42)) " + $note) | sub(" +$"; "");
+            {
+              manual: [.[] | select(.is_undo)
+                | row(if .gone then "➕" else "🔧" end;
+                      if .gone then "deleted outside CloudFormation – will be re-created"
+                      elif (.undo | length) == 0 then "changed outside CloudFormation – see the change set in the console"
+                      else "" end),
+                  (.undo[] | "        \(mark) \(.path | pad(42)) live \(show(.live)) → "
+                             + (if .type == "Remove" then "(removed)" else show(.after) end)
+                             + (if .after != .last then "   (your template changes it too)" else "" end))],
+              template: [.[] | select(.is_tmpl)
+                | (("   \(icon) \(.Action | pad(8)) \(.LogicalResourceId | pad(38)) \(.ResourceType | pad(42)) "
+                    + (if .Replacement == "True" then "⚠ REPLACEMENT"
+                       elif .Replacement == "Conditional" then "may be replaced"
+                       elif .Action == "Remove" then "(\(.PolicyAction // "Delete"))"
+                       else "" end)) | sub(" +$"; "")),
+                  (.tmpl[]
+                   | (if .drifted then .last else .before end) as $bv
+                   | show($bv) as $b | show(.after) as $a
+                   | "        \(mark) \(.path | pad(42)) "
+                     + (if .type == "Add" then "→ \($a)"
+                        elif .type == "Remove" then "\($b) → (removed)"
+                        elif $bv == null and .after == null then "(resolved at deploy time)"
+                        else "\($b) → \($a)" end)
+                     + (if .rec == "Always" then "   ⚠ forces replacement"
+                        elif .rec == "Conditionally" then "   (may force replacement)" else "" end)
+                     + (if .drifted then "   (also changed by hand – see the manual changes)" else "" end))],
+              kept: [.[] | select(.is_kept)
+                | row("✋"; ""),
+                  (.kept[] | "        = \(.path | pad(42)) keeps the live value \(show(.live // .before))")],
+              unchecked: [.[] | select(.drift | IN("UNSUPPORTED", "UNKNOWN"))
+                | row("❔"; if .drift == "UNSUPPORTED" then "this type is not compared with the live resource"
+                           else "its live settings could not be read" end)],
+              ignored: [.[] | select((.ignored | length) > 0)
+                | row("ℹ️ "; [.ignored[] | "\(.Path // "?") (\(.Reason // "?"))"] | join(", "))]
+            }
+          ' "$RUNNER_TEMP/changes.json" > "$RUNNER_TEMP/report.json"
+          for part in manual template kept unchecked ignored; do
+            jq -r --arg p "$part" '.[$p][]' "$RUNNER_TEMP/report.json" > "$RUNNER_TEMP/$part.txt"
+          done
+
+          if [ "$MODE" = update ]; then
+            if [ "$n_undo" -gt 0 ]; then
+              echo "🧹 Manual changes that will be REMOVED if you execute this: $n_undo resource(s)"
+              echo "   Changed outside CloudFormation – executing puts them back to the template (live → after):"
+              echo
+              cat "$RUNNER_TEMP/manual.txt"
+            else
+              echo "✅ No manual changes will be removed – nothing changed outside CloudFormation gets overwritten."
+            fi
+            echo
+          fi
+          echo "📋 Template changes that will be APPLIED if you execute this: $n_add to add · $n_mod to modify · $n_del to remove"
+          echo
+          if [ -s "$RUNNER_TEMP/template.txt" ]; then
+            cat "$RUNNER_TEMP/template.txt"
+          elif [ "$n_all" -eq 0 ]; then
+            echo "   (no resource changes – stack-level update only, e.g. outputs or tags)"
+          elif [ "$n_undo" -gt 0 ]; then
+            echo "   (none – the template itself changes nothing; executing only puts back the manual changes above)"
+          else
+            echo "   (none)"
+          fi
+          echo
+          if [ -s "$RUNNER_TEMP/kept.txt" ]; then
+            echo "✋ Manual changes KEPT – the template now matches the live value, so the resource is not touched: $n_kept resource(s)"
+            cat "$RUNNER_TEMP/kept.txt"
+            echo
+          fi
+          if [ -s "$RUNNER_TEMP/unchecked.txt" ]; then
+            echo "❔ Not compared with the live resources – a manual change on these would not show above: $n_unchecked resource(s)"
+            cat "$RUNNER_TEMP/unchecked.txt"
+            echo
+          fi
+          if [ -s "$RUNNER_TEMP/ignored.txt" ]; then
+            echo "ℹ️  Drift left alone on purpose – AWS-managed, write-only or sensitive settings are not put back:"
+            cat "$RUNNER_TEMP/ignored.txt"
+            echo
+          fi
+          if [ "$n_undo" -gt 0 ]; then
+            echo "::warning title=Manual changes will be removed::$n_undo resource(s) in $STACK_NAME were changed outside CloudFormation – executing this change set puts them back to the template (listed in the Change set log)."
+          fi
+          if [ "$n_rep" -gt 0 ]; then
+            echo "::warning title=Replacement::$n_rep resource(s) will be REPLACED (deleted and re-created) if you execute this change set"
+          fi
+          if [ "$n_del" -gt 0 ]; then
+            echo "::warning title=Removal::$n_del resource(s) will be removed if you execute this change set"
+          fi
+
+          # Older pipeline change sets still waiting on this stack could be executed by mistake
+          others=$(aws cloudformation list-change-sets --stack-name "$STACK_NAME" --output json 2> /dev/null |
+                     jq -r --arg me "$cs_name" '[.Summaries[]? | select(.ChangeSetName != $me and .ExecutionStatus == "AVAILABLE") | .ChangeSetName] | join(", ")' || true)
+          if [ -n "$others" ]; then
+            echo "::warning title=Older change sets waiting::$STACK_NAME also has older change sets ready: $others. Don't execute them by mistake – delete any you no longer need."
+          fi
+
+          # Direct link to this change set in the console
+          account=$(cut -d: -f5 <<< "$stack_id")
+          enc() { jq -rn --arg v "$1" '$v | @uri'; }
+          console="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/changesets/changes?stackId=$(enc "$stack_id")&changeSetId=$(enc "$cs_id")"
+
+          {
+            echo "has_changes=true"
+            echo "change_set=$cs_name"
+            echo "stack_id=$stack_id"
+            echo "manual_changes=$n_undo"
+          } >> "$GITHUB_OUTPUT"
+
+          also=""
+          if [ "$n_undo" -gt 0 ]; then also=" Executing it also removes the $n_undo manual change(s) listed above."; fi
+          if [ "$DEPLOY" = yes ] && [ "$n_undo" -gt 0 ] && [ "$REMOVE_MANUAL" != yes ]; then
+            echo "✋ Change set $cs_name is ready, but it would remove $n_undo manual change(s) and Remove manual changes = no."
+            echo "   The Deploy stage stops before executing it – nothing will be deployed. Your options:"
+            echo "   • remove them: re-run with Remove manual changes = yes"
+            echo "   • keep them: copy the live values into the template, commit, and re-run"
+            echo "   • or review this change set and execute it yourself in the AWS console:"
+            echo "     $console"
+            echo "::warning title=Not deploying – would remove manual changes::$cs_name would remove $n_undo manual change(s). Remove manual changes = no, so the Deploy stage stops before executing it."
+            heading="### 📝 Change set ready – not deploying: it would remove manual changes"
+            next=$(printf '✋ **Deploy = yes, but Remove manual changes = no** – this change set would remove **%s** manual change(s), so the Deploy stage stops before executing it. Re-run with *Remove manual changes = yes* to deploy it, or [review and execute it in the AWS console](%s).' "$n_undo" "$console")
+          elif [ "$DEPLOY" = yes ]; then
+            echo "✅ Change set $cs_name is ready. Deploy = yes → the next stage executes it.$also"
+            echo "   Follow it in the AWS console too (account $account · $ROLE_ALIAS · $REGION):"
+            echo "   $console"
+            echo "::notice title=Change set ready – deploying next::$cs_name is executed by the Deploy stage (account $account, $REGION).$also"
+            heading="### 📝 Change set ready – deploying next"
+            next=$(printf '🚀 **Deploy = yes** – the next stage executes this change set.%s [Open it in the AWS console](%s)' "$also" "$console")
+          else
+            echo "✅ Change set $cs_name is ready. Nothing has been deployed.$also"
+            echo "👉 Review and execute it in the AWS console (account $account · $ROLE_ALIAS · $REGION):"
+            echo "   $console"
+            echo "::notice title=Change set ready – not deployed::Review and execute $cs_name in the AWS console (account $account, $REGION). The link is in the log and the run summary."
+            heading="### 📝 Change set ready for review – nothing deployed yet"
+            next=$(printf '👉 **[Review and execute it in the AWS console](%s)**' "$console")
+          fi
+
+          {
+            echo "$heading"
+            printf '`%s` (%s%s) on `%s` · account `%s` (%s) · %s\n\n' "$cs_name" "$cs_type" "$kind" "$STACK_NAME" "$account" "$ROLE_ALIAS" "$REGION"
+            if [ "$MODE" = update ]; then printf '🧹 **%s** manual change(s) will be removed · ' "$n_undo"; fi
+            printf '📋 **%s** to add · **%s** to modify · **%s** to remove' "$n_add" "$n_mod" "$n_del"
+            if [ "$n_rep" -gt 0 ]; then printf ' · ⚠️ **%s** replacement(s)' "$n_rep"; fi
+            printf '\n\n%s\n\n' "$next"
+            if [ "$n_undo" -gt 0 ]; then
+              echo "#### 🧹 Manual changes that will be removed if you execute this"
+              echo "Changed outside CloudFormation – executing puts them back to the template (live → after)."
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/manual.txt"
+              echo '```'
+              echo
+            fi
+            if [ -s "$RUNNER_TEMP/template.txt" ]; then
+              echo "#### 📋 Template changes that will be applied if you execute this"
+              echo "| Action | Resource | Type | Replacement |"
+              echo "|---|---|---|---|"
+              jq -r '.[] | select(.is_tmpl) | "| \(.Action) | `\(.LogicalResourceId)` | \(.ResourceType) | \(.Replacement // "-") |"' "$RUNNER_TEMP/changes.json"
+              echo
+              echo "<details><summary>Property-level changes (before → after)</summary>"
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/template.txt"
+              echo '```'
+              echo "</details>"
+              echo
+            fi
+            for part in kept unchecked ignored; do
+              [ -s "$RUNNER_TEMP/$part.txt" ] || continue
+              case "$part" in
+                kept)      echo "#### ✋ Manual changes kept – the template now matches them" ;;
+                unchecked) echo "#### ❔ Not compared with the live resources" ;;
+                ignored)   echo "#### ℹ️ Drift left alone on purpose (AWS-managed, write-only or sensitive)" ;;
+              esac
+              echo '```text'
+              cat "$RUNNER_TEMP/$part.txt"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 4 · Deploy: only when Deploy = yes – check manual changes, execute, follow ─
+  deploy:
+    name: 🚀 Deploy
+    needs: [prepare, changeset]
+    if: ${{ !cancelled() && inputs.deploy == 'yes' && needs.changeset.result == 'success' && needs.changeset.outputs.has_changes == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CHANGE_SET: ${{ needs.changeset.outputs.change_set }}
+      STACK_ID: ${{ needs.changeset.outputs.stack_id }}
+      MANUAL_CHANGES: ${{ needs.changeset.outputs.manual_changes }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Check manual changes
+        run: |
+          # The change set puts manual changes back to the template – only allowed when
+          # Remove manual changes = yes. Otherwise stop here, before anything is executed.
+          if [ "${MANUAL_CHANGES:-0}" -eq 0 ]; then
+            echo "✅ This change set removes no manual changes."
+            exit 0
+          fi
+          if [ "$REMOVE_MANUAL" = yes ]; then
+            echo "🧹 Remove manual changes = yes – going ahead. The $MANUAL_CHANGES manual change(s) listed in the Change set stage go back to the template."
+            exit 0
+          fi
+          echo "✋ Not deployed: change set $CHANGE_SET would remove $MANUAL_CHANGES manual change(s) – they are listed in the Change set stage."
+          echo "   • remove them: re-run with Remove manual changes = yes"
+          echo "   • keep them: copy the live values into the template, commit, and re-run"
+          echo "   • or review the change set and execute it yourself in the AWS console (link in the Change set stage)"
+          {
+            echo "### 🚀 Deploy"
+            echo "✋ **Not deployed** – change set \`$CHANGE_SET\` would remove **$MANUAL_CHANGES** manual change(s) and *Remove manual changes* is **no**."
+            echo
+            echo "Re-run with *Remove manual changes = yes* to deploy it, copy the live values into the template to keep them, or execute the change set in the AWS console after review."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Not deployed – would remove manual changes::$CHANGE_SET would remove $MANUAL_CHANGES manual change(s). Re-run with Remove manual changes = yes, or keep them by copying the live values into the template."
+          exit 1
+
+      - name: Sign in to IMS Root
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ needs.prepare.outputs.broker_role }}
+          role-session-name: ims-root-${{ github.run_id }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Switch to the deploy role in the target account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-chaining: true
+          role-to-assume: ${{ needs.prepare.outputs.target_role }}
+          role-session-name: cft-${{ github.run_id }}
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession
+          aws-region: ${{ env.REGION }}
+
+      - name: Execute change set and follow the stack events
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          lost="Could not read the stack from CloudFormation (the sign-in may have expired). The deployment is NOT cancelled – it keeps running in AWS, follow it in the console."
+
+          if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::warning title=Deploying from a branch::This run is on '$GITHUB_REF_NAME', not '$DEFAULT_BRANCH' – you are deploying code that is not merged yet."
+          fi
+
+          enc() { jq -rn --arg v "$1" '$v | @uri'; }
+          console="https://${REGION}.console.aws.amazon.com/cloudformation/home?region=${REGION}#/stacks/stackinfo?stackId=$(enc "$STACK_ID")"
+
+          # Note which events already exist, so only this deployment's events are shown
+          events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+            fail "Can't read stack events" "Nothing was deployed. The role needs cloudformation:DescribeStackEvents to follow a deployment."
+          jq -r '.StackEvents[]?.EventId' <<< "$events" > "$RUNNER_TEMP/seen.txt"
+          : > "$RUNNER_TEMP/events.txt"
+          : > "$RUNNER_TEMP/failed.txt"
+
+          echo "🚀 Executing change set $CHANGE_SET on $STACK_NAME …"
+          if [ "${MANUAL_CHANGES:-0}" -gt 0 ]; then
+            echo "🧹 This also removes the $MANUAL_CHANGES manual change(s) listed in the Change set stage – they go back to the template."
+          fi
+          aws cloudformation execute-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" ||
+            fail "Execute failed" "CloudFormation did not start the change set (see the error above) – nothing was deployed. The role needs cloudformation:ExecuteChangeSet."
+          echo "▶ Started – following the stack events (checked every 15 s)"
+          echo
+
+          deadline=$((SECONDS + 3300))   # the sign-in lasts about an hour, so stop following after 55 minutes
+          while :; do
+            status=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                       --query 'Stacks[0].StackStatus' --output text) || fail "Lost contact" "$lost"
+            cs_state=$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" \
+                         --query ExecutionStatus --output text 2> /dev/null) || cs_state=UNKNOWN
+            events=$(aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 100 --output json) ||
+              fail "Lost contact" "$lost"
+
+            # New events only, oldest first
+            jq --rawfile seen "$RUNNER_TEMP/seen.txt" '
+              ($seen | split("\n")) as $s
+              | [.StackEvents[]? | select((.EventId as $i | $s | index($i)) == null)] | sort_by(.Timestamp)
+            ' <<< "$events" > "$RUNNER_TEMP/new.json"
+            jq -r '
+              def pad($n): tostring | if length >= $n then . else . + (" " * ($n - length)) end;
+              .[] | "   \(.Timestamp[11:19])  \(.LogicalResourceId | pad(34)) \(.ResourceStatus)"
+                    + (if (.ResourceStatus | test("FAILED")) and .ResourceStatusReason != null
+                       then "\n        ↳ \(.ResourceStatusReason)" else "" end)
+            ' "$RUNNER_TEMP/new.json" | tee -a "$RUNNER_TEMP/events.txt"
+            jq -r '.[] | select(.ResourceStatus | test("FAILED")) | select(.ResourceStatusReason != null)
+                   | "\(.LogicalResourceId): \(.ResourceStatusReason)"' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/failed.txt"
+            jq -r '.[].EventId' "$RUNNER_TEMP/new.json" >> "$RUNNER_TEMP/seen.txt"
+
+            # Finished = the stack is no longer busy AND the change set has left AVAILABLE / EXECUTE_IN_PROGRESS
+            case "$status" in
+              *_IN_PROGRESS) ;;
+              *) case "$cs_state" in AVAILABLE|EXECUTE_IN_PROGRESS) ;; *) break ;; esac ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] ||
+              fail "Still running" "$STACK_NAME is still $status after 55 minutes. The deployment is NOT cancelled – follow it in the AWS console: $console"
+            sleep 15
+          done
+
+          # ── Verdict ──
+          msg=""
+          if [ "$cs_state" = OBSOLETE ]; then
+            msg="The change set became obsolete – another change reached the stack first, so this one was not deployed. Run the pipeline again."
+          else
+            case "$status" in
+              CREATE_COMPLETE|UPDATE_COMPLETE) ;;
+              UPDATE_ROLLBACK_COMPLETE)
+                msg="The update failed and CloudFormation rolled the stack back to its previous state." ;;
+              ROLLBACK_COMPLETE)
+                msg="The create failed and the stack was rolled back. Delete the stack in the CloudFormation console before running again." ;;
+              UPDATE_ROLLBACK_FAILED)
+                msg="The update failed and so did the rollback. In the console use Stack actions → Continue update rollback." ;;
+              ROLLBACK_FAILED)
+                msg="The create failed and so did the rollback. Delete the stack in the console (retain the resources that block it)." ;;
+              *)
+                msg="The stack ended as $status." ;;
+            esac
+          fi
+
+          {
+            echo "### 🚀 Deploy"
+            if [ -z "$msg" ]; then echo "✅ **Deployed** – the stack finished as \`$status\`."; else echo "❌ **Deploy failed** – $msg"; fi
+            printf '\n`%s` · change set `%s` · [open the stack in the AWS console](%s)\n' "$STACK_NAME" "$CHANGE_SET" "$console"
+            if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+              printf '\n**What failed**\n\n```text\n'
+              cat "$RUNNER_TEMP/failed.txt"
+              printf '```\n'
+            fi
+            printf '\n<details><summary>Stack events</summary>\n\n```text\n'
+            cat "$RUNNER_TEMP/events.txt"
+            printf '```\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo
+          if [ -z "$msg" ]; then
+            echo "✅ Deployed – $STACK_NAME is $status."
+            echo "::notice title=Deployed::$STACK_NAME finished as $status"
+            exit 0
+          fi
+          echo "❌ $msg"
+          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+            echo "What failed:"
+            sed 's/^/   • /' "$RUNNER_TEMP/failed.txt"
+          fi
+          echo "::error title=Deploy failed::$msg"
+          exit 1
