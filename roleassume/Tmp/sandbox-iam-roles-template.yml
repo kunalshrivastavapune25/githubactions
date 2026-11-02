@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Sandbox account - GitHub pipeline roles iamr-sandbox-sbx-deploy and iamr-sandbox-sbx-read, assumed from IMS Root
+
+# Hop 2 of the GitHub -> AWS sign-in for the Sandbox account.
+#   GitHub OIDC -> iamr-sandbox-sbx-<deploy|read> in IMS Root (390403857119)
+#               -> iamr-sandbox-sbx-<deploy|read> here in the Sandbox account (036943221440)
+# Same pattern as the Workload account stacks (e.g. ims-tst-coll-ims-coll):
+#   deploy = AdministratorAccess, read = ReadOnlyAccess.
+#
+# Deploy in:    the Sandbox account 036943221440 (e.g. stack name ims-sbx-sandbox-ims-sandbox).
+# Deploy order: AFTER sandbox-ims-root-iam-roles-template.yml has created the IMS Root roles.
+#               The second trust statement names the IMS Root role, and IAM rejects a trust policy
+#               that names a role that does not exist yet ("Invalid principal in policy").
+# Parameters:   SourceAccountId = 390403857119 (sandbox-params.json).
+
+Parameters:
+  SourceAccountId:
+    Type: String
+    Description: AWS Account ID that can assume these roles (IMS Root 390403857119)
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+    # Default: "390403857119"
+
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "iamr-sandbox-sbx-deploy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${SourceAccountId}:root"
+            Action: "sts:AssumeRole"
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${SourceAccountId}:role/iamr-sandbox-sbx-deploy"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AdministratorAccess"
+
+  ReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "iamr-sandbox-sbx-read"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${SourceAccountId}:root"
+            Action: "sts:AssumeRole"
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${SourceAccountId}:role/iamr-sandbox-sbx-read"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/ReadOnlyAccess"
+
+Outputs:
+  DeployRoleArn:
+    Description: ARN of the Sandbox deploy role (hop 2)
+    Value: !GetAtt DeployRole.Arn
+  ReadRoleArn:
+    Description: ARN of the Sandbox read role (hop 2)
+    Value: !GetAtt ReadRole.Arn

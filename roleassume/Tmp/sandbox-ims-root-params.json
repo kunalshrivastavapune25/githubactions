@@ -1,0 +1,62 @@
+[
+  {
+    "ParameterKey": "managementaccountid",
+    "ParameterValue": "390403857119"
+  },
+  {
+    "ParameterKey": "sbxsandboxaccid",
+    "ParameterValue": "036943221440"
+  },
+  {
+    "ParameterKey": "GithubOwner1",
+    "ParameterValue": "archive"
+  },
+  {
+    "ParameterKey": "GithubOwner2",
+    "ParameterValue": "eng-lib"
+  },
+  {
+    "ParameterKey": "GithubOwner3",
+    "ParameterValue": "eng-tf"
+  },
+  {
+    "ParameterKey": "GithubOwner4",
+    "ParameterValue": "fin"
+  },
+  {
+    "ParameterKey": "GithubOwner5",
+    "ParameterValue": "ims-api"
+  },
+  {
+    "ParameterKey": "GithubOwner6",
+    "ParameterValue": "ims-app"
+  },
+  {
+    "ParameterKey": "GithubOwner7",
+    "ParameterValue": "ims-data"
+  },
+  {
+    "ParameterKey": "GithubOwner8",
+    "ParameterValue": "ims-plat"
+  },
+  {
+    "ParameterKey": "GithubOwner9",
+    "ParameterValue": "ims-tool"
+  },
+  {
+    "ParameterKey": "GithubOwner10",
+    "ParameterValue": "plat-eng"
+  },
+  {
+    "ParameterKey": "GithubOwner11",
+    "ParameterValue": "tu-plat"
+  },
+  {
+    "ParameterKey": "GithubOwner12",
+    "ParameterValue": "tu-data"
+  },
+  {
+    "ParameterKey": "GithubOwner13",
+    "ParameterValue": "test"
+  }
+]

@@ -1,0 +1,108 @@
+name: Test Sandbox sign-in
+
+# Checks both Sandbox stacks end to end, for both roles:
+#   GitHub OIDC -> iamr-sandbox-sbx-<role> in IMS Root (390403857119)
+#               -> iamr-sandbox-sbx-<role> in the Sandbox account (036943221440)
+# Nothing is created in AWS: the write test uses EC2's --dry-run, which only checks permissions.
+# Put this file in .github/workflows/ of any repo in the 13 GitHub organisations, on the default branch,
+# then run it from the Actions tab.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-1
+  IMS_ROOT_ACCOUNT: "390403857119"
+  SANDBOX_ACCOUNT: "036943221440"
+
+jobs:
+  signin:
+    name: Sandbox ${{ matrix.access }} role
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        access: [deploy, read]
+    env:
+      ACCESS: ${{ matrix.access }}
+      ROLE_NAME: iamr-sandbox-sbx-${{ matrix.access }}
+    steps:
+      - name: "Hop 1: GitHub to IMS Root"
+        id: hop1
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.IMS_ROOT_ACCOUNT }}:role/${{ env.ROLE_NAME }}
+          role-session-name: gh-${{ github.run_id }}-${{ matrix.access }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check hop 1
+        run: |
+          arn=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Signed in as $arn"
+          if [[ "$arn" != "arn:aws:sts::${IMS_ROOT_ACCOUNT}:assumed-role/${ROLE_NAME}/"* ]]; then
+            echo "::error::Hop 1 signed in as $arn, expected $ROLE_NAME in IMS Root ($IMS_ROOT_ACCOUNT)"
+            exit 1
+          fi
+
+      - name: "Hop 2: IMS Root to Sandbox"
+        id: hop2
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.SANDBOX_ACCOUNT }}:role/${{ env.ROLE_NAME }}
+          role-session-name: gh-${{ github.run_id }}-${{ matrix.access }}
+          role-chaining: true
+          role-skip-session-tagging: true
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check hop 2
+        run: |
+          arn=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Signed in as $arn"
+          if [[ "$arn" != "arn:aws:sts::${SANDBOX_ACCOUNT}:assumed-role/${ROLE_NAME}/"* ]]; then
+            echo "::error::Hop 2 signed in as $arn, expected $ROLE_NAME in the Sandbox account ($SANDBOX_ACCOUNT)"
+            exit 1
+          fi
+
+      - name: Read test
+        run: |
+          arn=$(aws iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text)
+          echo "Read works: found $arn"
+
+      - name: Write test (dry run, nothing is created)
+        run: |
+          out=$(aws ec2 create-key-pair --key-name "signin-test-${GITHUB_RUN_ID}" --dry-run 2>&1) || true
+          echo "$out"
+          case "$out" in
+            *DryRunOperation*) can_write=yes ;;
+            *UnauthorizedOperation*) can_write=no ;;
+            *) echo "::error::Unexpected answer from EC2 (shown above)"; exit 1 ;;
+          esac
+          if [ "$ACCESS" = deploy ] && [ "$can_write" = no ]; then
+            if grep -q "service control policy" <<< "$out"; then
+              echo "::warning::$ROLE_NAME signed in, but a service control policy (guardrail) on the Sandbox blocks ec2:CreateKeyPair. The roles work; check that guardrail separately."
+            else
+              echo "::error::$ROLE_NAME cannot write: it should have AdministratorAccess"
+              exit 1
+            fi
+          elif [ "$ACCESS" = read ] && [ "$can_write" = yes ]; then
+            echo "::error::$ROLE_NAME can write: it should only have ReadOnlyAccess"
+            exit 1
+          fi
+          echo "$ROLE_NAME: both hops work; can write: $can_write" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: What to check if this failed
+        if: failure()
+        env:
+          HOP1: ${{ steps.hop1.outcome }}
+          HOP2: ${{ steps.hop2.outcome }}
+        run: |
+          if [ "$HOP1" = failure ]; then
+            echo "::error::Hop 1 failed. Is the IMS Root stack (sandbox-ims-root-iam-roles-template.yml) deployed in $IMS_ROOT_ACCOUNT, and is this repo in one of the 13 GitHub organisations?"
+          elif [ "$HOP2" = failure ]; then
+            echo "::error::Hop 2 failed. Is the Sandbox stack (sandbox-iam-roles-template.yml) deployed in $SANDBOX_ACCOUNT with SourceAccountId $IMS_ROOT_ACCOUNT?"
+          fi

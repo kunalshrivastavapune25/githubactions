@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: IMS Root - GitHub OIDC roles iamr-sandbox-sbx-deploy and iamr-sandbox-sbx-read for the Sandbox account (036943221440)
+
+# Hop 1 of the GitHub -> AWS sign-in for the Sandbox account.
+#   GitHub OIDC -> iamr-sandbox-sbx-<deploy|read> here in IMS Root (390403857119)
+#               -> iamr-sandbox-sbx-<deploy|read> in the Sandbox account (036943221440)
+# Each role here can only assume the same-named role in the Sandbox account; it has no other permissions.
+# Same trust (13 GitHub organisations) and policy pattern as the roles in iam-roles-template.yml.
+#
+# Deploy in:    IMS Root / management account 390403857119, as its own stack
+#               (e.g. ims-root-iam-roles-sandbox). Do not add these roles to the main IAM roles stack
+#               while this stack exists: IAM role names are unique per account.
+# Deploy order: 1) this stack   2) sandbox-iam-roles-template.yml in the Sandbox account.
+#               The Sandbox roles' trust policies name these roles, and IAM rejects a trust policy
+#               that names a role that does not exist yet ("Invalid principal in policy").
+# Parameters:   sandbox-ims-root-params.json (same values as the main stack's params file).
+
+Parameters:
+  GitHubAudience:
+    Type: String
+    Default: "sts.amazonaws.com"
+    Description: Audience for GitHub OIDC tokens
+  managementaccountid:
+    Type: String
+    Description: Management AWS Account ID (IMS Root)
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  sbxsandboxaccid:
+    Type: String
+    Description: Sandbox AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  GithubOwner1:
+    Type: String
+    Description: GitHub organization1 name
+  GithubOwner2:
+    Type: String
+    Description: GitHub organization2 name
+  GithubOwner3:
+    Type: String
+    Description: GitHub organization3 name
+  GithubOwner4:
+    Type: String
+    Description: GitHub organization4 name
+  GithubOwner5:
+    Type: String
+    Description: GitHub organization5 name
+  GithubOwner6:
+    Type: String
+    Description: GitHub organization6 name
+  GithubOwner7:
+    Type: String
+    Description: GitHub organization7 name
+  GithubOwner8:
+    Type: String
+    Description: GitHub organization8 name
+  GithubOwner9:
+    Type: String
+    Description: GitHub organization9 name
+  GithubOwner10:
+    Type: String
+    Description: GitHub organization10 name
+  GithubOwner11:
+    Type: String
+    Description: GitHub organization11 name
+  GithubOwner12:
+    Type: String
+    Description: GitHub organization12 name
+  GithubOwner13:
+    Type: String
+    Description: GitHub organization13 name
+
+Resources:
+  SBXSandboxDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-sandbox-sbx-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-sandbox-sbx-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${sbxsandboxaccid}:role/iamr-sandbox-sbx-deploy"
+
+  SBXSandboxReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-sandbox-sbx-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-sandbox-sbx-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${sbxsandboxaccid}:role/iamr-sandbox-sbx-read"
+
+Outputs:
+  SBXSandboxDeployRoleARN:
+    Description: ARN of the Sandbox OIDC deploy role (hop 1)
+    Value: !GetAtt SBXSandboxDeployRole.Arn
+  SBXSandboxReadRoleARN:
+    Description: ARN of the Sandbox OIDC read role (hop 1)
+    Value: !GetAtt SBXSandboxReadRole.Arn
