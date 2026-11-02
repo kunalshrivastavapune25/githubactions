@@ -1,97 +1,42 @@
-### 📋 Account setup test – 64 of 93 passed (region eu-west-1, nothing deployed)
+I'll pull AWS's current console steps for a service-managed StackSet, so the UI instructions match the screens you'll see.
 
-| Account | Role | Hop 1 (IMS Root) | Hop 2 (account) | CloudFormation | Write test | Result | What to fix |
-|---|---|---|---|---|---|---|---|
-| Infrastructure-PRD-BackupServices · `117837574201` | `iamr-backup-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570527) | role missing in 117837574201 or not trusting IMS Root - deploy or check ims-prd-backup-ims-backup |
-| Infrastructure-PRD-BackupServices · `117837574201` | `iamr-backup-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570537) | role missing in 117837574201 or not trusting IMS Root - deploy or check ims-prd-backup-ims-backup |
-| Infrastructure-PRD-DirectoryServices · `502818572771` | `iamr-directory-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570532) | role missing in 502818572771 or not trusting IMS Root - deploy or check ims-prd-directory-ims-directory |
-| Infrastructure-PRD-DirectoryServices · `502818572771` | `iamr-directory-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570552) | role missing in 502818572771 or not trusting IMS Root - deploy or check ims-prd-directory-ims-directory |
-| Infrastructure-PRD-IMSDirectoryServices · `794035561643` | `iamr-imsdirectory-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570562) | role missing in 794035561643 or not trusting IMS Root - deploy or check ims-prd-imsdirectory-ims-imsdirectory |
-| Infrastructure-PRD-IMSDirectoryServices · `794035561643` | `iamr-imsdirectory-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570567) | role missing in 794035561643 or not trusting IMS Root - deploy or check ims-prd-imsdirectory-ims-imsdirectory |
-| Infrastructure-PRD-MonitoringServices · `116355921084` | `iamr-monitoring-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570542) | role missing in 116355921084 or not trusting IMS Root - deploy or check ims-prd-monitoring-ims-monitoring |
-| Infrastructure-PRD-MonitoringServices · `116355921084` | `iamr-monitoring-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570582) | role missing in 116355921084 or not trusting IMS Root - deploy or check ims-prd-monitoring-ims-monitoring |
-| Infrastructure-PRD-NetworkServices · `584477831165` | `iamr-net-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570557) |  |
-| Infrastructure-PRD-NetworkServices · `584477831165` | `iamr-net-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570572) |  |
-| Infrastructure-PRD-RestoreServices · `899867382346` | `iamr-restore-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570577) | role missing in 899867382346 or not trusting IMS Root - deploy or check ims-prd-restore-ims-restore |
-| Infrastructure-PRD-RestoreServices · `899867382346` | `iamr-restore-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570547) | role missing in 899867382346 or not trusting IMS Root - deploy or check ims-prd-restore-ims-restore |
-| Infrastructure-PRD-SecurityInfra · `119810927880` | `iamr-secinfra-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570587) | role missing in 119810927880 or not trusting IMS Root - deploy or check ims-prd-secinfra-ims-secinfra |
-| Infrastructure-PRD-SecurityInfra · `119810927880` | `iamr-secinfra-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570607) | role missing in 119810927880 or not trusting IMS Root - deploy or check ims-prd-secinfra-ims-secinfra |
-| Infrastructure-PRD-SharedServices · `356666487118` | `iamr-shared-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570592) | role missing in 356666487118 or not trusting IMS Root - deploy or check ims-prd-shared-ims-shared |
-| Infrastructure-PRD-SharedServices · `356666487118` | `iamr-shared-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570597) | role missing in 356666487118 or not trusting IMS Root - deploy or check ims-prd-shared-ims-shared |
-| Infrastructure-PPE-DirectoryServices · `575210791269` | `iamr-directory-ppe-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570612) | role missing in 575210791269 or not trusting IMS Root - deploy or check ims-ppe-directory-ims-directory |
-| Infrastructure-PPE-DirectoryServices · `575210791269` | `iamr-directory-ppe-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570602) | role missing in 575210791269 or not trusting IMS Root - deploy or check ims-ppe-directory-ims-directory |
-| Infrastructure-PPE-MonitoringServices · `277352717275` | `iamr-monitoring-ppe-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570627) | role missing in 277352717275 or not trusting IMS Root - deploy or check ims-ppe-monitoring-ims-monitoring |
-| Infrastructure-PPE-MonitoringServices · `277352717275` | `iamr-monitoring-ppe-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570617) | role missing in 277352717275 or not trusting IMS Root - deploy or check ims-ppe-monitoring-ims-monitoring |
-| Infrastructure-PPE-NetworkServices · `097357356161` | `iamr-net-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570622) |  |
-| Infrastructure-PPE-NetworkServices · `097357356161` | `iamr-net-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570642) |  |
-| Infrastructure-PPE-SharedServices · `050916357979` | `iamr-shared-ppe-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570632) | role missing in 050916357979 or not trusting IMS Root - deploy or check ims-ppe-shared-ims-shared |
-| Infrastructure-PPE-SharedServices · `050916357979` | `iamr-shared-ppe-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570647) | role missing in 050916357979 or not trusting IMS Root - deploy or check ims-ppe-shared-ims-shared |
-| Infrastructure-TST-NetworkServices · `762649987860` | `iamr-net-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570637) |  |
-| Infrastructure-TST-NetworkServices · `762649987860` | `iamr-net-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570662) |  |
-| Infrastructure-DEV-DirectoryServices · `119328599021` | `iamr-directory-dev-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570652) | role missing in 119328599021 or not trusting IMS Root - deploy or check ims-dev-directory-ims-directory |
-| Infrastructure-DEV-DirectoryServices · `119328599021` | `iamr-directory-dev-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570667) | role missing in 119328599021 or not trusting IMS Root - deploy or check ims-dev-directory-ims-directory |
-| Infrastructure-DEV-SharedServices · `697858908364` | `iamr-shared-dev-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570672) | role missing in 697858908364 or not trusting IMS Root - deploy or check ims-dev-shared-ims-shared |
-| Infrastructure-DEV-SharedServices · `697858908364` | `iamr-shared-dev-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570657) | role missing in 697858908364 or not trusting IMS Root - deploy or check ims-dev-shared-ims-shared |
-| Security-PRD-CoreAudit · `084828582217` | `iamr-audit-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570702) | role missing in 084828582217 or not trusting IMS Root - deploy or check ims-prd-audit-ims-audit |
-| Security-PRD-CoreAudit · `084828582217` | `iamr-audit-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570687) | role missing in 084828582217 or not trusting IMS Root - deploy or check ims-prd-audit-ims-audit |
-| Security-PRD-CoreLogArchive · `816069122659` | `iamr-logarchive-prd-deploy` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570707) | role missing in 816069122659 or not trusting IMS Root - deploy or check ims-prd-logarchive-ims-logarchive |
-| Security-PRD-CoreLogArchive · `816069122659` | `iamr-logarchive-prd-read` | ✅ | ❌ | ⏭️ | ⏭️ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570697) | role missing in 816069122659 or not trusting IMS Root - deploy or check ims-prd-logarchive-ims-logarchive |
-| Sandbox · `036943221440` | `iamr-sandbox-sbx-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570742) |  |
-| Sandbox · `036943221440` | `iamr-sandbox-sbx-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570732) |  |
-| Root-IMS · `390403857119` | `iamr-plat-prd-deploy` | ✅ | — (one hop) | ✅ | ❌ | [❌](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570737) | deploy role cannot write - should be AdministratorAccess |
-| Workload-PRD-COLL · `360760094668` | `iamr-coll-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570727) |  |
-| Workload-PRD-COLL · `360760094668` | `iamr-coll-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570752) |  |
-| Workload-PRD-COMM · `743664054145` | `iamr-comm-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570762) |  |
-| Workload-PRD-COMM · `743664054145` | `iamr-comm-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570767) |  |
-| Workload-PRD-CUST · `625455456159` | `iamr-cust-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570782) |  |
-| Workload-PRD-CUST · `625455456159` | `iamr-cust-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570787) |  |
-| Workload-PRD-FIN · `269223836033` | `iamr-fin-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570777) |  |
-| Workload-PRD-FIN · `269223836033` | `iamr-fin-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570792) |  |
-| Workload-PRD-INT · `688393570754` | `iamr-int-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570797) |  |
-| Workload-PRD-INT · `688393570754` | `iamr-int-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570812) |  |
-| Workload-PRD-SEC · `167732745138` | `iamr-sec-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570817) |  |
-| Workload-PRD-SEC · `167732745138` | `iamr-sec-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570807) |  |
-| Workload-PRD-TU · `102386506938` | `iamr-tu-prd-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570827) |  |
-| Workload-PRD-TU · `102386506938` | `iamr-tu-prd-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570832) |  |
-| Workload-PPE-COLL · `510648452158` | `iamr-coll-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570842) |  |
-| Workload-PPE-COLL · `510648452158` | `iamr-coll-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570847) |  |
-| Workload-PPE-COMM · `465288594919` | `iamr-comm-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570837) |  |
-| Workload-PPE-COMM · `465288594919` | `iamr-comm-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570857) |  |
-| Workload-PPE-CUST · `914293676169` | `iamr-cust-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570862) |  |
-| Workload-PPE-CUST · `914293676169` | `iamr-cust-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570852) |  |
-| Workload-PPE-FIN · `690157464386` | `iamr-fin-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570867) |  |
-| Workload-PPE-FIN · `690157464386` | `iamr-fin-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570902) |  |
-| Workload-PPE-INT · `582600397500` | `iamr-int-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570897) |  |
-| Workload-PPE-INT · `582600397500` | `iamr-int-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570917) |  |
-| Workload-PPE-SEC · `008151864097` | `iamr-sec-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570912) |  |
-| Workload-PPE-SEC · `008151864097` | `iamr-sec-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570907) |  |
-| Workload-PPE-TU · `149916142642` | `iamr-tu-ppe-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570927) |  |
-| Workload-PPE-TU · `149916142642` | `iamr-tu-ppe-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570922) |  |
-| Workload-TST-COLL · `802346121725` | `iamr-coll-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570942) |  |
-| Workload-TST-COLL · `802346121725` | `iamr-coll-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570937) |  |
-| Workload-TST-COMM · `349070092169` | `iamr-comm-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522570952) |  |
-| Workload-TST-COMM · `349070092169` | `iamr-comm-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571162) |  |
-| Workload-TST-CUST · `683554909248` | `iamr-cust-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571152) |  |
-| Workload-TST-CUST · `683554909248` | `iamr-cust-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571172) |  |
-| Workload-TST-FIN · `600468853064` | `iamr-fin-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571177) |  |
-| Workload-TST-FIN · `600468853064` | `iamr-fin-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571182) |  |
-| Workload-TST-INT · `369668971894` | `iamr-int-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571187) |  |
-| Workload-TST-INT · `369668971894` | `iamr-int-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571157) |  |
-| Workload-TST-SEC · `983537964894` | `iamr-sec-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571192) |  |
-| Workload-TST-SEC · `983537964894` | `iamr-sec-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571167) |  |
-| Workload-TST-TU · `000617168429` | `iamr-tu-tst-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571197) |  |
-| Workload-TST-TU · `000617168429` | `iamr-tu-tst-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571212) |  |
-| Workload-DEV-COLL · `723840606274` | `iamr-coll-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571217) |  |
-| Workload-DEV-COLL · `723840606274` | `iamr-coll-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571222) |  |
-| Workload-DEV-COMM · `603774591545` | `iamr-comm-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571227) |  |
-| Workload-DEV-COMM · `603774591545` | `iamr-comm-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571257) |  |
-| Workload-DEV-CUST · `424851482642` | `iamr-cust-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571232) |  |
-| Workload-DEV-CUST · `424851482642` | `iamr-cust-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571237) |  |
-| Workload-DEV-FIN · `533735820510` | `iamr-fin-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571252) |  |
-| Workload-DEV-FIN · `533735820510` | `iamr-fin-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571267) |  |
-| Workload-DEV-INT · `094840069448` | `iamr-int-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571262) |  |
-| Workload-DEV-INT · `094840069448` | `iamr-int-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571272) |  |
-| Workload-DEV-SEC · `475831670563` | `iamr-sec-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571277) |  |
-| Workload-DEV-SEC · `475831670563` | `iamr-sec-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571282) |  |
-| Workload-DEV-TU · `158878467712` | `iamr-tu-dev-deploy` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571302) |  |
-| Workload-DEV-TU · `158878467712` | `iamr-tu-dev-read` | ✅ | ✅ | ✅ | ✅ | [✅](https://tescoims.ghe.com/plat-eng/AWS-Landing-Zone/actions/runs/374758192/job/1522571292) |  |
+I have AWS's current screen names. I'll generate the account ID lists straight from the template so you can paste them without typos.
+
+Here's the YAML (`platform-iam-roles-stackset-template.yml`, the same 14-account file as before) and the console steps. You can ignore the script.
+
+**Before you start:** in AWS Organizations (IMS Root), open AWS accounts and copy the OU IDs (`ou-xxxx-xxxxxxxx`) of **Infrastructure** and **Security**. The Infrastructure ppe and dev sub-OUs are included automatically.
+
+**Console steps (IMS Root 390403857119)**
+1. Open **CloudFormation** and set the Region (top right) to **Europe (Ireland) eu-west-1**.
+2. Go to **StackSets**, then **Create StackSet**.
+3. **Permissions:** Service-managed permissions. If a banner says trusted access is off, it is activated when you click Next in step 6.
+4. **Prerequisite:** Template is ready. **Specify template:** Upload a template file, choose `platform-iam-roles-stackset-template.yml`, then **Next**.
+5. **Specify StackSet details:**
+   - Name: `ims-platform-iamr-roles`
+   - Parameter `SourceAccountId`: leave the pre-filled `390403857119`
+   - **Next**
+6. **Configure StackSet options:**
+   - Execution configuration: **Active**
+   - Capabilities: tick **I acknowledge that this template may create IAM resources**
+   - **Next**
+7. **Set deployment options:**
+   - **Deployment targets:** Deploy to organizational units (OUs). Add an OU: Infrastructure OU ID, then add an OU: Security OU ID.
+   - **Account filter type:** Intersection. Paste the account IDs (lists below).
+   - **Automatic deployment:** Deactivated.
+   - **Specify regions:** **Europe (Ireland) only.** IAM is global, so a second Region would fail on the role names.
+   - **Deployment options:** Maximum concurrent accounts: Number **5**. Failure tolerance: Number **14**, so every account is tried even if one fails. Region concurrency: Sequential. Concurrency mode: Strict failure tolerance.
+   - **Next**
+8. **Review:** check it shows 2 OUs, Intersection with your accounts, and 1 Region. Then **Create StackSet**.
+9. **Check the result:** on the StackSet page, **Operations** should show SUCCEEDED and **Stack instances** should show each account as CURRENT. If an account shows OUTDATED, its status reason says why.
+
+**Account IDs to paste in step 7**
+- All 14 at once:
+  `356666487118,899867382346,116355921084,794035561643,119810927880,502818572771,117837574201,050916357979,277352717275,575210791269,119328599021,697858908364,084828582217,816069122659`
+- Or pilot first: `697858908364` (Shared_Services dev). Once it shows CURRENT, add the other 13 via **Actions**, then **Add stacks to StackSet**. Use the same two OUs, Intersection and Europe (Ireland):
+  `356666487118,899867382346,116355921084,794035561643,119810927880,502818572771,117837574201,050916357979,277352717275,575210791269,119328599021,084828582217,816069122659`
+
+Paste the IDs rather than typing them: two start with a zero (`050916357979`, `084828582217`).
+
+**Afterwards:** re-run **Test account setups** for the Infrastructure and Security OUs. Those 28 red rows should turn green.
+
+Source: [Create StackSets with service-managed permissions (AWS docs)](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/account-level-targets.html)
