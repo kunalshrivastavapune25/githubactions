@@ -1,0 +1,347 @@
+name: Test account setups
+
+# Tests every account in the CloudFormation pipeline's dropdown (47) without deploying anything:
+#   GitHub OIDC -> iamr-<account>-<env>-<role> in IMS Root (390403857119) -> the same-named role in the account
+#   (Root-IMS: one hop with iamr-plat-prd-deploy), exactly as latest_cft_deployment.yml signs in.
+# Then, as that role: the identity is right, the CloudFormation calls the pipeline makes work (list stacks, check a
+# template), and an EC2 dry-run write test (deploy roles can write, read roles cannot). Nothing is created.
+# One job per account and role, then a Report job with one table and what to fix.
+# Run it from the same repo as the pipeline (plat-eng/AWS-Landing-Zone): the prd network roles only accept that repo
+# and ims-app/ims-app-identity. Roles: 47 deploy + 46 read (Root-IMS has only its deploy role).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ou:
+        description: Which accounts to test
+        type: choice
+        default: All
+        options:
+          - All
+          - Infrastructure
+          - Security
+          - Sandbox
+          - Root
+          - Workload
+      roles:
+        description: "Which roles: deploy (what the pipeline uses), read, or both"
+        type: choice
+        default: both
+        options:
+          - both
+          - deploy
+          - read
+      region:
+        description: Region for the CloudFormation and EC2 checks
+        type: choice
+        default: eu-west-1
+        options:
+          - eu-west-1
+          - us-east-1
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMS_ROOT_ACCOUNT: "390403857119"
+  REGION: ${{ inputs.region }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: 🗂️ Pick accounts
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.pick.outputs.targets }}
+    steps:
+      - name: Pick accounts
+        id: pick
+        env:
+          OU: ${{ inputs.ou }}
+          ROLES: ${{ inputs.roles }}
+        run: |
+          targets=$(jq -c --arg ou "$OU" --arg roles "$ROLES" \
+            '[.[] | select(($ou == "All" or .ou == $ou) and ($roles == "both" or .access == $roles))]' <<'JSON'
+          [
+            {"label": "Infrastructure-PRD-BackupServices", "ou": "Infrastructure", "id": "117837574201", "role": "iamr-backup-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-backup-ims-backup", "note": ""},
+            {"label": "Infrastructure-PRD-BackupServices", "ou": "Infrastructure", "id": "117837574201", "role": "iamr-backup-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-backup-ims-backup", "note": ""},
+            {"label": "Infrastructure-PRD-DirectoryServices", "ou": "Infrastructure", "id": "502818572771", "role": "iamr-directory-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-directory-ims-directory", "note": ""},
+            {"label": "Infrastructure-PRD-DirectoryServices", "ou": "Infrastructure", "id": "502818572771", "role": "iamr-directory-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-directory-ims-directory", "note": ""},
+            {"label": "Infrastructure-PRD-IMSDirectoryServices", "ou": "Infrastructure", "id": "794035561643", "role": "iamr-imsdirectory-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-imsdirectory-ims-imsdirectory", "note": ""},
+            {"label": "Infrastructure-PRD-IMSDirectoryServices", "ou": "Infrastructure", "id": "794035561643", "role": "iamr-imsdirectory-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-imsdirectory-ims-imsdirectory", "note": ""},
+            {"label": "Infrastructure-PRD-MonitoringServices", "ou": "Infrastructure", "id": "116355921084", "role": "iamr-monitoring-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-monitoring-ims-monitoring", "note": ""},
+            {"label": "Infrastructure-PRD-MonitoringServices", "ou": "Infrastructure", "id": "116355921084", "role": "iamr-monitoring-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-monitoring-ims-monitoring", "note": ""},
+            {"label": "Infrastructure-PRD-NetworkServices", "ou": "Infrastructure", "id": "584477831165", "role": "iamr-net-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-net-ims-net", "note": "only plat-eng/AWS-Landing-Zone and ims-app/ims-app-identity may sign in to this one"},
+            {"label": "Infrastructure-PRD-NetworkServices", "ou": "Infrastructure", "id": "584477831165", "role": "iamr-net-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-net-ims-net", "note": "only plat-eng/AWS-Landing-Zone and ims-app/ims-app-identity may sign in to this one"},
+            {"label": "Infrastructure-PRD-RestoreServices", "ou": "Infrastructure", "id": "899867382346", "role": "iamr-restore-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-restore-ims-restore", "note": ""},
+            {"label": "Infrastructure-PRD-RestoreServices", "ou": "Infrastructure", "id": "899867382346", "role": "iamr-restore-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-restore-ims-restore", "note": ""},
+            {"label": "Infrastructure-PRD-SecurityInfra", "ou": "Infrastructure", "id": "119810927880", "role": "iamr-secinfra-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-secinfra-ims-secinfra", "note": ""},
+            {"label": "Infrastructure-PRD-SecurityInfra", "ou": "Infrastructure", "id": "119810927880", "role": "iamr-secinfra-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-secinfra-ims-secinfra", "note": ""},
+            {"label": "Infrastructure-PRD-SharedServices", "ou": "Infrastructure", "id": "356666487118", "role": "iamr-shared-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-shared-ims-shared", "note": ""},
+            {"label": "Infrastructure-PRD-SharedServices", "ou": "Infrastructure", "id": "356666487118", "role": "iamr-shared-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-prd-shared-ims-shared", "note": ""},
+            {"label": "Infrastructure-PPE-DirectoryServices", "ou": "Infrastructure", "id": "575210791269", "role": "iamr-directory-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-ppe-directory-ims-directory", "note": ""},
+            {"label": "Infrastructure-PPE-DirectoryServices", "ou": "Infrastructure", "id": "575210791269", "role": "iamr-directory-ppe-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-ppe-directory-ims-directory", "note": ""},
+            {"label": "Infrastructure-PPE-MonitoringServices", "ou": "Infrastructure", "id": "277352717275", "role": "iamr-monitoring-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-ppe-monitoring-ims-monitoring", "note": ""},
+            {"label": "Infrastructure-PPE-MonitoringServices", "ou": "Infrastructure", "id": "277352717275", "role": "iamr-monitoring-ppe-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-ppe-monitoring-ims-monitoring", "note": ""},
+            {"label": "Infrastructure-PPE-NetworkServices", "ou": "Infrastructure", "id": "097357356161", "role": "iamr-net-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-net-ims-net", "note": ""},
+            {"label": "Infrastructure-PPE-NetworkServices", "ou": "Infrastructure", "id": "097357356161", "role": "iamr-net-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-net-ims-net", "note": ""},
+            {"label": "Infrastructure-PPE-SharedServices", "ou": "Infrastructure", "id": "050916357979", "role": "iamr-shared-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-ppe-shared-ims-shared", "note": ""},
+            {"label": "Infrastructure-PPE-SharedServices", "ou": "Infrastructure", "id": "050916357979", "role": "iamr-shared-ppe-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-ppe-shared-ims-shared", "note": ""},
+            {"label": "Infrastructure-TST-NetworkServices", "ou": "Infrastructure", "id": "762649987860", "role": "iamr-net-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-net-ims-net", "note": ""},
+            {"label": "Infrastructure-TST-NetworkServices", "ou": "Infrastructure", "id": "762649987860", "role": "iamr-net-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-net-ims-net", "note": ""},
+            {"label": "Infrastructure-DEV-DirectoryServices", "ou": "Infrastructure", "id": "119328599021", "role": "iamr-directory-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-dev-directory-ims-directory", "note": ""},
+            {"label": "Infrastructure-DEV-DirectoryServices", "ou": "Infrastructure", "id": "119328599021", "role": "iamr-directory-dev-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-dev-directory-ims-directory", "note": ""},
+            {"label": "Infrastructure-DEV-SharedServices", "ou": "Infrastructure", "id": "697858908364", "role": "iamr-shared-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-dev-shared-ims-shared", "note": ""},
+            {"label": "Infrastructure-DEV-SharedServices", "ou": "Infrastructure", "id": "697858908364", "role": "iamr-shared-dev-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-infrastructure", "stack": "ims-dev-shared-ims-shared", "note": ""},
+            {"label": "Security-PRD-CoreAudit", "ou": "Security", "id": "084828582217", "role": "iamr-audit-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-security", "stack": "ims-prd-audit-ims-audit", "note": ""},
+            {"label": "Security-PRD-CoreAudit", "ou": "Security", "id": "084828582217", "role": "iamr-audit-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-security", "stack": "ims-prd-audit-ims-audit", "note": ""},
+            {"label": "Security-PRD-CoreLogArchive", "ou": "Security", "id": "816069122659", "role": "iamr-logarchive-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-security", "stack": "ims-prd-logarchive-ims-logarchive", "note": ""},
+            {"label": "Security-PRD-CoreLogArchive", "ou": "Security", "id": "816069122659", "role": "iamr-logarchive-prd-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-security", "stack": "ims-prd-logarchive-ims-logarchive", "note": ""},
+            {"label": "Sandbox", "ou": "Sandbox", "id": "036943221440", "role": "iamr-sandbox-sbx-deploy", "access": "deploy", "hops": "2", "rootstack": "ims-root-iam-roles-sandbox", "stack": "ims-sbx-sandbox-ims-sandbox", "note": ""},
+            {"label": "Sandbox", "ou": "Sandbox", "id": "036943221440", "role": "iamr-sandbox-sbx-read", "access": "read", "hops": "2", "rootstack": "ims-root-iam-roles-sandbox", "stack": "ims-sbx-sandbox-ims-sandbox", "note": ""},
+            {"label": "Root-IMS", "ou": "Root", "id": "390403857119", "role": "iamr-plat-prd-deploy", "access": "deploy", "hops": "1", "rootstack": "iamr-plat-prd-deploy in IMS Root (not in the iamr stacks)", "stack": "-", "note": ""},
+            {"label": "Workload-PRD-COLL", "ou": "Workload", "id": "360760094668", "role": "iamr-coll-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-coll-ims-coll", "note": ""},
+            {"label": "Workload-PRD-COLL", "ou": "Workload", "id": "360760094668", "role": "iamr-coll-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-coll-ims-coll", "note": ""},
+            {"label": "Workload-PRD-COMM", "ou": "Workload", "id": "743664054145", "role": "iamr-comm-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-comm-ims-comm", "note": ""},
+            {"label": "Workload-PRD-COMM", "ou": "Workload", "id": "743664054145", "role": "iamr-comm-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-comm-ims-comm", "note": ""},
+            {"label": "Workload-PRD-CUST", "ou": "Workload", "id": "625455456159", "role": "iamr-cust-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-cust-ims-cust", "note": ""},
+            {"label": "Workload-PRD-CUST", "ou": "Workload", "id": "625455456159", "role": "iamr-cust-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-cust-ims-cust", "note": ""},
+            {"label": "Workload-PRD-FIN", "ou": "Workload", "id": "269223836033", "role": "iamr-fin-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-fin-ims-fin", "note": ""},
+            {"label": "Workload-PRD-FIN", "ou": "Workload", "id": "269223836033", "role": "iamr-fin-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-fin-ims-fin", "note": ""},
+            {"label": "Workload-PRD-INT", "ou": "Workload", "id": "688393570754", "role": "iamr-int-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-int-ims-int", "note": ""},
+            {"label": "Workload-PRD-INT", "ou": "Workload", "id": "688393570754", "role": "iamr-int-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-int-ims-int", "note": ""},
+            {"label": "Workload-PRD-SEC", "ou": "Workload", "id": "167732745138", "role": "iamr-sec-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-sec-ims-sec", "note": ""},
+            {"label": "Workload-PRD-SEC", "ou": "Workload", "id": "167732745138", "role": "iamr-sec-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-sec-ims-sec", "note": ""},
+            {"label": "Workload-PRD-TU", "ou": "Workload", "id": "102386506938", "role": "iamr-tu-prd-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-tu-ims-tu", "note": ""},
+            {"label": "Workload-PRD-TU", "ou": "Workload", "id": "102386506938", "role": "iamr-tu-prd-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-prd-tu-ims-tu", "note": ""},
+            {"label": "Workload-PPE-COLL", "ou": "Workload", "id": "510648452158", "role": "iamr-coll-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-coll-ims-coll", "note": ""},
+            {"label": "Workload-PPE-COLL", "ou": "Workload", "id": "510648452158", "role": "iamr-coll-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-coll-ims-coll", "note": ""},
+            {"label": "Workload-PPE-COMM", "ou": "Workload", "id": "465288594919", "role": "iamr-comm-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-comm-ims-comm", "note": ""},
+            {"label": "Workload-PPE-COMM", "ou": "Workload", "id": "465288594919", "role": "iamr-comm-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-comm-ims-comm", "note": ""},
+            {"label": "Workload-PPE-CUST", "ou": "Workload", "id": "914293676169", "role": "iamr-cust-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-cust-ims-cust", "note": ""},
+            {"label": "Workload-PPE-CUST", "ou": "Workload", "id": "914293676169", "role": "iamr-cust-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-cust-ims-cust", "note": ""},
+            {"label": "Workload-PPE-FIN", "ou": "Workload", "id": "690157464386", "role": "iamr-fin-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-fin-ims-fin", "note": ""},
+            {"label": "Workload-PPE-FIN", "ou": "Workload", "id": "690157464386", "role": "iamr-fin-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-fin-ims-fin", "note": ""},
+            {"label": "Workload-PPE-INT", "ou": "Workload", "id": "582600397500", "role": "iamr-int-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-int-ims-int", "note": ""},
+            {"label": "Workload-PPE-INT", "ou": "Workload", "id": "582600397500", "role": "iamr-int-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-int-ims-int", "note": ""},
+            {"label": "Workload-PPE-SEC", "ou": "Workload", "id": "008151864097", "role": "iamr-sec-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-sec-ims-sec", "note": ""},
+            {"label": "Workload-PPE-SEC", "ou": "Workload", "id": "008151864097", "role": "iamr-sec-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-sec-ims-sec", "note": ""},
+            {"label": "Workload-PPE-TU", "ou": "Workload", "id": "149916142642", "role": "iamr-tu-ppe-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-tu-ims-tu", "note": ""},
+            {"label": "Workload-PPE-TU", "ou": "Workload", "id": "149916142642", "role": "iamr-tu-ppe-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-ppe-tu-ims-tu", "note": ""},
+            {"label": "Workload-TST-COLL", "ou": "Workload", "id": "802346121725", "role": "iamr-coll-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-coll-ims-coll", "note": ""},
+            {"label": "Workload-TST-COLL", "ou": "Workload", "id": "802346121725", "role": "iamr-coll-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-coll-ims-coll", "note": ""},
+            {"label": "Workload-TST-COMM", "ou": "Workload", "id": "349070092169", "role": "iamr-comm-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-comm-ims-comm", "note": ""},
+            {"label": "Workload-TST-COMM", "ou": "Workload", "id": "349070092169", "role": "iamr-comm-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-comm-ims-comm", "note": ""},
+            {"label": "Workload-TST-CUST", "ou": "Workload", "id": "683554909248", "role": "iamr-cust-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-cust-ims-cust", "note": ""},
+            {"label": "Workload-TST-CUST", "ou": "Workload", "id": "683554909248", "role": "iamr-cust-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-cust-ims-cust", "note": ""},
+            {"label": "Workload-TST-FIN", "ou": "Workload", "id": "600468853064", "role": "iamr-fin-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-fin-ims-fin", "note": ""},
+            {"label": "Workload-TST-FIN", "ou": "Workload", "id": "600468853064", "role": "iamr-fin-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-fin-ims-fin", "note": ""},
+            {"label": "Workload-TST-INT", "ou": "Workload", "id": "369668971894", "role": "iamr-int-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-int-ims-int", "note": ""},
+            {"label": "Workload-TST-INT", "ou": "Workload", "id": "369668971894", "role": "iamr-int-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-int-ims-int", "note": ""},
+            {"label": "Workload-TST-SEC", "ou": "Workload", "id": "983537964894", "role": "iamr-sec-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-sec-ims-sec", "note": ""},
+            {"label": "Workload-TST-SEC", "ou": "Workload", "id": "983537964894", "role": "iamr-sec-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-sec-ims-sec", "note": ""},
+            {"label": "Workload-TST-TU", "ou": "Workload", "id": "000617168429", "role": "iamr-tu-tst-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-tu-ims-tu", "note": "IMS Root's iamr-tu-tst roles point at TU dev (158878467712) - fix tsttuaccid in the main IMS Root params"},
+            {"label": "Workload-TST-TU", "ou": "Workload", "id": "000617168429", "role": "iamr-tu-tst-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-tst-tu-ims-tu", "note": "IMS Root's iamr-tu-tst roles point at TU dev (158878467712) - fix tsttuaccid in the main IMS Root params"},
+            {"label": "Workload-DEV-COLL", "ou": "Workload", "id": "723840606274", "role": "iamr-coll-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-coll-ims-coll", "note": ""},
+            {"label": "Workload-DEV-COLL", "ou": "Workload", "id": "723840606274", "role": "iamr-coll-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-coll-ims-coll", "note": ""},
+            {"label": "Workload-DEV-COMM", "ou": "Workload", "id": "603774591545", "role": "iamr-comm-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-comm-ims-comm", "note": ""},
+            {"label": "Workload-DEV-COMM", "ou": "Workload", "id": "603774591545", "role": "iamr-comm-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-comm-ims-comm", "note": ""},
+            {"label": "Workload-DEV-CUST", "ou": "Workload", "id": "424851482642", "role": "iamr-cust-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-cust-ims-cust", "note": ""},
+            {"label": "Workload-DEV-CUST", "ou": "Workload", "id": "424851482642", "role": "iamr-cust-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-cust-ims-cust", "note": ""},
+            {"label": "Workload-DEV-FIN", "ou": "Workload", "id": "533735820510", "role": "iamr-fin-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-fin-ims-fin", "note": ""},
+            {"label": "Workload-DEV-FIN", "ou": "Workload", "id": "533735820510", "role": "iamr-fin-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-fin-ims-fin", "note": ""},
+            {"label": "Workload-DEV-INT", "ou": "Workload", "id": "094840069448", "role": "iamr-int-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-int-ims-int", "note": ""},
+            {"label": "Workload-DEV-INT", "ou": "Workload", "id": "094840069448", "role": "iamr-int-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-int-ims-int", "note": ""},
+            {"label": "Workload-DEV-SEC", "ou": "Workload", "id": "475831670563", "role": "iamr-sec-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-sec-ims-sec", "note": ""},
+            {"label": "Workload-DEV-SEC", "ou": "Workload", "id": "475831670563", "role": "iamr-sec-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-sec-ims-sec", "note": ""},
+            {"label": "Workload-DEV-TU", "ou": "Workload", "id": "158878467712", "role": "iamr-tu-dev-deploy", "access": "deploy", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-tu-ims-tu", "note": ""},
+            {"label": "Workload-DEV-TU", "ou": "Workload", "id": "158878467712", "role": "iamr-tu-dev-read", "access": "read", "hops": "2", "rootstack": "the main IMS Root stack (iam-roles-template.yml)", "stack": "ims-dev-tu-ims-tu", "note": ""}
+          ]
+          JSON
+          )
+          n=$(jq length <<< "$targets")
+          if [ "$n" -eq 0 ]; then
+            echo "::error title=Nothing to test::No accounts match OU '$OU' and roles '$ROLES' (Root-IMS has only a deploy role)."
+            exit 1
+          fi
+          echo "🗂️  Testing $n account role(s): OU $OU, roles $ROLES, region $REGION"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: ${{ matrix.target.label }} · ${{ matrix.target.access }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    env:
+      LABEL: ${{ matrix.target.label }}
+      ACCOUNT_ID: ${{ matrix.target.id }}
+      ROLE_NAME: ${{ matrix.target.role }}
+      ACCESS: ${{ matrix.target.access }}
+    steps:
+      - name: "Hop 1: GitHub to IMS Root"
+        id: hop1
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.IMS_ROOT_ACCOUNT }}:role/${{ matrix.target.role }}
+          role-session-name: test-${{ github.run_id }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Check hop 1
+        id: check1
+        run: |
+          arn=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Signed in as $arn"
+          if [[ "$arn" != "arn:aws:sts::${IMS_ROOT_ACCOUNT}:assumed-role/${ROLE_NAME}/"* ]]; then
+            echo "::error title=Wrong identity::Hop 1 signed in as $arn, expected $ROLE_NAME in IMS Root ($IMS_ROOT_ACCOUNT)"
+            exit 1
+          fi
+
+      - name: "Hop 2: IMS Root to the account"
+        id: hop2
+        if: matrix.target.hops == '2'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-chaining: true
+          role-to-assume: arn:aws:iam::${{ matrix.target.id }}:role/${{ matrix.target.role }}
+          role-session-name: test-${{ github.run_id }}
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true   # the iamr roles' trust policies don't allow sts:TagSession
+          aws-region: ${{ env.REGION }}
+
+      - name: Check hop 2
+        id: check2
+        if: matrix.target.hops == '2'
+        run: |
+          arn=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Signed in as $arn"
+          if [[ "$arn" != "arn:aws:sts::${ACCOUNT_ID}:assumed-role/${ROLE_NAME}/"* ]]; then
+            echo "::error title=Wrong identity::Hop 2 signed in as $arn, expected $ROLE_NAME in $ACCOUNT_ID"
+            exit 1
+          fi
+
+      - name: CloudFormation check
+        id: cfn
+        run: |
+          # The calls the deploy pipeline makes before it changes anything – nothing is created.
+          aws cloudformation list-stacks --max-items 1 --output json > /dev/null
+          echo "✔ Can read the stacks in $ACCOUNT_ID ($REGION)"
+          if [ "$ACCESS" = deploy ]; then
+            aws cloudformation get-template-summary --output json \
+              --template-body '{"Resources": {"Probe": {"Type": "AWS::SNS::Topic"}}}' > /dev/null
+            echo "✔ Can check a template (the pipeline's first CloudFormation call)"
+          fi
+
+      - name: Write test (dry run, nothing is created)
+        id: write
+        run: |
+          out=$(aws ec2 create-key-pair --key-name "setup-test-${GITHUB_RUN_ID}" --dry-run 2>&1) || true
+          echo "$out"
+          case "$out" in
+            *DryRunOperation*) can_write=yes ;;
+            *UnauthorizedOperation*) can_write=no ;;
+            *) echo "::error title=Unexpected answer::EC2 answered something else (shown above)"; exit 1 ;;
+          esac
+          if [ "$ACCESS" = deploy ] && [ "$can_write" = no ]; then
+            if grep -q "service control policy" <<< "$out"; then
+              echo "::warning title=Guardrail::$ROLE_NAME signed in, but a service control policy blocks ec2:CreateKeyPair in $ACCOUNT_ID. The role works; that guardrail is separate."
+            else
+              echo "::error title=Cannot write::$ROLE_NAME cannot write: it should have AdministratorAccess"
+              exit 1
+            fi
+          elif [ "$ACCESS" = read ] && [ "$can_write" = yes ]; then
+            echo "::error title=Can write::$ROLE_NAME can write: it should only have ReadOnlyAccess"
+            exit 1
+          fi
+          echo "✔ $ROLE_NAME in $ACCOUNT_ID: can write = $can_write (as expected for a $ACCESS role)"
+
+      - name: What to fix
+        if: failure()
+        env:
+          HOP1: ${{ steps.hop1.outcome }}
+          CHECK1: ${{ steps.check1.outcome }}
+          HOP2: ${{ steps.hop2.outcome }}
+          CHECK2: ${{ steps.check2.outcome }}
+          CFN: ${{ steps.cfn.outcome }}
+          ROOT_STACK: ${{ matrix.target.rootstack }}
+          ACCOUNT_STACK: ${{ matrix.target.stack }}
+          NOTE: ${{ matrix.target.note }}
+        run: |
+          if [ "$HOP1" = failure ]; then
+            msg="IMS Root role $ROLE_NAME refused this repo or does not exist - check $ROOT_STACK"
+          elif [ "$CHECK1" = failure ] || [ "$CHECK2" = failure ]; then
+            msg="Signed in, but not as $ROLE_NAME in the expected account - check the role names and account IDs"
+          elif [ "$HOP2" = failure ]; then
+            msg="$ROLE_NAME is missing in $ACCOUNT_ID or does not trust IMS Root - deploy or check stack $ACCOUNT_STACK"
+          elif [ "$CFN" = failure ]; then
+            msg="$ROLE_NAME cannot call CloudFormation in $REGION - check the guardrails (SCPs) for that region"
+          else
+            msg="The write test did not give the expected answer - see the step above"
+          fi
+          if [ -n "$NOTE" ]; then msg="$msg. Note: $NOTE"; fi
+          echo "::error title=$LABEL ($ACCESS)::$msg"
+
+  report:
+    name: 📋 Report
+    needs: [plan, test]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read     # to read this run's job results
+      contents: read
+    steps:
+      - name: One table for all accounts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGETS: ${{ needs.plan.outputs.targets }}
+        run: |
+          # This run's jobs and their steps, 100 per page
+          : > "$RUNNER_TEMP/pages.json"
+          page=1
+          while :; do
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100&page=$page" \
+              > "$RUNNER_TEMP/page.json"
+            cat "$RUNNER_TEMP/page.json" >> "$RUNNER_TEMP/pages.json"
+            [ "$(jq '.jobs | length' "$RUNNER_TEMP/page.json")" -lt 100 ] && break
+            page=$((page + 1))
+          done
+          jq -s '{jobs: map(.jobs[])}' "$RUNNER_TEMP/pages.json" > "$RUNNER_TEMP/jobs.json"
+          jq -r --argjson targets "$TARGETS" --arg region "$REGION" '
+            def icon: if . == "success" then "✅" elif . == "failure" then "❌" elif . == "skipped" then "⏭️"
+                      elif . == null then "—" else "⚠️ \(.)" end;
+            .jobs as $jobs
+            | ($targets | map(. as $t
+                | ([$jobs[] | select(.name == "\($t.label) · \($t.access)")] | .[0]) as $j
+                | ($j.steps // [] | map({key: .name, value: .conclusion}) | from_entries) as $s
+                | (if $s["Hop 1: GitHub to IMS Root"] == "failure" then "IMS Root role refused this repo or does not exist - check \($t.rootstack)"
+                   elif $s["Check hop 1"] == "failure" or $s["Check hop 2"] == "failure" then "signed in as the wrong role or account"
+                   elif $s["Hop 2: IMS Root to the account"] == "failure" then "role missing in \($t.id) or not trusting IMS Root - deploy or check \($t.stack)"
+                   elif $s["CloudFormation check"] == "failure" then "cannot call CloudFormation in \($region) - check the guardrails"
+                   elif $s["Write test (dry run, nothing is created)"] == "failure" then
+                     (if $t.access == "deploy" then "deploy role cannot write - should be AdministratorAccess" else "read role can write - should be ReadOnlyAccess" end)
+                   elif $j == null then "job not found in this run"
+                   else "" end) as $fix
+                | {t: $t, j: $j, s: $s,
+                   fix: (if $fix != "" and $t.note != "" then "\($fix). \($t.note)" else $fix end)})) as $rows
+            | ($rows | map(select(.j.conclusion == "success")) | length) as $ok
+            | "### 📋 Account setup test – \($ok) of \($rows | length) passed (region \($region), nothing deployed)",
+              "",
+              "| Account | Role | Hop 1 (IMS Root) | Hop 2 (account) | CloudFormation | Write test | Result | What to fix |",
+              "|---|---|---|---|---|---|---|---|",
+              ($rows[] | "| \(.t.label) · `\(.t.id)` | `\(.t.role)` | \(.s["Hop 1: GitHub to IMS Root"] | icon) | "
+                + (if .t.hops == "1" then "— (one hop)" else (.s["Hop 2: IMS Root to the account"] | icon) end)
+                + " | \(.s["CloudFormation check"] | icon) | \(.s["Write test (dry run, nothing is created)"] | icon) | "
+                + (if .j == null then "⚠️ not found" else "[\(.j.conclusion | icon)](\(.j.html_url))" end)
+                + " | \(.fix) |")
+          ' "$RUNNER_TEMP/jobs.json" > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          head -1 "$RUNNER_TEMP/report.md"
+          grep '❌' "$RUNNER_TEMP/report.md" | sed 's/^/  /' || echo "  No failures."
