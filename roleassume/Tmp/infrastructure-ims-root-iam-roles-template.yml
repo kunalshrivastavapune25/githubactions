@@ -1,0 +1,1514 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: IMS Root - GitHub OIDC roles (deploy and read) for the Infrastructure OU accounts
+
+# Hop 1 of the GitHub -> AWS sign-in for the Infrastructure OU accounts:
+#   GitHub OIDC -> iamr-<account>-<env>-<deploy|read> here in IMS Root (390403857119)
+#               -> the same-named role in the account
+# Each role here can only assume the same-named role in its one account; it has no other permissions.
+# Same trust (13 GitHub organisations) and policy pattern as the roles in iam-roles-template.yml.
+#
+# Accounts in this stack:
+#   prd  Shared_Services         356666487118  -> iamr-shared-prd-deploy / -read
+#   prd  Restore_Services        899867382346  -> iamr-restore-prd-deploy / -read
+#   prd  Monitoring_Services     116355921084  -> iamr-monitoring-prd-deploy / -read
+#   prd  IMS Directory Services  794035561643  -> iamr-imsdirectory-prd-deploy / -read
+#   prd  Security_Infra          119810927880  -> iamr-secinfra-prd-deploy / -read
+#   prd  Directory_Services      502818572771  -> iamr-directory-prd-deploy / -read
+#   prd  Backup_Services         117837574201  -> iamr-backup-prd-deploy / -read
+#   ppe  Shared_Services         050916357979  -> iamr-shared-ppe-deploy / -read
+#   ppe  Monitoring_Services     277352717275  -> iamr-monitoring-ppe-deploy / -read
+#   ppe  Directory_Services      575210791269  -> iamr-directory-ppe-deploy / -read
+#   dev  Directory_Services      119328599021  -> iamr-directory-dev-deploy / -read
+#   dev  Shared_Services         697858908364  -> iamr-shared-dev-deploy / -read
+#
+# Not in this stack: the three Network_Services accounts. Their IMS Root roles iamr-net-prd/ppe/tst-deploy
+# and -read already exist in the main stack (iam-roles-template.yml); adding them here would fail
+# because the role names are taken. The prd network roles there accept only two repos.
+#
+# Deploy in:    IMS Root / management account 390403857119, as its own stack (ims-root-iam-roles-infrastructure).
+#               IAM role names are unique per account, so none of these roles may also be in another stack.
+# Deploy order: 1) this stack   2) each account's iamr-roles template.
+#               The account roles' trust policies name these roles, and IAM rejects a trust policy that
+#               names a role that does not exist yet ("Invalid principal in policy").
+# Parameters:   params.json in cloudformation/ims-root/iam-roles-infrastructure/
+
+Parameters:
+  GitHubAudience:
+    Type: String
+    Default: "sts.amazonaws.com"
+    Description: Audience for GitHub OIDC tokens
+  managementaccountid:
+    Type: String
+    Description: Management AWS Account ID (IMS Root)
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prdsharedaccid:
+    Type: String
+    Description: Production Shared_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prdrestoreaccid:
+    Type: String
+    Description: Production Restore_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prdmonitoringaccid:
+    Type: String
+    Description: Production Monitoring_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prdimsdirectoryaccid:
+    Type: String
+    Description: Production IMS Directory Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prdsecinfraaccid:
+    Type: String
+    Description: Production Security_Infra AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prddirectoryaccid:
+    Type: String
+    Description: Production Directory_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  prdbackupaccid:
+    Type: String
+    Description: Production Backup_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  ppesharedaccid:
+    Type: String
+    Description: PPE Shared_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  ppemonitoringaccid:
+    Type: String
+    Description: PPE Monitoring_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  ppedirectoryaccid:
+    Type: String
+    Description: PPE Directory_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  devdirectoryaccid:
+    Type: String
+    Description: Development Directory_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  devsharedaccid:
+    Type: String
+    Description: Development Shared_Services AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+  GithubOwner1:
+    Type: String
+    Description: GitHub organization1 name
+  GithubOwner2:
+    Type: String
+    Description: GitHub organization2 name
+  GithubOwner3:
+    Type: String
+    Description: GitHub organization3 name
+  GithubOwner4:
+    Type: String
+    Description: GitHub organization4 name
+  GithubOwner5:
+    Type: String
+    Description: GitHub organization5 name
+  GithubOwner6:
+    Type: String
+    Description: GitHub organization6 name
+  GithubOwner7:
+    Type: String
+    Description: GitHub organization7 name
+  GithubOwner8:
+    Type: String
+    Description: GitHub organization8 name
+  GithubOwner9:
+    Type: String
+    Description: GitHub organization9 name
+  GithubOwner10:
+    Type: String
+    Description: GitHub organization10 name
+  GithubOwner11:
+    Type: String
+    Description: GitHub organization11 name
+  GithubOwner12:
+    Type: String
+    Description: GitHub organization12 name
+  GithubOwner13:
+    Type: String
+    Description: GitHub organization13 name
+
+Resources:
+  PRDSharedDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-shared-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-shared-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdsharedaccid}:role/iamr-shared-prd-deploy"
+
+  PRDSharedReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-shared-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-shared-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdsharedaccid}:role/iamr-shared-prd-read"
+
+  PRDRestoreDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-restore-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-restore-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdrestoreaccid}:role/iamr-restore-prd-deploy"
+
+  PRDRestoreReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-restore-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-restore-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdrestoreaccid}:role/iamr-restore-prd-read"
+
+  PRDMonitoringDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-monitoring-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-monitoring-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdmonitoringaccid}:role/iamr-monitoring-prd-deploy"
+
+  PRDMonitoringReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-monitoring-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-monitoring-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdmonitoringaccid}:role/iamr-monitoring-prd-read"
+
+  PRDIMSDirectoryDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-imsdirectory-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-imsdirectory-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdimsdirectoryaccid}:role/iamr-imsdirectory-prd-deploy"
+
+  PRDIMSDirectoryReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-imsdirectory-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-imsdirectory-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdimsdirectoryaccid}:role/iamr-imsdirectory-prd-read"
+
+  PRDSecInfraDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-secinfra-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-secinfra-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdsecinfraaccid}:role/iamr-secinfra-prd-deploy"
+
+  PRDSecInfraReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-secinfra-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-secinfra-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdsecinfraaccid}:role/iamr-secinfra-prd-read"
+
+  PRDDirectoryDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-directory-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-directory-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prddirectoryaccid}:role/iamr-directory-prd-deploy"
+
+  PRDDirectoryReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-directory-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-directory-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prddirectoryaccid}:role/iamr-directory-prd-read"
+
+  PRDBackupDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-backup-prd-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-backup-prd-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdbackupaccid}:role/iamr-backup-prd-deploy"
+
+  PRDBackupReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-backup-prd-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-backup-prd-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${prdbackupaccid}:role/iamr-backup-prd-read"
+
+  PPESharedDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-shared-ppe-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-shared-ppe-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${ppesharedaccid}:role/iamr-shared-ppe-deploy"
+
+  PPESharedReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-shared-ppe-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-shared-ppe-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${ppesharedaccid}:role/iamr-shared-ppe-read"
+
+  PPEMonitoringDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-monitoring-ppe-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-monitoring-ppe-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${ppemonitoringaccid}:role/iamr-monitoring-ppe-deploy"
+
+  PPEMonitoringReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-monitoring-ppe-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-monitoring-ppe-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${ppemonitoringaccid}:role/iamr-monitoring-ppe-read"
+
+  PPEDirectoryDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-directory-ppe-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-directory-ppe-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${ppedirectoryaccid}:role/iamr-directory-ppe-deploy"
+
+  PPEDirectoryReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-directory-ppe-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-directory-ppe-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${ppedirectoryaccid}:role/iamr-directory-ppe-read"
+
+  DEVDirectoryDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-directory-dev-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-directory-dev-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${devdirectoryaccid}:role/iamr-directory-dev-deploy"
+
+  DEVDirectoryReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-directory-dev-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-directory-dev-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${devdirectoryaccid}:role/iamr-directory-dev-read"
+
+  DEVSharedDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-shared-dev-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-shared-dev-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${devsharedaccid}:role/iamr-shared-dev-deploy"
+
+  DEVSharedReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iamr-shared-dev-read
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${managementaccountid}:oidc-provider/token.actions.tescoims.ghe.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                token.actions.tescoims.ghe.com:aud: !Ref GitHubAudience
+              StringLike:
+                token.actions.tescoims.ghe.com:sub:
+                  - !Sub "repo:${GithubOwner1}/*"
+                  - !Sub "repo:${GithubOwner1}@*"
+                  - !Sub "repo:${GithubOwner2}/*"
+                  - !Sub "repo:${GithubOwner2}@*"
+                  - !Sub "repo:${GithubOwner3}/*"
+                  - !Sub "repo:${GithubOwner3}@*"
+                  - !Sub "repo:${GithubOwner4}/*"
+                  - !Sub "repo:${GithubOwner4}@*"
+                  - !Sub "repo:${GithubOwner5}/*"
+                  - !Sub "repo:${GithubOwner5}@*"
+                  - !Sub "repo:${GithubOwner6}/*"
+                  - !Sub "repo:${GithubOwner6}@*"
+                  - !Sub "repo:${GithubOwner7}/*"
+                  - !Sub "repo:${GithubOwner7}@*"
+                  - !Sub "repo:${GithubOwner8}/*"
+                  - !Sub "repo:${GithubOwner8}@*"
+                  - !Sub "repo:${GithubOwner9}/*"
+                  - !Sub "repo:${GithubOwner9}@*"
+                  - !Sub "repo:${GithubOwner10}/*"
+                  - !Sub "repo:${GithubOwner10}@*"
+                  - !Sub "repo:${GithubOwner11}/*"
+                  - !Sub "repo:${GithubOwner11}@*"
+                  - !Sub "repo:${GithubOwner12}/*"
+                  - !Sub "repo:${GithubOwner12}@*"
+                  - !Sub "repo:${GithubOwner13}/*"
+                  - !Sub "repo:${GithubOwner13}@*"
+      Policies:
+        - PolicyName: assume-shared-dev-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sts:AssumeRole"
+                  - "sts:TagSession"
+                  - "sts:GetCallerIdentity"
+                Resource: !Sub "arn:aws:iam::${devsharedaccid}:role/iamr-shared-dev-read"
+
+Outputs:
+  PRDSharedDeployRoleARN:
+    Description: ARN of the Production Shared_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PRDSharedDeployRole.Arn
+  PRDSharedReadRoleARN:
+    Description: ARN of the Production Shared_Services OIDC read role (hop 1)
+    Value: !GetAtt PRDSharedReadRole.Arn
+  PRDRestoreDeployRoleARN:
+    Description: ARN of the Production Restore_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PRDRestoreDeployRole.Arn
+  PRDRestoreReadRoleARN:
+    Description: ARN of the Production Restore_Services OIDC read role (hop 1)
+    Value: !GetAtt PRDRestoreReadRole.Arn
+  PRDMonitoringDeployRoleARN:
+    Description: ARN of the Production Monitoring_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PRDMonitoringDeployRole.Arn
+  PRDMonitoringReadRoleARN:
+    Description: ARN of the Production Monitoring_Services OIDC read role (hop 1)
+    Value: !GetAtt PRDMonitoringReadRole.Arn
+  PRDIMSDirectoryDeployRoleARN:
+    Description: ARN of the Production IMS Directory Services OIDC deploy role (hop 1)
+    Value: !GetAtt PRDIMSDirectoryDeployRole.Arn
+  PRDIMSDirectoryReadRoleARN:
+    Description: ARN of the Production IMS Directory Services OIDC read role (hop 1)
+    Value: !GetAtt PRDIMSDirectoryReadRole.Arn
+  PRDSecInfraDeployRoleARN:
+    Description: ARN of the Production Security_Infra OIDC deploy role (hop 1)
+    Value: !GetAtt PRDSecInfraDeployRole.Arn
+  PRDSecInfraReadRoleARN:
+    Description: ARN of the Production Security_Infra OIDC read role (hop 1)
+    Value: !GetAtt PRDSecInfraReadRole.Arn
+  PRDDirectoryDeployRoleARN:
+    Description: ARN of the Production Directory_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PRDDirectoryDeployRole.Arn
+  PRDDirectoryReadRoleARN:
+    Description: ARN of the Production Directory_Services OIDC read role (hop 1)
+    Value: !GetAtt PRDDirectoryReadRole.Arn
+  PRDBackupDeployRoleARN:
+    Description: ARN of the Production Backup_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PRDBackupDeployRole.Arn
+  PRDBackupReadRoleARN:
+    Description: ARN of the Production Backup_Services OIDC read role (hop 1)
+    Value: !GetAtt PRDBackupReadRole.Arn
+  PPESharedDeployRoleARN:
+    Description: ARN of the PPE Shared_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PPESharedDeployRole.Arn
+  PPESharedReadRoleARN:
+    Description: ARN of the PPE Shared_Services OIDC read role (hop 1)
+    Value: !GetAtt PPESharedReadRole.Arn
+  PPEMonitoringDeployRoleARN:
+    Description: ARN of the PPE Monitoring_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PPEMonitoringDeployRole.Arn
+  PPEMonitoringReadRoleARN:
+    Description: ARN of the PPE Monitoring_Services OIDC read role (hop 1)
+    Value: !GetAtt PPEMonitoringReadRole.Arn
+  PPEDirectoryDeployRoleARN:
+    Description: ARN of the PPE Directory_Services OIDC deploy role (hop 1)
+    Value: !GetAtt PPEDirectoryDeployRole.Arn
+  PPEDirectoryReadRoleARN:
+    Description: ARN of the PPE Directory_Services OIDC read role (hop 1)
+    Value: !GetAtt PPEDirectoryReadRole.Arn
+  DEVDirectoryDeployRoleARN:
+    Description: ARN of the Development Directory_Services OIDC deploy role (hop 1)
+    Value: !GetAtt DEVDirectoryDeployRole.Arn
+  DEVDirectoryReadRoleARN:
+    Description: ARN of the Development Directory_Services OIDC read role (hop 1)
+    Value: !GetAtt DEVDirectoryReadRole.Arn
+  DEVSharedDeployRoleARN:
+    Description: ARN of the Development Shared_Services OIDC deploy role (hop 1)
+    Value: !GetAtt DEVSharedDeployRole.Arn
+  DEVSharedReadRoleARN:
+    Description: ARN of the Development Shared_Services OIDC read role (hop 1)
+    Value: !GetAtt DEVSharedReadRole.Arn
