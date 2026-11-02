@@ -1,0 +1,244 @@
+Account name
+Account ID
+OU path
+Email
+Status
+Account name
+Account ID
+OU path
+Email
+Status
+IMS
+390403857119
+Root
+AWSRootAccount@TescoIMS.Com
+Active
+Sandbox
+036943221440
+Root > Sandbox
+ims-network-services@tescoims.com
+Active
+FIN
+269223836033
+Root > Workloads > prd
+FIN.prd.01@tescoims.com
+Active
+INT
+688393570754
+Root > Workloads > prd
+INT.prd.01@tescoims.com
+Active
+COLL
+360760094668
+Root > Workloads > prd
+COLL.prd.01@tescoims.com
+Active
+CUST
+625455456159
+Root > Workloads > prd
+CUST.prd.01@tescoims.com
+Active
+TU
+102386506938
+Root > Workloads > prd
+TU.prd.01@tescoims.com
+Active
+SEC
+167732745138
+Root > Workloads > prd
+SEC.prd.01@tescoims.com
+Active
+COMM
+743664054145
+Root > Workloads > prd
+COMM.prd.01@tescoims.com
+Active
+CUST
+424851482642
+Root > Workloads > dev
+CUST.dev.01@tescoims.com
+Active
+TU
+158878467712
+Root > Workloads > dev
+TU.dev.01@tescoims.com
+Active
+COMM
+603774591545
+Root > Workloads > dev
+COMM.dev.01@tescoims.com
+Active
+INT
+094840069448
+Root > Workloads > dev
+INT.dev.01@tescoims.com
+Active
+COLL
+723840606274
+Root > Workloads > dev
+COLL.dev.01@tescoims.com
+Active
+FIN
+533735820510
+Root > Workloads > dev
+FIN.dev.01@tescoims.com
+Active
+SEC
+475831670563
+Root > Workloads > dev
+SEC.dev.01@tescoims.com
+Active
+COLL
+510648452158
+Root > Workloads > ppe
+COLL.ppe.01@tescoims.com
+Active
+CUST
+914293676169
+Root > Workloads > ppe
+CUST.ppe.01@tescoims.com
+Active
+FIN
+690157464386
+Root > Workloads > ppe
+FIN.ppe.01@tescoims.com
+Active
+COMM
+465288594919
+Root > Workloads > ppe
+COMM.ppe.01@tescoims.com
+Active
+SEC
+008151864097
+Root > Workloads > ppe
+SEC.ppe.01@tescoims.com
+Active
+INT
+582600397500
+Root > Workloads > ppe
+INT.ppe.01@tescoims.com
+Active
+TU
+149916142642
+Root > Workloads > ppe
+TU.ppe.01@tescoims.com
+Active
+FIN
+600468853064
+Root > Workloads > tst
+FIN.tst.01@tescoims.com
+Active
+COLL
+802346121725
+Root > Workloads > tst
+COLL.tst.01@tescoims.com
+Active
+COMM
+349070092169
+Root > Workloads > tst
+COMM.tst.01@tescoims.com
+Active
+TU
+000617168429
+Root > Workloads > tst
+TU.tst.01@tescoims.com
+Active
+SEC
+983537964894
+Root > Workloads > tst
+SEC.tst.01@tescoims.com
+Active
+INT
+369668971894
+Root > Workloads > tst
+INT.tst.01@tescoims.com
+Active
+CUST
+683554909248
+Root > Workloads > tst
+CUST.tst.01@tescoims.com
+Active
+Shared_Services
+356666487118
+Root > Infrastructure
+ims-shared-services@tescoims.com
+Active
+Restore_Services
+899867382346
+Root > Infrastructure
+restore_services.prd.01@tescoims.com
+Active
+Network_Services
+584477831165
+Root > Infrastructure
+ims-devops-services@tescoims.com
+Active
+Monitoring_Services
+116355921084
+Root > Infrastructure
+monitoring_services.prd.01@tescoims.com
+Active
+IMS Directory Services
+794035561643
+Root > Infrastructure
+ims-directory-services@tescoims.com
+Active
+Security_Infra
+119810927880
+Root > Infrastructure
+security_infra.prd.01@tescoims.com
+Active
+Directory_Services
+502818572771
+Root > Infrastructure
+directory_services.prd.01@tescoims.com
+Active
+Backup_Services
+117837574201
+Root > Infrastructure
+backup_services.prd.01@tescoims.com
+Active
+Network_Services
+097357356161
+Root > Infrastructure > ppe
+network_services.ppe.01@tescoims.com
+Active
+Shared_Services
+050916357979
+Root > Infrastructure > ppe
+shared_services.ppe.01@tescoims.com
+Active
+Monitoring_Services
+277352717275
+Root > Infrastructure > ppe
+monitoring_services.ppe.01@tescoims.com
+Active
+Directory_Services
+575210791269
+Root > Infrastructure > ppe
+directory_services.ppe.01@tescoims.com
+Active
+Network_Services
+762649987860
+Root > Infrastructure > tst
+network_services.tst.01@tescoims.com
+Active
+Directory_Services
+119328599021
+Root > Infrastructure > dev
+directory_services.dev.01@tescoims.com
+Active
+Shared_Services
+697858908364
+Root > Infrastructure > dev
+shared_services.dev.01@tescoims.com
+Active
+Core Audit
+084828582217
+Root > Security
+ims-core-audit@tescoims.com
+Active
+Core Log Archive
+816069122659
+Root > Security
+ims-core-log-archive@tescoims.com

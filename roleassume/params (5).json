@@ -1,0 +1,182 @@
+[
+  {
+    "ParameterKey": "managementaccountid",
+    "ParameterValue": "390403857119"
+  },
+  {
+    "ParameterKey": "prdcollaccid",
+    "ParameterValue": "360760094668"
+  },
+  {
+    "ParameterKey": "prdcommaccid",
+    "ParameterValue": "743664054145"
+  },
+  {
+    "ParameterKey": "prdcustaccid",
+    "ParameterValue": "625455456159"
+  },
+  {
+    "ParameterKey": "prdintaccid",
+    "ParameterValue": "688393570754"
+  },
+  {
+    "ParameterKey": "prdtuaccid",
+    "ParameterValue": "102386506938"
+  },
+  {
+    "ParameterKey": "prdfinaccid",
+    "ParameterValue": "269223836033"
+  },
+  {
+    "ParameterKey": "prdsecaccid",
+    "ParameterValue": "167732745138"
+  },
+  {
+    "ParameterKey": "prdnwaccid",
+    "ParameterValue": "584477831165"
+  },
+  {
+    "ParameterKey": "devcollaccid",
+    "ParameterValue": "723840606274"
+  },
+  {
+    "ParameterKey": "devcommaccid",
+    "ParameterValue": "603774591545"
+  },
+  {
+    "ParameterKey": "devcustaccid",
+    "ParameterValue": "424851482642"
+  },
+  {
+    "ParameterKey": "devintaccid",
+    "ParameterValue": "094840069448"
+  },
+  {
+    "ParameterKey": "devtuaccid",
+    "ParameterValue": "158878467712"
+  },
+  {
+    "ParameterKey": "devfinaccid",
+    "ParameterValue": "533735820510"
+  },
+  {
+    "ParameterKey": "devsecaccid",
+    "ParameterValue": "475831670563"
+  },
+  {
+    "ParameterKey": "tstcollaccid",
+    "ParameterValue": "802346121725"
+  },
+  {
+    "ParameterKey": "tstcommaccid",
+    "ParameterValue": "349070092169"
+  },
+  {
+    "ParameterKey": "tstcustaccid",
+    "ParameterValue": "683554909248"
+  },
+  {
+    "ParameterKey": "tstintaccid",
+    "ParameterValue": "369668971894"
+  },
+  {
+    "ParameterKey": "tsttuaccid",
+    "ParameterValue": "158878467712"
+  },
+  {
+    "ParameterKey": "tstfinaccid",
+    "ParameterValue": "600468853064"
+  },
+  {
+    "ParameterKey": "tstsecaccid",
+    "ParameterValue": "983537964894"
+  },
+  {
+    "ParameterKey": "ppecollaccid",
+    "ParameterValue": "510648452158"
+  },
+  {
+    "ParameterKey": "ppecommaccid",
+    "ParameterValue": "465288594919"
+  },
+  {
+    "ParameterKey": "ppecustaccid",
+    "ParameterValue": "914293676169"
+  },
+  {
+    "ParameterKey": "ppeintaccid",
+    "ParameterValue": "582600397500"
+  },
+  {
+    "ParameterKey": "ppetuaccid",
+    "ParameterValue": "149916142642"
+  },
+  {
+    "ParameterKey": "ppefinaccid",
+    "ParameterValue": "690157464386"
+  },
+  {
+    "ParameterKey": "ppesecaccid",
+    "ParameterValue": "008151864097"
+  },
+  {
+    "ParameterKey": "GithubOwner1",
+    "ParameterValue": "archive"
+  },
+  {
+    "ParameterKey": "GithubOwner2",
+    "ParameterValue": "eng-lib"
+  },
+  {
+    "ParameterKey": "GithubOwner3",
+    "ParameterValue": "eng-tf"
+  },
+  {
+    "ParameterKey": "GithubOwner4",
+    "ParameterValue": "fin"
+  },
+  {
+    "ParameterKey": "GithubOwner5",
+    "ParameterValue": "ims-api"
+  },
+  {
+    "ParameterKey": "GithubOwner6",
+    "ParameterValue": "ims-app"
+  },
+  {
+    "ParameterKey": "GithubOwner7",
+    "ParameterValue": "ims-data"
+  },
+  {
+    "ParameterKey": "GithubOwner8",
+    "ParameterValue": "ims-plat"
+  },
+  {
+    "ParameterKey": "GithubOwner9",
+    "ParameterValue": "ims-tool"
+  },
+  {
+    "ParameterKey": "GithubOwner10",
+    "ParameterValue": "plat-eng"
+  },
+  {
+    "ParameterKey": "GithubOwner11",
+    "ParameterValue": "tu-plat"
+  },
+  {
+    "ParameterKey": "GithubOwner12",
+    "ParameterValue": "tu-data"
+  },
+  {
+    "ParameterKey": "GithubOwner13",
+    "ParameterValue": "test"
+  },
+  {
+    "ParameterKey": "ppenwaccid",
+    "ParameterValue": "097357356161"
+  },
+  {
+    "ParameterKey": "tstnwaccid",
+    "ParameterValue": "762649987860"
+  }
+]
