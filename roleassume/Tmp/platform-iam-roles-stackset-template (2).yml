@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Platform accounts without iamr roles - GitHub pipeline roles iamr-<account>-<env>-deploy and -read, assumed from IMS Root (StackSet)
+
+# One template for the 14 Infrastructure and Security accounts that have no account-level iamr roles yet
+# (the setup test, run 374758192: hop 2 failed for these). The network accounts, Sandbox and the Workload accounts
+# already have their roles from single stacks and are not in this StackSet.
+# Each account finds its own role names in AccountRoles by its account ID. An account that is not in the map fails
+# with "Unable to get mapping" and nothing is created there.
+# Same roles as the single account templates (e.g. shared-prd-iam-roles-template.yml):
+#   deploy = AdministratorAccess, read = ReadOnlyAccess, both trusting IMS Root and the same-named IMS Root role.
+#
+# Deploy as:    StackSet in IMS Root (390403857119), service-managed permissions, ONE Region only
+#               (IAM is global: a second Region would fail because the role names already exist).
+# Deploy order: AFTER the IMS Root roles exist (stacks ims-root-iam-roles-infrastructure and -security): the trust
+#               policies name those roles, and IAM rejects a trust policy that names a role that does not exist yet.
+# Deploy only to the accounts in AccountRoles (account filter: Intersection) - deploy-platform-roles-stackset.sh does.
+# To add an account: add a line to AccountRoles and run the script again.
+
+Parameters:
+  SourceAccountId:
+    Type: String
+    Default: "390403857119"
+    Description: AWS Account ID that can assume these roles (IMS Root)
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: must be a 12-digit AWS account ID
+
+Mappings:
+  AccountRoles:   # account ID -> role name start (IMS Root has the same names)
+    "356666487118": {Base: iamr-shared-prd}         # Infrastructure prd  Shared_Services
+    "899867382346": {Base: iamr-restore-prd}        # Infrastructure prd  Restore_Services
+    "116355921084": {Base: iamr-monitoring-prd}     # Infrastructure prd  Monitoring_Services
+    "794035561643": {Base: iamr-imsdirectory-prd}   # Infrastructure prd  IMS Directory Services
+    "119810927880": {Base: iamr-secinfra-prd}       # Infrastructure prd  Security_Infra
+    "502818572771": {Base: iamr-directory-prd}      # Infrastructure prd  Directory_Services
+    "117837574201": {Base: iamr-backup-prd}         # Infrastructure prd  Backup_Services
+    "050916357979": {Base: iamr-shared-ppe}         # Infrastructure ppe  Shared_Services
+    "277352717275": {Base: iamr-monitoring-ppe}     # Infrastructure ppe  Monitoring_Services
+    "575210791269": {Base: iamr-directory-ppe}      # Infrastructure ppe  Directory_Services
+    "119328599021": {Base: iamr-directory-dev}      # Infrastructure dev  Directory_Services
+    "697858908364": {Base: iamr-shared-dev}         # Infrastructure dev  Shared_Services
+    "084828582217": {Base: iamr-audit-prd}          # Security prd  Core Audit
+    "816069122659": {Base: iamr-logarchive-prd}     # Security prd  Core Log Archive
+
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - "${Base}-deploy"
+        - Base: !FindInMap [AccountRoles, !Ref "AWS::AccountId", Base]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${SourceAccountId}:root"
+            Action: "sts:AssumeRole"
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub
+                  - "arn:aws:iam::${SourceAccountId}:role/${Base}-deploy"
+                  - Base: !FindInMap [AccountRoles, !Ref "AWS::AccountId", Base]
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AdministratorAccess"
+
+  ReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - "${Base}-read"
+        - Base: !FindInMap [AccountRoles, !Ref "AWS::AccountId", Base]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${SourceAccountId}:root"
+            Action: "sts:AssumeRole"
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub
+                  - "arn:aws:iam::${SourceAccountId}:role/${Base}-read"
+                  - Base: !FindInMap [AccountRoles, !Ref "AWS::AccountId", Base]
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/ReadOnlyAccess"
+
+Outputs:
+  DeployRoleArn:
+    Description: ARN of this account's deploy role (hop 2)
+    Value: !GetAtt DeployRole.Arn
+  ReadRoleArn:
+    Description: ARN of this account's read role (hop 2)
+    Value: !GetAtt ReadRole.Arn
