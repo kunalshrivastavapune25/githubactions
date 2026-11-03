@@ -1,0 +1,780 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Deployment Pipeline Flows</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;0,900;1,400&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: a flow board — pipeline tabs and scenario chips on top, the animated diagram with its step caption,
+   the sign-in strip under it, and the side-by-side checks at the end. Colours follow the review deck. */
+:root {
+  --bg: #F4F7F8; --surface: #FFFFFF; --ink: #1B2433; --muted: #4A5568; --line: #D5DCE4; --line-strong: #9AA6B4;
+  --new: #0F7B6C; --ws2: #5B4B9A; --old: #6B7785; --stop: #C8443F; --warn: #B7791F;
+  --new-soft: #E3F1EE; --ws2-soft: #ECE9F6; --old-soft: #EBEEF1; --stop-soft: #F9E6E5; --warn-soft: #F8EFDF;
+  --accent: var(--new); --accent-soft: var(--new-soft);
+  --font-body: "Lato", "Carlito", "Calibri", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F151D; --surface: #17202B; --ink: #E8EDF3; --muted: #A5B0BE; --line: #2A3645; --line-strong: #5C6B7D;
+    --new: #3FBFA7; --ws2: #A193E6; --old: #9AA6B4; --stop: #F07D76; --warn: #E2AB4E;
+    --new-soft: #12322D; --ws2-soft: #252040; --old-soft: #222B36; --stop-soft: #3A1D1C; --warn-soft: #3A2C12;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F151D; --surface: #17202B; --ink: #E8EDF3; --muted: #A5B0BE; --line: #2A3645; --line-strong: #5C6B7D;
+  --new: #3FBFA7; --ws2: #A193E6; --old: #9AA6B4; --stop: #F07D76; --warn: #E2AB4E;
+  --new-soft: #12322D; --ws2-soft: #252040; --old-soft: #222B36; --stop-soft: #3A1D1C; --warn-soft: #3A2C12;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
+body[data-pipe="ws2-dns"] { --accent: var(--ws2); --accent-soft: var(--ws2-soft); }
+body[data-pipe="old-pipeline"] { --accent: var(--old); --accent-soft: var(--old-soft); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 22px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h1 { font-size: clamp(30px, 4.2vw, 44px); font-weight: 900; line-height: 1.08; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { margin: 0; color: var(--muted); max-width: 68ch; }
+h2 { font-size: 22px; font-weight: 900; margin: 0; text-wrap: balance; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+
+/* pipeline tabs */
+.tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+.tab { --c: var(--new); --cs: var(--new-soft); font: inherit; font-weight: 700; font-size: 16px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 999px;
+  border: 1.5px solid var(--c); background: var(--surface); color: var(--ink); transition: background .2s, color .2s; }
+.tab[data-pipe="ws2-dns"] { --c: var(--ws2); --cs: var(--ws2-soft); }
+.tab[data-pipe="old-pipeline"] { --c: var(--old); --cs: var(--old-soft); }
+.tab .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.tab small { font-weight: 400; color: var(--muted); font-size: 13px; }
+.tab[aria-selected="true"] { background: var(--c); color: #FFFFFF; }
+.tab[aria-selected="true"] small { color: #FFFFFF; opacity: .85; }
+.tab[aria-selected="true"] .dot { background: #FFFFFF; }
+:root[data-theme="dark"] .tab[aria-selected="true"], :root[data-theme="dark"] .tab[aria-selected="true"] small { color: #0F151D; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tab[aria-selected="true"],
+  :root:not([data-theme="light"]) .tab[aria-selected="true"] small { color: #0F151D; } }
+:root[data-theme="dark"] .tab[aria-selected="true"] .dot { background: #0F151D; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tab[aria-selected="true"] .dot { background: #0F151D; } }
+
+/* the board */
+.board { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; display: grid; }
+.board-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 20px;
+  padding: 16px 18px 6px; }
+.file { margin: 0; color: var(--muted); font-size: 14px; }
+.file b { color: var(--ink); }
+.scenarios { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 18px 4px; }
+.chip { font: inherit; font-size: 14px; cursor: pointer; padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); }
+.chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.controls { display: flex; gap: 6px; align-items: center; }
+.ctl { font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.ctl svg { width: 14px; height: 14px; fill: currentColor; }
+.ctl.primary { background: var(--accent); border-color: var(--accent); color: #FFFFFF; min-width: 92px; justify-content: center; }
+:root[data-theme="dark"] .ctl.primary { color: #0F151D; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ctl.primary { color: #0F151D; } }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.diagram-scroll { overflow-x: auto; padding: 4px 10px 0; }
+.diagram-scroll svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.caption { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 16px; align-items: start;
+  margin: 4px 18px 18px; padding: 14px 16px; border-radius: 12px; background: var(--accent-soft); }
+.caption .count { grid-row: span 2; font-weight: 900; font-size: 13px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--accent); padding-top: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.caption h3 { margin: 0; font-size: 18px; font-weight: 900; }
+.caption p { margin: 0; color: var(--ink); max-width: 80ch; }
+
+/* SVG diagram */
+.node rect.box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; transition: stroke .25s, fill .25s, stroke-width .25s; }
+.node .ntitle { font: 700 15px var(--font-body); fill: var(--ink); }
+.node .nsub { font: 400 12.5px var(--font-body); fill: var(--muted); }
+.node.kind-optional rect.box, .node.kind-gap rect.box { stroke-dasharray: 6 5; }
+.node.kind-wait rect.box { fill: var(--accent-soft); }
+.node.kind-good rect.box { fill: var(--new-soft); stroke: var(--new); }
+.node.kind-stop rect.box { fill: var(--stop-soft); stroke: var(--stop); }
+.node.kind-warn rect.box { fill: var(--warn-soft); stroke: var(--warn); }
+.node.kind-gap rect.box { fill: var(--stop-soft); stroke: var(--stop); }
+.node.kind-gap .ntitle { fill: var(--stop); }
+.node .glyph { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.node.kind-good .glyph { stroke: var(--new); } .node.kind-stop .glyph { stroke: var(--stop); }
+.node.kind-warn .glyph { stroke: var(--warn); } .node.kind-wait .glyph { stroke: var(--accent); }
+.node.kind-neutral .glyph, .node.kind-gap .glyph { stroke: var(--muted); }
+.node.kind-gap .glyph { stroke: var(--stop); }
+.node.visited rect.box { stroke: var(--accent); fill: var(--accent-soft); }
+.node.kind-good.visited rect.box { fill: var(--new-soft); stroke: var(--new); }
+.node.kind-stop.visited rect.box { fill: var(--stop-soft); stroke: var(--stop); }
+.node.kind-warn.visited rect.box { fill: var(--warn-soft); stroke: var(--warn); }
+.node.kind-gap.visited rect.box { fill: var(--stop-soft); stroke: var(--stop); }
+.node.active rect.box { stroke-width: 3.5; }
+.node { transition: opacity .25s; }
+.node.dim, .edge.dim, .head.dim, .elabel.dim { opacity: .35; }
+.edge { fill: none; stroke: var(--line-strong); stroke-width: 2; transition: stroke .25s, stroke-width .25s; }
+.edge.dashed { stroke-dasharray: 6 5; }
+.head { fill: var(--line-strong); transition: fill .25s; }
+.edge.traveled { stroke: var(--accent); stroke-width: 3; }
+.head.traveled { fill: var(--accent); }
+.edge.callout { stroke: var(--warn); stroke-width: 3; }
+.head.callout { fill: var(--warn); }
+.elabel { font: italic 400 12px var(--font-body); fill: var(--muted); }
+.elabel.traveled { fill: var(--accent); font-weight: 700; }
+.slabel { font: 700 11.5px var(--font-body); letter-spacing: .12em; fill: var(--muted); }
+.tok { fill: var(--accent); }
+.tok-halo { fill: var(--accent); opacity: .22; }
+.tok-core { fill: #FFFFFF; }
+.note-bar rect { fill: var(--stop-soft); stroke: var(--stop); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.note-bar text { font: 700 14px var(--font-body); fill: var(--stop); }
+.note-bar.lit rect { stroke-width: 3; stroke-dasharray: none; }
+
+/* sign-in strip */
+.signin { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px 12px; display: grid; gap: 6px; }
+.signin-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.signin-head p { margin: 0; color: var(--muted); font-size: 14px; max-width: 70ch; }
+.signin .diagram-scroll { padding: 0; }
+.signin .diagram-scroll svg { min-width: 700px; }
+.snode rect { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.5; transition: stroke .25s, fill .25s; }
+.snode .ntitle { font: 700 14px var(--font-body); fill: var(--ink); }
+.snode .nrole { font: 500 12.5px var(--font-mono); fill: var(--ink); }
+.snode .nsub { font: 400 12px var(--font-body); fill: var(--muted); }
+.snode.bad rect { stroke: var(--stop); stroke-dasharray: 6 5; }
+.snode.bad .nrole { fill: var(--stop); }
+.snode.lit rect { stroke: var(--accent); stroke-width: 3; fill: var(--accent-soft); }
+.snode.bad.lit rect { stroke: var(--stop); fill: var(--stop-soft); stroke-dasharray: none; }
+.scheck { opacity: 0; transition: opacity .3s; }
+.scheck.on { opacity: 1; }
+.scheck circle { fill: var(--new); }
+.scheck path { fill: none; stroke: #FFFFFF; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* checks table */
+.compare { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; gap: 12px; }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+thead th { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+thead th span { display: inline-flex; align-items: center; gap: 8px; }
+thead th i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+tbody th { font-weight: 700; width: 22%; }
+td { width: 26%; }
+.mark { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; margin-right: 8px;
+  vertical-align: -4px; font-weight: 900; font-size: 13px; line-height: 1; color: #FFFFFF; }
+.yes { background: var(--new); } .part { background: var(--warn); } .no { background: var(--stop); }
+:root[data-theme="dark"] .mark { color: #0F151D; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mark { color: #0F151D; } }
+.foot { margin: 0; color: var(--muted); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 13px; padding: 0 18px 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 18px; height: 12px; border-radius: 4px; border: 1.5px solid var(--line-strong); }
+@media (max-width: 640px) {
+  .board-top { padding: 14px 12px 4px; } .scenarios { padding: 6px 12px 4px; } .caption { margin: 4px 12px 14px; grid-template-columns: 1fr; }
+  .caption .count { grid-row: auto; } .legend { padding: 0 12px 12px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Deployment pipelines review · November 2026</p>
+    <h1>Three pipelines, one change</h1>
+    <p class="lede">Pick a pipeline and a scenario, then watch one run move through it: what it checks, where it stops, and which role it signs in as.</p>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Pipelines">
+    <button class="tab" role="tab" id="tab-new-pipeline" data-pipe="new-pipeline" aria-selected="true"><span class="dot"></span>New pipeline <small>drift check + change set</small></button>
+    <button class="tab" role="tab" id="tab-ws2-dns" data-pipe="ws2-dns" aria-selected="false"><span class="dot"></span>WS2 DNS pipelines <small>bulk DNS records</small></button>
+    <button class="tab" role="tab" id="tab-old-pipeline" data-pipe="old-pipeline" aria-selected="false"><span class="dot"></span>Old pipeline <small>direct deployment</small></button>
+  </div>
+
+  <section class="board" aria-label="Pipeline flow">
+    <div class="board-top">
+      <p class="file" id="file"></p>
+      <div class="controls">
+        <button class="ctl" id="btn-back" type="button" aria-label="Previous step"><svg viewBox="0 0 16 16"><path d="M10.5 2.5 4.5 8l6 5.5z"/></svg>Back</button>
+        <button class="ctl primary" id="btn-play" type="button"><svg viewBox="0 0 16 16" id="play-icon"><path d="M4 2.5v11l9-5.5z"/></svg><span>Play</span></button>
+        <button class="ctl" id="btn-next" type="button" aria-label="Next step">Next<svg viewBox="0 0 16 16"><path d="M5.5 2.5 11.5 8l-6 5.5z"/></svg></button>
+        <button class="ctl" id="btn-restart" type="button" aria-label="Start again"><svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 1-5.2 3.7l1.9.6A3.5 3.5 0 1 0 8 4.5v2L4.5 3.5 8 .5z"/></svg>Again</button>
+        <button class="ctl" id="btn-speed" type="button" aria-label="Animation speed">1×</button>
+      </div>
+    </div>
+    <div class="scenarios" id="scenarios" aria-label="Scenarios"></div>
+    <div class="diagram-scroll"><svg id="diagram" role="img" aria-label="Pipeline flow diagram"></svg></div>
+    <div class="legend" id="legend">
+      <span><i style="border-color: var(--accent); background: var(--accent-soft)"></i>where the run has been</span>
+      <span><i style="border-style: dashed"></i>only in some runs</span>
+      <span><i style="border-color: var(--warn); background: var(--warn-soft)"></i>warning, the run carries on</span>
+      <span><i style="border-color: var(--stop); background: var(--stop-soft)"></i>stop, or a gap</span>
+    </div>
+    <div class="caption" aria-live="polite">
+      <div class="count" id="cap-count">Step 1 of 1</div>
+      <h3 id="cap-title"></h3>
+      <p id="cap-text"></p>
+    </div>
+  </section>
+
+  <section class="signin" aria-label="Sign-in">
+    <div class="signin-head">
+      <h2>Signs in as</h2>
+      <p id="signin-note"></p>
+    </div>
+    <div class="diagram-scroll"><svg id="signin" role="img" aria-label="How the pipeline signs in to AWS"></svg></div>
+  </section>
+
+  <section class="compare" aria-labelledby="compare-h">
+    <h2 id="compare-h">What each pipeline checks</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Check</th>
+          <th scope="col"><span><i style="background: var(--new)"></i>New pipeline</span></th>
+          <th scope="col"><span><i style="background: var(--ws2)"></i>WS2 DNS pipelines</span></th>
+          <th scope="col"><span><i style="background: var(--old)"></i>Old pipeline</span></th></tr></thead>
+        <tbody id="compare-body"></tbody>
+      </table>
+    </div>
+    <p class="foot">Drift checks work where AWS supports them: not for FMS policies or individual DNS records. The old pipelines’ and WS2’s sign-in roles are as read from their GitHub role secrets on 30–31 October 2026.</p>
+  </section>
+</div>
+
+<script>
+(() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const W = 160, H = 112;
+  const col = (i) => 20 + i * 185;
+
+  // ── the three pipelines ──────────────────────────────────────────────────────────────────────
+  const PIPES = {
+    'new-pipeline': {
+      file: '<b>latest_cft_deployment.yml</b> · any CloudFormation stack, in any of our 47 accounts',
+      view: [1160, 552],
+      labels: [],
+      nodes: [
+        { id: 'start', x: col(0), y: 70, t: 'Start', l: ['Pick the account (47', 'names) and region;', 'answer Deploy and', 'Remove manual changes'] },
+        { id: 'prepare', x: col(1), y: 70, t: 'Prepare', l: ['Signs in through IMS', 'Root (hop 1, hop 2),', 'finds the template,', 'checks the stack'] },
+        { id: 'drift', x: col(2), y: 70, t: 'Drift check', l: ['Has anything been', 'changed by hand', 'since the last', 'deploy?'] },
+        { id: 'cs', x: col(3), y: 70, t: 'Change set', l: ['Every change, plus', 'manual changes it', 'would undo, with a', 'link to it in AWS'] },
+        { id: 'deployq', x: col(4), y: 70, t: 'Deploy?', k: 'decision', l: ['Your first answer', 'on the form:', 'no or yes'] },
+        { id: 'wait', x: 980, y: 70, t: 'Waits for you', k: 'wait', l: ['Deploy = no: someone', 'reviews the change', 'set in AWS and clicks', 'Execute'] },
+        { id: 'warning', x: col(2), y: 250, t: 'Warning only', k: 'warn', l: ['Lists what changed,', 'expected vs actual,', 'and carries on'] },
+        { id: 'nochange', x: col(3), y: 250, t: 'No changes', k: 'neutral', l: ['Nothing to deploy:', 'ends cleanly'] },
+        { id: 'manualq', x: col(4), y: 250, t: 'Manual changes?', k: 'decision', l: ['Would the change set', 'undo hand changes?', 'Checked first'] },
+        { id: 'deploy', x: 980, y: 250, t: 'Deploy', l: ['Executes that same', 'change set and', 'follows the stack', 'events'] },
+        { id: 'stop', x: col(4), y: 420, t: 'Stop', k: 'stop', l: ['Not deployed: hand', 'changes found and', 'Remove manual', 'changes = no'] },
+        { id: 'deployed', x: 980, y: 420, t: 'Deployed', k: 'good', l: ['The stack is updated.', 'A failed update', 'rolls itself back'] },
+      ],
+      edges: [
+        ['start', 'prepare'], ['prepare', 'drift'], ['drift', 'cs'], ['cs', 'deployq'],
+        ['deployq', 'wait', { label: 'no', lx: 950, ly: 116, anchor: 'middle' }],
+        ['deployq', 'manualq', { label: 'yes', lx: 850, ly: 222 }],
+        ['drift', 'warning', { label: 'manual change found', lx: 480, ly: 222, callout: true }],
+        ['cs', 'nochange', { label: 'nothing to deploy', lx: 665, ly: 222 }],
+        ['manualq', 'deploy', { label: ['none, or', 'flag = yes'], lx: 950, ly: 278, anchor: 'middle' }],
+        ['manualq', 'stop', { label: 'flag = no', lx: 850, ly: 398 }],
+        ['deploy', 'deployed'],
+        ['prepare', 'cs', { d: 'M285,70 C285,22 655,22 655,70', dashed: true, label: 'brand-new stack: no drift check yet', lx: 470, ly: 16, anchor: 'middle' }],
+      ],
+      signinOn: ['prepare'],
+      signin: { kind: 'two-hop' },
+      scenarios: [
+        { id: 'review', name: 'Review first (Deploy = no)', steps: [
+          ['start', 'Start', 'You pick the account and region, type the folder and stack, and leave Deploy and Remove manual changes on no.'],
+          ['prepare', 'Prepare', 'The run signs in through IMS Root (hop 1), then into the account’s own role (hop 2), and prints and checks both roles. Then it finds the template and checks the stack is healthy.'],
+          ['drift', 'Drift check', 'No drift: everything in the stack still matches the template.'],
+          ['cs', 'Change set', 'A change set is ready for review: every add, modify and remove, with a link to it in the AWS console. Nothing has changed in AWS yet.'],
+          ['deployq', 'Deploy = no', 'The default. The pipeline stops here on purpose.'],
+          ['wait', 'Waits for a person', 'Nothing is deployed. Someone reviews the change set in AWS and clicks Execute. Exactly that list is what runs.'],
+        ] },
+        { id: 'deploy', name: 'Deploy = yes', steps: [
+          ['start', 'Start', 'You pick the account and region, and set Deploy = yes. Remove manual changes stays on no.'],
+          ['prepare', 'Prepare', 'Hop 1 into IMS Root, hop 2 into the account’s own role, both printed and checked. The template is found and the stack is healthy.'],
+          ['drift', 'Drift check', 'No drift: nobody has changed the stack by hand.'],
+          ['cs', 'Change set', 'The change set lists what will be added, modified and removed, with warnings for any replacement or removal.'],
+          ['deployq', 'Deploy = yes', 'The Deploy box runs, because there is something to change.'],
+          ['manualq', 'Manual changes?', 'Its first step checks whether the change set would undo changes made by hand. None found, so it goes ahead.'],
+          ['deploy', 'Deploy', 'It signs in again (both hops checked) and executes that same change set, printing the stack events every 15 seconds.'],
+          ['deployed', 'Deployed', 'CloudFormation finishes the update. If an update fails, CloudFormation puts the stack back as it was.'],
+        ] },
+        { id: 'manual-stop', name: 'Hand change, flag = no', steps: [
+          ['start', 'Start', 'Deploy = yes, Remove manual changes = no (the default). Someone has changed a setting in the AWS console by hand.'],
+          ['prepare', 'Prepare', 'Both hops, both roles printed and checked; the stack is healthy.'],
+          ['drift', 'Drift check', 'Drift found: the hand change is listed, expected vs actual. It is a warning only, so the run carries on.', ['warning']],
+          ['cs', 'Change set', 'The change set is compared with the live resources, so it lists the hand change it would undo, then the template changes.'],
+          ['deployq', 'Deploy = yes', 'The Deploy box starts.'],
+          ['manualq', 'Manual changes?', 'The change set would undo 1 change made by hand, and Remove manual changes is no.'],
+          ['stop', 'Stop: not deployed', 'The Deploy box stops before executing anything, and the stack is not touched. To keep the hand change, add it to the code and run again, so AWS and Git stay in sync.'],
+        ] },
+        { id: 'manual-overwrite', name: 'Hand change, flag = yes', steps: [
+          ['start', 'Start', 'Deploy = yes and Remove manual changes = yes. A setting was changed by hand in the console.'],
+          ['prepare', 'Prepare', 'Both hops, both roles printed and checked; the stack is healthy.'],
+          ['drift', 'Drift check', 'Drift found and listed as a warning. The run carries on.', ['warning']],
+          ['cs', 'Change set', 'The change set lists the hand change it would undo, and the template changes it would apply.'],
+          ['deployq', 'Deploy = yes', 'The Deploy box starts.'],
+          ['manualq', 'Manual changes?', 'The change set would undo a hand change, and Remove manual changes = yes, so it goes ahead.'],
+          ['deploy', 'Deploy', 'It executes the change set. The hand change goes back to what the template says.'],
+          ['deployed', 'Deployed', 'AWS matches the template again, and Git is the record of what is live.'],
+        ] },
+        { id: 'nothing', name: 'Nothing to change', steps: [
+          ['start', 'Start', 'You run the pipeline for a stack that is already up to date.'],
+          ['prepare', 'Prepare', 'Both hops, both roles printed and checked.'],
+          ['drift', 'Drift check', 'No drift.'],
+          ['cs', 'Change set', 'CloudFormation finds nothing to change and nothing to put back.'],
+          ['nochange', 'No changes', 'The run ends cleanly and nothing is deployed.'],
+        ] },
+        { id: 'new-stack', name: 'Brand-new stack', steps: [
+          ['start', 'Start', 'You pick a stack name that does not exist yet.'],
+          ['prepare', 'Prepare', 'Both hops, both roles printed and checked. The stack is new, so there is nothing to drift-check.'],
+          ['cs', 'Change set', 'It goes straight to a CREATE change set that lists every resource to be added.'],
+          ['deployq', 'Deploy = no', 'The default: stop at the change set.'],
+          ['wait', 'Waits for a person', 'Someone reviews the change set in AWS and clicks Execute.'],
+        ] },
+      ],
+    },
+
+    'ws2-dns': {
+      file: '<b>ws2-dns-records-export.yml</b> + <b>ws2-dns-records-apply.yml</b> · bulk changes to DNS records only',
+      view: [1160, 572],
+      labels: [{ x: 20, y: 34, t: 'PART 1 · EXPORT · LIVE DNS → GIT' }, { x: 20, y: 226, t: 'PART 2 · APPLY · GIT → LIVE DNS' }],
+      nodes: [
+        { id: 'xstart', x: col(0), y: 48, t: 'Start', l: ['Pick the account and', 'one zone, or all', 'zones'] },
+        { id: 'xappr', x: col(1), y: 48, t: 'Approval', k: 'optional', l: ['Only when exporting', 'every zone outside', 'sandbox'] },
+        { id: 'xexport', x: col(2), y: 48, t: 'Export', l: ['Live records copied', 'into one file per', 'zone'] },
+        { id: 'xpr', x: col(3), y: 48, t: 'Pull Request', l: ['New branch and Pull', 'Request created', 'for you'] },
+        { id: 'merge', x: col(4), y: 48, t: 'Review and merge', l: ['Edit the record files,', 'a reviewer approves', 'the Pull Request,', 'merge'] },
+        { id: 'astart', x: col(0), y: 276, t: 'Start', l: ['Pick the zone;', 'without ‘execute’', 'it only previews'] },
+        { id: 'apreview', x: col(1), y: 276, t: 'Preview', l: ['Compares the files', 'with live DNS: adds,', 'edits, deletes'] },
+        { id: 'aappr', x: col(2), y: 276, t: 'Approval', k: 'optional', l: ['Outside sandbox, a', 'gatekeeper approves', 'first'] },
+        { id: 'aapply', x: col(3), y: 276, t: 'Apply', l: ['Works the changes out', 'again and writes', 'them straight into', 'Route 53'] },
+        { id: 'adone', x: col(4), y: 276, t: 'Done', k: 'good', l: ['Live DNS matches', 'the files'] },
+        { id: 'aprevonly', x: col(1), y: 446, t: 'Preview only', k: 'neutral', l: ['Without ‘execute’,', 'nothing changes'] },
+        { id: 'gap1', x: 420, y: 446, w: 230, t: 'No hand-change alarm', k: 'gap', l: ['A hand edit looks like any', 'other change, and is', 'overwritten'] },
+        { id: 'gap2', x: 670, y: 446, w: 230, t: 'Preview isn’t locked', k: 'gap', l: ['Apply works the changes out', 'again: what runs isn’t', 'pinned to the preview'] },
+        { id: 'gap3', x: 920, y: 446, w: 220, t: 'Outside CloudFormation', k: 'gap', l: ['No change set, no stack', 'history, separate record', 'files'] },
+      ],
+      edges: [
+        ['xstart', 'xappr'], ['xappr', 'xexport'], ['xexport', 'xpr'], ['xpr', 'merge'],
+        ['xstart', 'xexport', { d: 'M100,160 C100,206 470,206 470,160', dashed: true, label: 'one zone', lx: 285, ly: 200, anchor: 'middle' }],
+        ['merge', 'astart', { d: 'M840,160 L840,226 Q840,236 830,236 L110,236 Q100,236 100,246 L100,276', label: 'after the merge, run Apply', lx: 470, ly: 229, anchor: 'middle' }],
+        ['astart', 'apreview'], ['apreview', 'aappr'], ['aappr', 'aapply'], ['aapply', 'adone'],
+        ['apreview', 'aprevonly', { label: 'no ‘execute’', lx: 295, ly: 420 }],
+      ],
+      signinOn: ['xexport', 'apreview'],
+      signin: { kind: 'master', from: 'its ARN comes from the GitHub secret DEPLOY_ROLE_ARNS_JSON' },
+      scenarios: [
+        { id: 'loop', name: 'Export, edit, apply', steps: [
+          ['xstart', 'Export: start', 'You pick the account and one zone.'],
+          ['xexport', 'Export', 'The live records are copied into one file per zone. For one zone, no approval is needed.'],
+          ['xpr', 'Pull Request', 'A new branch and Pull Request are created for you.'],
+          ['merge', 'Review and merge', 'The team edits the record files in that branch, a reviewer approves the Pull Request, and it is merged.'],
+          ['astart', 'Apply: start', 'You pick the zone and tick ‘execute’.'],
+          ['apreview', 'Preview', 'The files are compared with live DNS: what would be added, edited or deleted. Deleting is off unless someone ticks it.'],
+          ['aappr', 'Approval', 'Outside sandbox, a gatekeeper approves first. Sandbox runs go straight on.'],
+          ['aapply', 'Apply', 'The script works the changes out again and writes them straight into Route 53.', ['gap1', 'gap2']],
+          ['adone', 'Done', 'Live DNS matches the files. There is no change set and no stack history behind it.', ['gap3']],
+        ] },
+        { id: 'all-zones', name: 'Export all zones', steps: [
+          ['xstart', 'Export: start', 'You pick an account other than sandbox and every zone.'],
+          ['xappr', 'Approval', 'Exporting every zone outside sandbox waits for a reviewer.'],
+          ['xexport', 'Export', 'Every zone’s live records go into their own file.'],
+          ['xpr', 'Pull Request', 'One branch and Pull Request with all the files, ready to edit and review.'],
+        ] },
+        { id: 'preview', name: 'Preview only', steps: [
+          ['astart', 'Apply: start', 'You pick the zone and leave ‘execute’ unticked.'],
+          ['apreview', 'Preview', 'The files are compared with live DNS and the differences are listed in the run log.'],
+          ['aprevonly', 'Preview only', 'Nothing in Route 53 changes.'],
+        ] },
+      ],
+    },
+
+    'old-pipeline': {
+      file: '<b>old-pipeline-firewall.yml</b> · one job from code to AWS',
+      view: [1160, 320],
+      labels: [],
+      nodes: [
+        { id: 'ostart', x: col(0), y: 40, t: 'Start', l: ['Type the stack, folder', 'and role name by', 'hand'] },
+        { id: 'ofiles', x: col(1), y: 40, t: 'Find files', l: ['Template and settings', 'from the chosen', 'folder'] },
+        { id: 'obig', x: col(2), y: 40, t: 'Big template?', k: 'optional', l: ['Over 50 KB:', 'uploaded to S3', 'first'] },
+        { id: 'odeploy', x: col(3), y: 40, t: 'Deploy', l: ['Creates or updates', 'the stack straight', 'away'] },
+        { id: 'odone', x: col(4), y: 40, t: 'Done', k: 'good', l: ['Prints the stack’s', 'outputs'] },
+      ],
+      edges: [
+        ['ostart', 'ofiles'], ['ofiles', 'obig'], ['obig', 'odeploy'], ['odeploy', 'odone'],
+        ['ofiles', 'odeploy', { d: 'M285,152 C285,200 655,200 655,152', dashed: true, label: 'small template', lx: 470, ly: 194, anchor: 'middle' }],
+      ],
+      bar: { x: 20, y: 236, w: 1120, h: 52, t: 'Never stops to check for manual changes, show a preview, or wait for approval' },
+      signinOn: ['odeploy'],
+      signin: { kind: 'master', from: 'its ARN comes from the GitHub secret for the role name you typed' },
+      scenarios: [
+        { id: 'small', name: 'Small template', steps: [
+          ['ostart', 'Start', 'You type the stack name, the folder and the role name by hand. A typo means a failed run.'],
+          ['ofiles', 'Find files', 'The template and its settings come from the chosen folder.'],
+          ['odeploy', 'Deploy', 'It creates or updates the stack straight away. AWS makes a change set and executes it in one go, so nobody reviews it.', ['bar']],
+          ['odone', 'Done', 'It prints the stack’s outputs. Simple and quick, and it works for every resource type, even ones AWS can’t drift-check.'],
+        ] },
+        { id: 'big', name: 'Big template (over 50 KB)', steps: [
+          ['ostart', 'Start', 'You type the stack name, the folder and the role name by hand.'],
+          ['ofiles', 'Find files', 'The template and its settings come from the chosen folder.'],
+          ['obig', 'Big template', 'Over 50 KB, so the template is uploaded to S3 first.'],
+          ['odeploy', 'Deploy', 'It creates or updates the stack straight away, with no drift check, no preview and no approval.', ['bar']],
+          ['odone', 'Done', 'It prints the stack’s outputs.'],
+        ] },
+      ],
+    },
+  };
+
+  const SIGNIN = {
+    'two-hop': {
+      note: 'Every box (Prepare, Drift check, Change set, Deploy) signs in again, prints both roles and stops if either is wrong. No account roles are kept in GitHub secrets.',
+      nodes: [
+        { id: 'gh', x: 20, y: 22, w: 210, t: 'GitHub run', r: 'plat-eng/AWS-Landing-Zone', s: 'gets a signed note (OIDC)' },
+        { id: 'root', x: 330, y: 22, w: 360, t: 'Hop 1 · IMS Root 390403857119', r: 'iamr-<account>-<env>-deploy', s: 'can only switch to the same role in one account' },
+        { id: 'acct', x: 790, y: 22, w: 350, t: 'Hop 2 · the target account', r: 'iamr-<account>-<env>-deploy', s: 'does the deployment, under the guardrails, ≤ 1 hour' },
+      ],
+      edges: [['gh', 'root', 'hop 1'], ['root', 'acct', 'hop 2']],
+    },
+    'master': {
+      note: 'One hop, straight to Control Tower’s own admin role in the account. Control Tower’s guardrails don’t apply to that role.',
+      nodes: [
+        { id: 'gh', x: 20, y: 22, w: 210, t: 'GitHub run', r: 'workflow run', s: 'gets a signed note (OIDC)' },
+        { id: 'acct', x: 330, y: 22, w: 800, t: 'The target account, in one hop', r: 'AWSControlTowerExecution', s: '', bad: true },
+      ],
+      edges: [['gh', 'acct', 'one hop']],
+    },
+  };
+
+  const COMPARE = [
+    ['Drift check: has anyone changed it by hand?', ['yes', 'Lists hand changes, expected vs actual*'], ['no', 'No alarm: a hand edit looks like any other change'], ['no', 'No check']],
+    ['Change set: what exactly will change?', ['yes', 'Every add, change and removal; that exact list runs'], ['part', 'Preview in the run log, worked out again at apply'], ['no', 'No preview; deploys in one go']],
+    ['Keep or overwrite hand changes', ['yes', 'Stops unless Remove manual changes = yes'], ['no', 'Overwritten without asking'], ['no', 'Not asked']],
+    ['Pause for approval', ['yes', 'By default waits for someone to click Execute'], ['yes', 'Gatekeeper approval outside sandbox'], ['no', 'Deploys straight away']],
+    ['Signs in as', ['yes', 'Two iamr roles: IMS Root (switch only), then the account'], ['no', 'AWSControlTowerExecution, one hop'], ['no', 'AWSControlTowerExecution, one hop']],
+    ['Covers', ['yes', 'Any CloudFormation stack, DNS zones and alias records too'], ['part', 'DNS records only'], ['yes', 'Every resource type, even ones AWS can’t drift-check']],
+  ];
+
+  // ── rendering ────────────────────────────────────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const svgEl = (tag, attrs = {}, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const GLYPH = {
+    good: 'M-5,0 L-1.5,3.5 L5,-3.5',
+    stop: 'M-4,-4 L4,4 M4,-4 L-4,4',
+    warn: 'M0,-5 L5.5,4.5 L-5.5,4.5 Z M0,-1.5 L0,1.5',
+    wait: 'M0,-5 A5,5 0 1 1 -0.01,-5 M0,-2.5 L0,0 L2.5,1.5',
+    neutral: 'M-5,0 L5,0',
+    gap: 'M0,-5 L5.5,4.5 L-5.5,4.5 Z M0,-1.5 L0,1.5',
+  };
+
+  let pipe, scenario, step = 0, playing = false, speed = 1, timer = null, anim = null;
+  const nodeById = {}, edgeByKey = {}, edgeEls = [];
+
+  function edgePath(p, a, b, opt) {
+    if (opt && opt.d) return opt.d;
+    const A = nodeById[a], B = nodeById[b];
+    const aw = A.w || W, bw = B.w || W;
+    if (Math.abs(A.y - B.y) < 2) {                                   // same row: right edge → left edge
+      const y = A.y + H / 2;
+      return `M${A.x + aw},${y} L${B.x},${y}`;
+    }
+    if (Math.abs(A.x - B.x) < 2) {                                   // same column: bottom → top
+      const x = A.x + aw / 2;
+      return `M${x},${A.y + H} L${x},${B.y}`;
+    }
+    const x1 = A.x + aw, y1 = A.y + H / 2, x2 = B.x, y2 = B.y + H / 2;
+    return `M${x1},${y1} C${x1 + 30},${y1} ${x2 - 30},${y2} ${x2},${y2}`;
+  }
+
+  function arrowHead(path, parent, cls) {
+    const L = path.getTotalLength();
+    const p = path.getPointAtLength(L), q = path.getPointAtLength(Math.max(0, L - 6));
+    const ang = Math.atan2(p.y - q.y, p.x - q.x);
+    const s = 9, w = 5;
+    const pts = [[p.x, p.y], [p.x - s * Math.cos(ang) + w * Math.sin(ang), p.y - s * Math.sin(ang) - w * Math.cos(ang)],
+                 [p.x - s * Math.cos(ang) - w * Math.sin(ang), p.y - s * Math.sin(ang) + w * Math.cos(ang)]];
+    return svgEl('polygon', { class: cls, points: pts.map((x) => x.join(',')).join(' ') }, parent);
+  }
+
+  function renderDiagram() {
+    const svg = $('diagram');
+    svg.innerHTML = '';
+    for (const k in nodeById) delete nodeById[k];
+    for (const k in edgeByKey) delete edgeByKey[k];
+    edgeEls.length = 0;
+    svg.setAttribute('viewBox', `0 0 ${pipe.view[0]} ${pipe.view[1]}`);
+    pipe.nodes.forEach((n) => { nodeById[n.id] = n; });
+    for (const l of pipe.labels) svgEl('text', { class: 'slabel', x: l.x, y: l.y }, svg).textContent = l.t;
+    const gEdges = svgEl('g', {}, svg);
+    for (const [a, b, opt] of pipe.edges) {
+      const path = svgEl('path', { class: 'edge' + (opt && opt.dashed ? ' dashed' : ''), d: edgePath(pipe, a, b, opt) }, gEdges);
+      const head = arrowHead(path, gEdges, 'head');
+      let label = null;
+      if (opt && opt.label) {
+        label = svgEl('text', { class: 'elabel', x: opt.lx, y: opt.ly, 'text-anchor': opt.anchor || 'start' }, gEdges);
+        const lines = Array.isArray(opt.label) ? opt.label : [opt.label];
+        lines.forEach((t, i) => { const ts = svgEl('tspan', { x: opt.lx, dy: i ? 14 : 0 }, label); ts.textContent = t; });
+      }
+      const rec = { a, b, path, head, label, callout: opt && opt.callout };
+      edgeByKey[a + '>' + b] = rec;
+      edgeEls.push(rec);
+    }
+    if (pipe.bar) {
+      const g = svgEl('g', { class: 'note-bar', id: 'n-bar' }, svg);
+      svgEl('rect', { x: pipe.bar.x, y: pipe.bar.y, width: pipe.bar.w, height: pipe.bar.h, rx: 12 }, g);
+      svgEl('text', { x: pipe.bar.x + pipe.bar.w / 2, y: pipe.bar.y + 32, 'text-anchor': 'middle' }, g).textContent = pipe.bar.t;
+    }
+    for (const n of pipe.nodes) {
+      const w = n.w || W;
+      const g = svgEl('g', { class: `node kind-${n.k || 'step'}`, id: 'n-' + n.id, transform: `translate(${n.x} ${n.y})` }, svg);
+      svgEl('rect', { class: 'box', width: w, height: H, rx: n.k === 'decision' ? 26 : 12 }, g);
+      svgEl('text', { class: 'ntitle', x: 14, y: 27 }, g).textContent = n.t;
+      const sub = svgEl('text', { class: 'nsub', x: 14, y: 49 }, g);
+      n.l.forEach((t, i) => { const ts = svgEl('tspan', { x: 14, dy: i ? 16.5 : 0 }, sub); ts.textContent = t; });
+      if (GLYPH[n.k]) svgEl('path', { class: 'glyph', d: GLYPH[n.k], transform: `translate(${w - 20} 22)` }, g);
+    }
+    const tok = svgEl('g', { id: 'token', transform: 'translate(-50 -50)' }, svg);
+    svgEl('circle', { class: 'tok-halo', r: 15 }, tok);
+    svgEl('circle', { class: 'tok', r: 8.5 }, tok);
+    svgEl('circle', { class: 'tok-core', r: 3 }, tok);
+  }
+
+  function renderSignin() {
+    const cfg = SIGNIN[pipe.signin.kind];
+    $('signin-note').textContent = cfg.note;
+    const svg = $('signin');
+    svg.innerHTML = '';
+    svg.setAttribute('viewBox', '0 0 1160 128');
+    const byId = {};
+    const gE = svgEl('g', {}, svg);
+    cfg.nodes.forEach((n) => { byId[n.id] = n; });
+    cfg.edges.forEach(([a, b, label]) => {
+      const A = byId[a], B = byId[b];
+      const path = svgEl('path', { class: 'edge', id: `se-${a}-${b}`, d: `M${A.x + A.w},70 L${B.x},70` }, gE);
+      arrowHead(path, gE, 'head');
+      svgEl('text', { class: 'elabel', x: (A.x + A.w + B.x) / 2, y: 60, 'text-anchor': 'middle' }, gE).textContent = label;
+    });
+    for (const n of cfg.nodes) {
+      const g = svgEl('g', { class: 'snode' + (n.bad ? ' bad' : ''), id: 'sn-' + n.id, transform: `translate(${n.x} ${n.y})` }, svg);
+      svgEl('rect', { width: n.w, height: 96, rx: 12 }, g);
+      svgEl('text', { class: 'ntitle', x: 14, y: 26 }, g).textContent = n.t;
+      svgEl('text', { class: 'nrole', x: 14, y: 52 }, g).textContent = n.r;
+      const s = n.bad ? `Control Tower’s own admin role · ${pipe.signin.from}` : n.s;
+      svgEl('text', { class: 'nsub', x: 14, y: 76 }, g).textContent = s;
+      if (n.id !== 'gh' && !n.bad) {
+        const c = svgEl('g', { class: 'scheck', transform: `translate(${n.w - 22} 22)` }, g);
+        svgEl('circle', { r: 10 }, c);
+        svgEl('path', { d: 'M-4.5,0 L-1.2,3.3 L4.5,-3' }, c);
+      }
+    }
+    const dot = svgEl('g', { id: 'stoken', transform: 'translate(-50 -50)' }, svg);
+    svgEl('circle', { class: 'tok-halo', r: 12 }, dot);
+    svgEl('circle', { class: 'tok', r: 7 }, dot);
+  }
+
+  function renderScenarios() {
+    const box = $('scenarios');
+    box.innerHTML = '';
+    for (const sc of pipe.scenarios) {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.type = 'button'; b.id = `sc-${sc.id}`;
+      b.textContent = sc.name;
+      b.setAttribute('aria-pressed', String(sc === scenario));
+      b.addEventListener('click', () => { selectScenario(sc); play(); });
+      box.appendChild(b);
+    }
+  }
+
+  function renderCompare() {
+    const tb = $('compare-body');
+    const sym = { yes: '✓', part: '◐', no: '✕' };
+    const lab = { yes: 'yes', part: 'partly', no: 'no' };
+    tb.innerHTML = COMPARE.map(([check, ...cells]) =>
+      `<tr><th scope="row">${check}</th>${cells.map(([m, t]) =>
+        `<td><span class="mark ${m}" aria-label="${lab[m]}">${sym[m]}</span>${t}</td>`).join('')}</tr>`).join('');
+  }
+
+  // ── state and animation ──────────────────────────────────────────────────────────────────────
+  const steps = () => scenario.steps;
+
+  function edgeFor(prev, cur) { return edgeByKey[prev + '>' + cur]; }
+
+  function placeToken(x, y) { $('token').setAttribute('transform', `translate(${x} ${y})`); }
+
+  function restPoint(i) {
+    const id = steps()[i][0];
+    if (i > 0) {
+      const e = edgeFor(steps()[i - 1][0], id);
+      if (e) { const L = e.path.getTotalLength(); const p = e.path.getPointAtLength(L); return [p.x, p.y]; }
+    }
+    const n = nodeById[id];
+    return [n.x, n.y + H / 2];
+  }
+
+  function paint(i) {
+    const visited = new Set(steps().slice(0, i + 1).map((s) => s[0]));
+    const callouts = new Set(steps().slice(0, i + 1).flatMap((s) => s[3] || []));
+    const used = new Set();
+    for (let k = 1; k <= i; k++) used.add(steps()[k - 1][0] + '>' + steps()[k][0]);
+    const route = new Set(steps().flatMap((s) => [s[0], ...(s[3] || [])]));
+    const routeEdges = new Set();
+    for (let k = 1; k < steps().length; k++) routeEdges.add(steps()[k - 1][0] + '>' + steps()[k][0]);
+    for (const n of pipe.nodes) {
+      const el = $('n-' + n.id);
+      el.classList.toggle('visited', visited.has(n.id) || callouts.has(n.id));
+      el.classList.toggle('active', n.id === steps()[i][0] || (steps()[i][3] || []).includes(n.id));
+      el.classList.toggle('dim', !route.has(n.id));
+    }
+    const bar = $('n-bar');
+    if (bar) bar.classList.toggle('lit', callouts.has('bar'));
+    for (const e of edgeEls) {
+      const tr = used.has(e.a + '>' + e.b);
+      const co = !!(e.callout && callouts.has(e.b)) && !tr;
+      const on = routeEdges.has(e.a + '>' + e.b) || !!(e.callout && route.has(e.b));
+      e.path.classList.toggle('traveled', tr); e.head.classList.toggle('traveled', tr);
+      e.path.classList.toggle('callout', co); e.head.classList.toggle('callout', co);
+      e.path.classList.toggle('dim', !on); e.head.classList.toggle('dim', !on);
+      if (e.label) { e.label.classList.toggle('traveled', tr); e.label.classList.toggle('dim', !on); }
+    }
+    const [, title, text] = steps()[i];
+    $('cap-count').textContent = `Step ${i + 1} of ${steps().length}`;
+    $('cap-title').textContent = title;
+    $('cap-text').textContent = text;
+    paintSignin(i);
+  }
+
+  // sign-in strip: lit once the run has reached a step that signs in
+  function paintSignin(i, animate) {
+    const reachedAt = steps().findIndex((s) => pipe.signinOn.includes(s[0]));
+    const done = reachedAt !== -1 && i >= reachedAt;
+    const cfg = SIGNIN[pipe.signin.kind];
+    cfg.nodes.forEach((n) => { const el = $('sn-' + n.id); if (el) el.classList.toggle('lit', done || (n.id === 'gh' && i >= 0)); });
+    cfg.edges.forEach(([a, b]) => {
+      const p = $(`se-${a}-${b}`);
+      if (p) { p.classList.toggle('traveled', done); p.nextSibling && p.nextSibling.classList.toggle('traveled', done); }
+    });
+    document.querySelectorAll('.scheck').forEach((c) => c.classList.toggle('on', done));
+    if (animate && done && i === reachedAt && !reduced) runSigninDot(cfg);
+  }
+
+  function runSigninDot(cfg) {
+    const dot = $('stoken');
+    const paths = cfg.edges.map(([a, b]) => $(`se-${a}-${b}`));
+    let k = 0;
+    document.querySelectorAll('.scheck').forEach((c) => c.classList.remove('on'));
+    const next = () => {
+      if (k >= paths.length) { dot.setAttribute('transform', 'translate(-50 -50)'); document.querySelectorAll('.scheck').forEach((c) => c.classList.add('on')); return; }
+      const p = paths[k], L = p.getTotalLength(), t0 = performance.now(), dur = 700 / speed;
+      const tick = (now) => {
+        const t = Math.min(1, (now - t0) / dur), e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const pt = p.getPointAtLength(e * L);
+        dot.setAttribute('transform', `translate(${pt.x} ${pt.y})`);
+        if (t < 1) requestAnimationFrame(tick); else { k++; next(); }
+      };
+      requestAnimationFrame(tick);
+    };
+    next();
+  }
+
+  function cancelAnim() { if (anim) { cancelAnimationFrame(anim); anim = null; } }
+
+  function goTo(i, animate) {
+    cancelAnim();
+    clearTimeout(timer);
+    i = Math.max(0, Math.min(steps().length - 1, i));
+    const prev = step;
+    step = i;
+    const e = i > 0 && i === prev + 1 ? edgeFor(steps()[i - 1][0], steps()[i][0]) : null;
+    if (animate && e && !reduced) {
+      paint(i - 1);
+      const L = e.path.getTotalLength(), t0 = performance.now(), dur = 750 / speed;
+      e.path.classList.add('traveled'); e.head.classList.add('traveled');
+      const tick = (now) => {
+        const t = Math.min(1, (now - t0) / dur), k = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const p = e.path.getPointAtLength(k * L);
+        placeToken(p.x, p.y);
+        if (t < 1) anim = requestAnimationFrame(tick); else { anim = null; arrive(i, true); }
+      };
+      anim = requestAnimationFrame(tick);
+    } else {
+      const [x, y] = restPoint(i);
+      placeToken(x, y);
+      arrive(i, animate);
+    }
+  }
+
+  function arrive(i, animate) {
+    paint(i);
+    paintSignin(i, animate);
+    if (playing) {
+      if (i < steps().length - 1) {
+        const dwell = (1600 + steps()[i][2].length * 22) / speed;
+        timer = setTimeout(() => goTo(i + 1, true), dwell);
+      } else { setPlaying(false); }
+    }
+  }
+
+  function setPlaying(on) {
+    playing = on;
+    const atEnd = scenario ? step >= steps().length - 1 : false;
+    $('btn-play').querySelector('span').textContent = on ? 'Pause' : (atEnd ? 'Replay' : 'Play');
+    $('play-icon').innerHTML = on ? '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/>' : '<path d="M4 2.5v11l9-5.5z"/>';
+  }
+
+  function play() {
+    if (step >= steps().length - 1) { step = 0; goTo(0, false); }
+    setPlaying(true);
+    clearTimeout(timer);
+    timer = setTimeout(() => goTo(step + 1, true), 900 / speed);
+  }
+  function pause() { setPlaying(false); clearTimeout(timer); }
+
+  function selectScenario(sc) {
+    pause();
+    scenario = sc;
+    document.querySelectorAll('#scenarios .chip').forEach((b) => b.setAttribute('aria-pressed', String(b.id === `sc-${sc.id}`)));
+    step = 0;
+    goTo(0, false);
+    setPlaying(false);
+  }
+
+  function selectPipe(id, fromHash) {
+    if (!PIPES[id]) id = 'new-pipeline';
+    pause();
+    pipe = PIPES[id];
+    document.body.dataset.pipe = id;
+    document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.pipe === id)));
+    $('file').innerHTML = pipe.file;
+    renderDiagram();
+    renderSignin();
+    scenario = pipe.scenarios[0];
+    renderScenarios();
+    step = 0;
+    goTo(0, false);
+    setPlaying(false);
+  }
+
+  // ── wiring ───────────────────────────────────────────────────────────────────────────────────
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+    const id = t.dataset.pipe;
+    if (location.hash !== '#' + id) location.hash = id; else selectPipe(id);
+  }));
+  $('btn-play').addEventListener('click', () => (playing ? pause() : play()));
+  $('btn-next').addEventListener('click', () => { pause(); goTo(step + 1, true); setPlaying(false); });
+  $('btn-back').addEventListener('click', () => { pause(); goTo(step - 1, false); setPlaying(false); });
+  $('btn-restart').addEventListener('click', () => { pause(); goTo(0, false); play(); });
+  $('btn-speed').addEventListener('click', () => { speed = speed === 1 ? 2 : 1; $('btn-speed').textContent = speed + '×'; });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (e.key === 'ArrowRight') { pause(); goTo(step + 1, true); setPlaying(false); }
+    if (e.key === 'ArrowLeft') { pause(); goTo(step - 1, false); setPlaying(false); }
+  });
+  window.addEventListener('hashchange', () => { if (PIPES[location.hash.slice(1)] !== pipe) selectPipe(location.hash.slice(1), true); });
+
+  renderCompare();
+  selectPipe(location.hash.slice(1) || 'new-pipeline', true);
+  if (!reduced) setTimeout(play, 700);
+})();
+</script>
+
+</body></html>
