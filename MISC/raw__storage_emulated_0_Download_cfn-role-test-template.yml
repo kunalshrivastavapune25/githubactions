@@ -1,0 +1,11 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Throwaway test for the CloudFormation service role (Security Hub CloudFormation.4) in Sandbox - delete after the test
+
+Resources:
+  TestParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /platform/cfn-service-role-test
+      Type: String
+      Value: "v1"
+      Description: Test only - deleted with the cfn-role-test stack
