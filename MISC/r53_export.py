@@ -1,28 +1,41 @@
 #!/usr/bin/env python3
 """
-r53_export.py - export ONE Route 53 hosted zone and its records to CloudFormation
-YAML, leaving out whatever CloudFormation already manages.
+r53_export.py - export ONE Route 53 hosted zone and its records as a CloudFormation
+template to import, leaving out whatever CloudFormation already manages.
 
     python3 r53_export.py example.com --region eu-west-1 [--profile myprofile]
 
 1. Finds the hosted zone (name or zone ID) and checks every enabled region for a
    CloudFormation stack that already holds it (or only --regions a,b).
-2. No stack holds the zone: writes <zone>-hostedzone.yaml and <zone>-import.json
-   and prints the two commands to import it. Run the script again afterwards to
-   export the records.
-3. A stack holds the zone: writes <zone>-records.yaml with every record no stack
-   manages yet, to add under Resources: in that stack's template. Left out: the
-   zone's own NS and SOA records (at the zone apex), records already in any stack,
-   and records created by a traffic policy.
-     --full   writes <zone>-stack.yaml instead: the stack's current template plus
-              those records, ready to deploy as an update.
-     --max N  exports only the first N new records. Deploy them, run again for
-              the next N (useful for big zones).
+2. Builds one template:
+   - A stack already holds the zone: that stack's current template, hosted zone
+     included as it is, plus every record no stack manages yet.
+   - No stack holds the zone: the hosted zone plus all its records, so a single
+     import creates the stack.
+   Records include the zone's own NS and SOA. Records another stack already
+   manages, and records made by a traffic policy, are left out.
+3. Writes three files:
+     <zone>-import-template.yaml  the template. Existing stack: Stack actions >
+                                  Import resources into stack. New stack: Create
+                                  stack > With existing resources (import resources).
+     <zone>-import-values.csv     one row per resource to import, in template order,
+                                  with the identifier values to copy into the
+                                  console: Id for the hosted zone; Name, HostedZoneId,
+                                  Type and SetIdentifier for records.
+     <zone>-import.json           the same values for the CLI, so nothing is typed.
+   --max N      puts only the first N records in this import; run again
+                afterwards for the next N.
+   --name NAME  only records with this name (repeatable). Good for a first test
+                with one simple record, or for importing one record later.
 
-Records are copied exactly as Route 53 returns them and carry DeletionPolicy and
-UpdateReplacePolicy Retain. Keep both: CloudFormation only takes over an existing
-record when the template matches it exactly, and Retain stops a failed update's
-rollback from deleting live records.
+Logical IDs are the name with everything except letters and digits taken out,
+then the type: www.example.com. CNAME -> wwwexamplecomCNAME, *.example.com. A ->
+WILDCARDexamplecomA, and the zone itself -> examplecomHostedZone. CloudFormation
+allows only letters and digits in a logical ID, so the exact names are in the CSV.
+
+Everything carries DeletionPolicy and UpdateReplacePolicy Retain: an import needs a
+DeletionPolicy, and Retain means deleting the stack never removes the live zone or
+records. Values are copied exactly as Route 53 returns them, so drift stays clean.
 
 Requires Python 3.8+, boto3 and PyYAML:  pip install boto3 pyyaml
 """
@@ -30,6 +43,7 @@ Requires Python 3.8+, boto3 and PyYAML:  pip install boto3 pyyaml
 import argparse
 import collections
 import copy
+import csv
 import hashlib
 import json
 import re
@@ -70,35 +84,24 @@ def norm_name(name):
     return decode_name(name).lower().rstrip(".")
 
 
-def labels_under(name, zone_name):
-    n, z = norm_name(name), norm_name(zone_name)
-    if n == z:
-        return []
-    if n.endswith("." + z):
-        n = n[: -len(z) - 1]
-    return n.split(".")
+def logical_id(name, rtype, set_id=""):
+    """The record name with only letters and digits kept, then the type in capitals,
+    then the set identifier (letters and digits) when there is one."""
+    flat = re.sub(r"[^A-Za-z0-9]", "", decode_name(name).replace("*", "WILDCARD"))
+    lid = flat + re.sub(r"[^A-Za-z0-9]", "", rtype).upper() + re.sub(r"[^A-Za-z0-9]", "", set_id or "")
+    if len(lid) > 240:
+        lid = lid[:240] + hashlib.sha1(lid.encode()).hexdigest()[:8].upper()
+    return lid or "Record"
 
 
-def _camel(text):
-    parts = [p for p in re.split(r"[^A-Za-z0-9]+", text or "") if p]
-    return "".join(p[0].upper() + p[1:].lower() for p in parts)
-
-
-def base_logical_id(name, zone_name, rtype, set_id):
-    labels = labels_under(name, zone_name)
-    rel = "".join("Wildcard" if l == "*" else _camel(l) for l in labels) if labels else "Apex"
-    lid = "Record" + rel + _camel(rtype) + _camel(set_id)
-    if len(lid) > 200:
-        lid = lid[:200] + "X" + hashlib.sha1(lid.encode()).hexdigest()[:8].upper()
-    return lid
+def zone_logical_id(zone_name):
+    flat = re.sub(r"[^A-Za-z0-9]", "", decode_name(zone_name))
+    return (flat[:240] or "Zone") + "HostedZone"
 
 
 # --------------------------------------------------------- records -> template
 
-def skip_reason(rr, zone_name):
-    apex = norm_name(rr["Name"]) == norm_name(zone_name)
-    if apex and rr["Type"] in ("SOA", "NS"):
-        return f"the zone's own {rr['Type']} record"
+def skip_reason(rr):
     if rr.get("TrafficPolicyInstanceId"):
         return "created by a Route 53 traffic policy"
     return None
@@ -162,13 +165,13 @@ def key_from_props(props):
 
 
 def plan_records(zone, rrsets, template, own_stack, record_owners):
-    """Split the zone's records into new / already managed / skipped.
+    """Split the zone's records into new / already managed / left out.
 
     template       the zone stack's current template (dict)
     own_stack      (region, stack name) of the zone's stack
     record_owners  {norm_name: [(region, stack, logical_id), ...]} from every stack
-    Returns (new [(logical_id, resource)], already [(label, logical_id)],
-             skipped [(label, reason)], warnings [text]).
+    Returns (new [(logical_id, resource)] sorted by logical ID,
+             already [(label, logical_id)], skipped [(label, reason)], warnings [text]).
     """
     resources = template.get("Resources") or {}
     managed, literal_ids = {}, set()
@@ -186,18 +189,17 @@ def plan_records(zone, rrsets, template, own_stack, record_owners):
                 if k:
                     managed[k] = lid
 
-    already, skipped, warnings, keep = [], [], [], []
+    already, skipped, warnings, todo = [], [], [], []
     for rr in rrsets:
         sid = rr.get("SetIdentifier", "")
         key = (norm_name(rr["Name"]), rr["Type"], sid)
         label = f"{rr['Name']} {rr['Type']}" + (f" [{sid}]" if sid else "")
-        reason = skip_reason(rr, zone["Name"])
+        reason = skip_reason(rr)
         if reason:
             skipped.append((label, reason))
             continue
         if key in managed:
             already.append((label, managed[key]))
-            keep.append((key, rr, None))
             continue
         # Owned by another stack, or by a record in this stack whose name is computed.
         others = [o for o in record_owners.get(key[0], [])
@@ -207,26 +209,54 @@ def plan_records(zone, rrsets, template, own_stack, record_owners):
             skipped.append((label, "already managed by " + ", ".join(owners)))
             continue
         warnings += [f"{label}: {w}" for w in record_warnings(rr)]
-        keep.append((key, rr, rrset_to_props(rr, zone["Id"])))
+        todo.append((key, logical_id(rr["Name"], rr["Type"], sid), rrset_to_props(rr, zone["Id"])))
 
-    # Collisions are judged across every kept record, so a record keeps the same
-    # logical ID whether it is exported now or on a later run.
-    bases = {key: base_logical_id(rr["Name"], zone["Name"], rr["Type"], key[2]) for key, rr, _ in keep}
-    counts = collections.Counter(bases.values())
-    used = set(resources)
-    todo = [t for t in keep if t[2] is not None]
-    todo.sort(key=lambda t: (list(reversed(labels_under(t[1]["Name"], zone["Name"]))), t[1]["Type"], t[0][2]))
-    new = []
-    for key, rr, props in todo:
-        lid = bases[key]
+    # Two records can flatten to the same ID (my-app and myapp); both then get a short
+    # hash so neither name wins by luck. IDs already in the stack are avoided too.
+    counts = collections.Counter(lid for _, lid, _ in todo)
+    used, new = set(resources), []
+    for key, lid, props in todo:
         if counts[lid] > 1 or lid in used:
-            lid = lid + "X" + hashlib.sha1("|".join(key).encode()).hexdigest()[:8].upper()
+            lid = lid + "X" + hashlib.sha1("|".join(key).encode()).hexdigest()[:6].upper()
         while lid in used:
             lid += "X"
         used.add(lid)
         new.append((lid, {"Type": RECORDSET, "DeletionPolicy": "Retain",
                           "UpdateReplacePolicy": "Retain", "Properties": props}))
+    new.sort(key=lambda t: (t[0].lower(), t[0]))
     return new, already, skipped, warnings
+
+
+CSV_FIELDS = ["LogicalId", "ResourceType", "Id", "Name", "HostedZoneId", "Type", "SetIdentifier"]
+
+
+def import_rows(new, zone_entry=None):
+    """Identifier values for every resource to import, in template order.
+    zone_entry = (logical_id, zone_id) when the hosted zone is imported too."""
+    rows = []
+    if zone_entry:
+        rows.append({"LogicalId": zone_entry[0], "ResourceType": HOSTEDZONE, "Id": zone_entry[1],
+                     "Name": "", "HostedZoneId": "", "Type": "", "SetIdentifier": ""})
+    for lid, res in new:
+        p = res["Properties"]
+        rows.append({"LogicalId": lid, "ResourceType": RECORDSET, "Id": "", "Name": p["Name"],
+                     "HostedZoneId": p["HostedZoneId"], "Type": p["Type"],
+                     "SetIdentifier": p.get("SetIdentifier", "")})
+    return rows
+
+
+def resources_to_import(rows):
+    out = []
+    for r in rows:
+        if r["ResourceType"] == HOSTEDZONE:
+            ident = {"Id": r["Id"]}
+        else:
+            ident = {"HostedZoneId": r["HostedZoneId"], "Name": r["Name"], "Type": r["Type"]}
+            if r["SetIdentifier"]:
+                ident["SetIdentifier"] = r["SetIdentifier"]
+        out.append({"ResourceType": r["ResourceType"], "LogicalResourceId": r["LogicalId"],
+                    "ResourceIdentifier": ident})
+    return out
 
 
 # ------------------------------------------------------------------------- YAML
@@ -476,30 +506,6 @@ def file_base(zone):
     return (norm_name(zone["Name"]) or "root") + ("-private" if zone["Private"] else "")
 
 
-def export_zone_for_import(aws, zone, out, region):
-    base = file_base(zone)
-    stack = ("dns-" + re.sub(r"[^A-Za-z0-9-]", "-", base))[:128]
-    template = {"AWSTemplateFormatVersion": "2010-09-09",
-                "Resources": {"HostedZone": {"Type": HOSTEDZONE, "DeletionPolicy": "Retain",
-                                             "UpdateReplacePolicy": "Retain",
-                                             "Properties": zone_properties(aws.r53, zone)}}}
-    tpath, ipath = out / f"{base}-hostedzone.yaml", out / f"{base}-import.json"
-    tpath.write_text(to_yaml(template, header=(
-        f"Hosted zone {zone['Name']} ({zone['Id']}), for a new stack created by import.\n"
-        "Import this first, then run r53_export.py again to export the zone's records.")))
-    ipath.write_text(json.dumps([{"ResourceType": HOSTEDZONE, "LogicalResourceId": "HostedZone",
-                                  "ResourceIdentifier": {"Id": zone["Id"]}}], indent=2) + "\n")
-    print(f"No CloudFormation stack holds {zone['Name']} ({zone['Id']}) yet.")
-    print(f"Wrote {tpath} and {ipath}. Import the zone into a new stack (or use IaC generator as before):")
-    print(f"  aws cloudformation create-change-set --stack-name {stack} --change-set-name import-hosted-zone "
-          f"--change-set-type IMPORT --template-body file://{tpath} --resources-to-import file://{ipath} --region {region}")
-    print("  # review the change set, then:")
-    print(f"  aws cloudformation execute-change-set --stack-name {stack} --change-set-name import-hosted-zone --region {region}")
-    if zone["Private"]:
-        print("Private zone: VPCs lists every associated VPC. Remove any whose association is managed from another account.")
-    print("Then run this script again to export the records.")
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("zone", help="hosted zone name (example.com) or zone ID (Z0123...)")
@@ -507,9 +513,9 @@ def main(argv=None):
     ap.add_argument("--profile")
     ap.add_argument("--regions", default="all",
                     help="regions to check for stacks: 'all' (default) or a,b,c")
-    ap.add_argument("--full", action="store_true",
-                    help="write the stack's whole template plus the new records")
-    ap.add_argument("--max", type=int, metavar="N", help="export at most N new records")
+    ap.add_argument("--max", type=int, metavar="N", help="put at most N records in this import")
+    ap.add_argument("--name", action="append", default=[], metavar="NAME",
+                    help="only records with this name (repeatable)")
     ap.add_argument("--out", default=".", help="folder for the output files (default: here)")
     args = ap.parse_args(argv)
     if args.max is not None and args.max < 1:
@@ -534,58 +540,99 @@ def run(args):
     for n in notes:
         print(f"  note: {n}")
     owners = zone_owner.get(zone["Id"], [])
-    if not owners:
-        export_zone_for_import(aws, zone, out, aws.region)
-        return
     if len(owners) > 1:
         die(f"{zone['Name']} is in more than one stack: " + ", ".join(f"{o[1]} ({o[0]})" for o in owners))
-    region, stack, zone_lid = owners[0]
-    template = load_template(aws.cfn(region).get_template(StackName=stack, TemplateStage="Original")["TemplateBody"])
+    base = file_base(zone)
+    if owners:
+        region, stack, zone_lid = owners[0]
+        own_stack, zone_entry = (region, stack), None
+        template = load_template(aws.cfn(region).get_template(StackName=stack, TemplateStage="Original")["TemplateBody"])
+        print(f"{zone['Name']} ({zone['Id']}) is already in stack {stack} ({region}) as {zone_lid}; "
+              "the template keeps it as it is.")
+    else:
+        region, stack = aws.region, ("dns-" + re.sub(r"[^A-Za-z0-9-]", "-", base))[:128]
+        zone_lid = zone_logical_id(zone["Name"])
+        own_stack, zone_entry = None, (zone_lid, zone["Id"])
+        template = {"AWSTemplateFormatVersion": "2010-09-09",
+                    "Resources": {zone_lid: {"Type": HOSTEDZONE, "DeletionPolicy": "Retain",
+                                             "UpdateReplacePolicy": "Retain",
+                                             "Properties": zone_properties(aws.r53, zone)}}}
+        print(f"No CloudFormation stack holds {zone['Name']} ({zone['Id']}) yet, so the hosted zone goes "
+              f"into the template as {zone_lid}.")
+        if zone["Private"]:
+            print("  Private zone: VPCs lists every associated VPC. Remove any whose association is managed "
+                  "from another account.")
     rrsets = list_records(aws.r53, zone["Id"])
-    new, already, skipped, warnings = plan_records(zone, rrsets, template, (region, stack), record_owners)
+    if args.name:
+        wanted = {norm_name(n) for n in args.name}
+        rrsets = [rr for rr in rrsets if norm_name(rr["Name"]) in wanted]
+        if not rrsets:
+            die(f"No records named {', '.join(args.name)} in {zone['Name']}")
+        print(f"Only records named {', '.join(sorted(wanted))}.")
+    new, already, skipped, warnings = plan_records(zone, rrsets, template, own_stack, record_owners)
 
-    print(f"{zone['Name']} ({zone['Id']}) is in stack {stack} ({region}) as {zone_lid}, so the zone is not exported.")
     print(f"Records: {len(rrsets)} in Route 53 | {len(already)} already in this stack | "
-          f"{len(skipped)} left out | {len(new)} new")
+          f"{len(skipped)} left out | {len(new)} to import")
     for label, reason in skipped:
         print(f"  left out  {label}: {reason}")
     for w in warnings:
         print(f"  check     {w}")
-    if not new:
-        print("Nothing to export: every record is already in a stack.")
+    if not new and not zone_entry:
+        print("Nothing to import: every record is already in a stack.")
         return
 
-    total_new = len(new)
-    if args.max and total_new > args.max:
+    total = len(new)
+    if args.max and total > args.max:
         new = new[: args.max]
+    count = len(new)
     full = copy.deepcopy(template)
     full.setdefault("Resources", {})
     for lid, res in new:
         full["Resources"][lid] = res
-    count = len(new)
-    later = f" ({total_new - count} more on the next run, once these are deployed)" if count < total_new else ""
-    base = file_base(zone)
-    if args.full:
-        path = out / f"{base}-stack.yaml"
-        body = to_yaml(full, header=(
-            f"Stack {stack} ({region}): its current template plus {count} record(s) that no stack managed yet.\n"
-            "Deploy as an update to that stack. Record values are copied exactly from Route 53; keep them as they are."))
-        path.write_text(body)
-        print(f"Wrote {path}: the stack's current template plus {count} new record(s){later}.")
-        print(f"Next: deploy it as an update to {stack}.")
+    rows = import_rows(new, zone_entry)
+
+    tpath = out / f"{base}-import-template.yaml"
+    cpath = out / f"{base}-import-values.csv"
+    jpath = out / f"{base}-import.json"
+    if zone_entry:
+        header = (f"New stack for hosted zone {zone['Name']} ({zone['Id']}): the zone plus {count} record(s) to import.\n"
+                  "Use it with Create stack > With existing resources (import resources), or the CLI command\n"
+                  f"r53_export.py printed. Each resource's identifier values are in {cpath.name}.")
     else:
-        path = out / f"{base}-records.yaml"
-        path.write_text(to_yaml({"Resources": dict(new)}, header=(
-            f"{count} record(s) from {zone['Name']} ({zone['Id']}) that no CloudFormation stack manages yet.\n"
-            f"Add them under Resources: in the template of stack {stack} ({region}), then update that stack.\n"
-            "Do not deploy this file on its own: it would take the hosted zone out of the stack.\n"
-            "Values are copied exactly from Route 53; keep them as they are.")))
-        print(f"Wrote {path} with {count} new record(s){later}.")
-        print(f"Next: add them under Resources: in {stack}'s template, then update the stack.")
+        header = (f"Stack {stack} ({region}): its current template plus {count} Route 53 record(s) to import.\n"
+                  "Use it with Stack actions > Import resources into stack, or the CLI command r53_export.py printed,\n"
+                  f"not as a normal update. Each record's identifier values are in {cpath.name}.")
+    tpath.write_text(to_yaml(full, header=header))
+    with open(cpath, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    jpath.write_text(json.dumps(resources_to_import(rows), indent=2) + "\n")
+
+    later = f" ({total - count} more records on the next run, once these are imported)" if count < total else ""
+    what = f"the hosted zone and {count} record(s)" if zone_entry else f"{count} record(s)"
+    print(f"Wrote {what} to import{later}:")
+    print(f"  {tpath}   the template")
+    print(f"  {cpath}   identifier values for the console, in the same order")
+    print(f"  {jpath}   the same values for the CLI")
+    if zone_entry:
+        print(f"Console: Create stack > With existing resources (import resources) > upload {tpath.name},")
+        print(f"         fill each resource's boxes from {cpath.name} (the hosted zone needs only its Id),")
+        print(f"         and name the stack, for example {stack}.")
+    else:
+        print(f"Console: stack {stack} > Stack actions > Import resources into stack > upload {tpath.name},")
+        print(f"         then fill each record's boxes from {cpath.name}.")
+    print("         Leave SetIdentifier empty where the CSV has none.")
+    print("CLI, nothing to type:")
+    print(f"  aws cloudformation create-change-set --stack-name {stack} --change-set-name import-records "
+          f"--change-set-type IMPORT --template-body file://{tpath} --resources-to-import file://{jpath} --region {region}")
+    print("  # review the change set in the console and execute it there")
+    if any(r["Type"] in ("NS", "SOA") and norm_name(r["Name"]) == norm_name(zone["Name"]) for r in rows):
+        print("Includes the zone's own NS and SOA records. Keep their DeletionPolicy as Retain: Route 53 won't delete them.")
     size = len(to_yaml(full).encode())
     if size > BODY_LIMIT:
-        print(f"Note: with these records the stack's template is {size:,} bytes. Over 51,200 bytes, "
-              "deploy it from S3 (--template-url), not --template-body.")
+        print(f"Note: the template is {size:,} bytes. The console upload handles that; for the CLI, put it in S3 "
+              "and use --template-url instead of --template-body.")
     if len(full["Resources"]) > STACK_RESOURCE_LIMIT:
         print(f"Note: that is {len(full['Resources'])} resources, over the {STACK_RESOURCE_LIMIT} per stack. "
               "Split this zone's records across two stacks.")
