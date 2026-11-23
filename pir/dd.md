@@ -33,3 +33,31 @@ Please let me know if you need anything else to close these today. If there are 
 
 Regards,
 Kunal Shrivastava
+
+Subject: Long-ageing AWS PIR closures – 6 PIRs attached and reason for delay
+
+Hi Abhishek, Siddhi,
+
+Please find attached all 6 PIRs requested for the long-ageing AWS changes. I have taken ownership of these so they can be closed today as per Change Mandates.
+
+Changes covered:
+- CHG0031200 – PPE IBMi DNS A records (Feb 2026)
+- CHG0031562 – AWS Network Firewall rules for DevOps CI/CD pipelines (Mar 2026)
+- CHG0031869 – AWS and VMX firewall rules for AVD to SAS (Mar 2026)
+- CHG0031941 – FSx Windows log forwarding to Core Log Archive and Sentinel (Apr 2026)
+- CHG0031943 – Site24x7 poller and VMX security group rules (Apr 2026)
+- CHG0032007 – FSx log forwarding follow-up to CHG0031941 (Apr 2026)
+
+Why these took so long:
+- These changes were implemented during the hypercare window, when the engineers who owned them were also committed to other priority project work (for example, the Fabric Data Gateway setup noted on CHG0032007). Post-implementation tasks, closure updates and PIRs were not completed at the time.
+- Those engineers have since left the team. When the PIR requests came in on 26 August and the chasers followed, these changes had no named owner in the team, so they were not picked up. That is why the chasers went unanswered, and I apologise for the follow-ups this has needed.
+- As the original implementers are no longer available, the PIRs have been prepared from the ServiceNow records (work notes, close notes, change tasks and approvals). Where exact times were not recorded, the timelines are reconstructed from the record history.
+
+To stop this happening again:
+- Before anyone leaves or moves off the team, their open changes, change tasks and PIRs will be reassigned to a named owner.
+- PIRs and closure tasks will be completed within the Change Mandate timelines, and I will track Change Management chasers on AWS changes until they are closed.
+
+Please let me know if you need anything else to close these today. If there are more changes on the list, please share them and I will pick them up.
+
+Regards,
+Kunal Shrivastava
