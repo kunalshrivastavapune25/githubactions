@@ -1,0 +1,3386 @@
+# -----------------------------------------------------------------------------------------
+# AWS Firewall Manager policies for IMS CloudFront distributions (FMS admin account).
+# Source: CloudFormation IaC generator output, reformatted for Git. Resource names, logical
+# IDs and every setting are unchanged; only the layout of ManagedServiceData differs.
+#
+# Accounts: tst = 762649987860 | ppe = 097357356161 | prd = 584477831165
+#
+# Editing ManagedServiceData
+#   - It is JSON inside a single-quoted YAML string: '{ ... }'. YAML joins the lines with
+#     spaces, so Firewall Manager still receives one line of JSON (max 30,000 characters).
+#   - Keep it valid JSON: double quotes, commas between items, no trailing commas.
+#   - A single quote inside the JSON must be written twice: ''
+#   - No blank lines inside the block (a blank line becomes a real line break).
+#   - Don't switch this field to a | block: that sends real line breaks to the FMS API.
+#   - Don't rename the FMSPolicy* logical IDs: CloudFormation would treat the renamed one
+#     as a new policy (the old one is kept by DeletionPolicy: Retain, so you'd get two).
+# -----------------------------------------------------------------------------------------
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS Firewall Manager policies (Shield Advanced and WAF) for IMS CloudFront distributions in tst, ppe and prd"
+
+Metadata:
+  AWSToolsMetrics:
+    IaC_Generator: "arn:aws:cloudformation:us-east-1:119810927880:generatedTemplate/8ad79460-a39a-476e-9f6e-504f4db953cf"
+
+Resources:
+
+  # =====================================================================================
+  # Shield Advanced - all CloudFront distributions in tst, ppe and prd
+  # =====================================================================================
+
+  # ims-cloudfront-shield-global-fms-policy  (all CloudFront distributions)
+  FMSPolicyNu:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-cloudfront-shield-global-fms-policy"
+      PolicyDescription: "Centralized AWS Firewall Manager policy to enforce AWS Shield Advanced protection for CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "097357356161"
+          - "762649987860"
+          - "584477831165"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      SecurityServicePolicyData:
+        Type: "SHIELD_ADVANCED"
+        ManagedServiceData: '{
+            "type": "SHIELD_ADVANCED",
+            "automaticResponseConfiguration": {
+              "automaticResponseStatus": "IGNORED",
+              "automaticResponseAction": null
+            },
+            "overrideCustomerWebaclClassic": false,
+            "optimizeUnassociatedWebACL": true
+          }'
+
+  # =====================================================================================
+  # WAF (WAFV2) - TST (account 762649987860)
+  # =====================================================================================
+
+  # ims-tst-api-cf-waf-fms-policy  (workload-type=api AND environment=tst)
+  FMSPolicyPW:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-tst-api-cf-waf-fms-policy"
+      PolicyDescription: "AWS Firewall Manager policy enforcing WAF protections for IMS tst API CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "762649987860"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "workload-type"
+          Value: "api"
+        - Key: "environment"
+          Value: "tst"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: false
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "environment"
+          Value: "tst"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "cloudformation:stack-id"
+          Value: "arn:aws:cloudformation:us-east-1:762649987860:stack/proofid-net-tst-webacl-stack/cd6cd6f0-59de-11f1-bc49-0e5b293bd151"
+        - Key: "compliance"
+          Value: "internal"
+        - Key: "cloudformation:stack-name"
+          Value: "proofid-net-tst-webacl-stack"
+        - Key: "project"
+          Value: "ims-identity"
+        - Key: "cloudformation:logical-id"
+          Value: "ApiWAFWebACL"
+        - Key: "costcenter"
+          Value: "55637"
+        - Key: "Name"
+          Value: "cf-waf-nonprod-api"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.25",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.21",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"allow": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"count": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-api-xss-body-exception-rulegroup/adb81858-0124-41be-9256-bb5143b8f285",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.3",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_2.6",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesATPRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesATPRuleSet": {
+                        "loginPath": "/oauth2/token",
+                        "requestInspection": {
+                          "payloadType": "JSON",
+                          "usernameField": {"identifier": "/username"},
+                          "passwordField": {"identifier": "/password"}
+                        },
+                        "responseInspection": {
+                          "statusCode": {"successCodes": [200], "failureCodes": [401, 403]}
+                        }
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "UnsupportedCognitoIDP", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricIpHigh", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricSession", "actionToUse": {"block": {}}},
+                  {"name": "AttributeCompromisedCredentials", "actionToUse": {"block": {}}},
+                  {"name": "AttributeUsernameTraversal", "actionToUse": {"block": {}}},
+                  {"name": "AttributePasswordTraversal", "actionToUse": {"block": {}}},
+                  {"name": "AttributeLongSession", "actionToUse": {"block": {}}},
+                  {"name": "TokenRejected", "actionToUse": {"block": {}}},
+                  {"name": "SignalMissingCredential", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricIpFailedLoginResponseHigh", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricSessionFailedLoginResponseHigh", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "COUNT"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"count": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"count": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"count": {}}}
+                ]
+              }
+            ],
+            "postProcessRuleGroups": [
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-api-cf-waf-custom-rulegroup/ae870695-ef0c-4fc2-8c46-f777e8d7707c",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-tst-web-cf-waf-fms-policy  (environment=tst AND workload-type=web)
+  FMSPolicyGU:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-tst-web-cf-waf-fms-policy"
+      PolicyDescription: "AWS Firewall Manager policy enforcing WAF protections for IMS tst webapp CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "762649987860"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "environment"
+          Value: "tst"
+        - Key: "workload-type"
+          Value: "web"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: false
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "environment"
+          Value: "tst"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "cloudformation:stack-id"
+          Value: "arn:aws:cloudformation:us-east-1:762649987860:stack/proofid-net-tst-webacl-stack/cd6cd6f0-59de-11f1-bc49-0e5b293bd151"
+        - Key: "compliance"
+          Value: "internal"
+        - Key: "cloudformation:stack-name"
+          Value: "proofid-net-tst-webacl-stack"
+        - Key: "project"
+          Value: "ims-identity"
+        - Key: "cloudformation:logical-id"
+          Value: "WebAppWAFWebACL"
+        - Key: "costcenter"
+          Value: "55637"
+        - Key: "Name"
+          Value: "cf-waf-nonprod-webapp"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"count": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"count": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"challenge": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-CategoryHttpLibrary-exception-rulegroup/cb7bbdfb-266b-4024-ae2a-3185fe9f3424",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-SignalNonBrowserUserAgent-exception-rulegroup/7669e5eb-9cc9-4cf6-8f65-9307f74f49cd",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-IdentityRateLimit-rulegroup/10369f6e-6e5b-4887-b539-b388df243a40",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.25",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.21",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-DocumentUploadBodySize-exception-rulegroup/39f91821-59a6-4be4-967f-05a54db10c40",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-TescoIMSEgressXSS-exception-rulegroup/714b92b1-dc0a-4ad8-90cc-f8a1355f0741",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.3",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_2.6",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.1",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-TescoStoresIdentityException-rulegroup/057e1da2-0dd2-4553-8292-1927e1fa0db6",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-cf-waf-custom-rulegroup/2d6e9aa8-a9bf-4828-8f0d-286385797cff",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-tst-web-cf-waf-fms-policy-Tescotravelmoney  (environment=tst AND workload-type=web-www.tescotravelmoney.com)
+  # NOTE: in AWS this policy's name and description start with a space. Kept as-is so the
+  # file matches the live policy; removing the space renames the policy on the next deploy.
+  FMSPolicy:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: " ims-tst-web-cf-waf-fms-policy-Tescotravelmoney"
+      PolicyDescription: " ims-tst-web-cf-waf-fms-policy-Tescotravelmoney"
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "762649987860"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "environment"
+          Value: "tst"
+        - Key: "workload-type"
+          Value: "web-www.tescotravelmoney.com"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "environment"
+          Value: "tst"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"challenge": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-cf-waf-custom-rulegroup-Travelmoney/91a9800c-e39c-492d-898b-4917cf40d954",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-tst-web-cf-waf-fms-policy-Tescoinsurance  (workload-type=web-www.tescoinsurance.com AND environment=tst)
+  FMSPolicyAX:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-tst-web-cf-waf-fms-policy-Tescoinsurance"
+      PolicyDescription: "ims-tst-web-cf-waf-fms-policy-Tescoinsurance"
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "762649987860"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "workload-type"
+          Value: "web-www.tescoinsurance.com"
+        - Key: "environment"
+          Value: "tst"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "environment"
+          Value: "tst"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"count": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-tst-web-cf-waf-custom-rulegroup-Tescoinsurance/b1e12c51-f253-437a-9f86-fcd8a55d200a",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # =====================================================================================
+  # WAF (WAFV2) - PPE (account 097357356161)
+  # =====================================================================================
+
+  # ims-ppe-api-cf-waf-fms-policy  (workload-type=api AND environment=ppe)
+  FMSPolicyUA:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-ppe-api-cf-waf-fms-policy"
+      PolicyDescription: "AWS Firewall Manager policy enforcing WAF protections for IMS PPE API CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "097357356161"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "workload-type"
+          Value: "api"
+        - Key: "environment"
+          Value: "ppe"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: false
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "environment"
+          Value: "ppe"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "cloudformation:stack-id"
+          Value: "arn:aws:cloudformation:us-east-1:097357356161:stack/proofid-net-ppe-webacl-stack/9f40aa40-538f-11f1-8ed6-0affc326ee2f"
+        - Key: "compliance"
+          Value: "internal"
+        - Key: "cloudformation:stack-name"
+          Value: "proofid-net-ppe-webacl-stack"
+        - Key: "project"
+          Value: "ims-identity"
+        - Key: "cloudformation:logical-id"
+          Value: "ApiWAFWebACL"
+        - Key: "costcenter"
+          Value: "55637"
+        - Key: "Name"
+          Value: "cf-waf-nonprod-api"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.25",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.21",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"count": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-ppe-api-xss-body-exception-rulegroup/b49283a0-f370-4272-9ec1-b2b8a17cfa1e",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.3",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_2.6",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesATPRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesATPRuleSet": {
+                        "loginPath": "/oauth2/token",
+                        "requestInspection": {
+                          "payloadType": "JSON",
+                          "usernameField": {"identifier": "/username"},
+                          "passwordField": {"identifier": "/password"}
+                        },
+                        "responseInspection": {
+                          "statusCode": {"successCodes": [200], "failureCodes": [401, 403]}
+                        }
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "UnsupportedCognitoIDP", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricIpHigh", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricSession", "actionToUse": {"block": {}}},
+                  {"name": "AttributeCompromisedCredentials", "actionToUse": {"block": {}}},
+                  {"name": "AttributeUsernameTraversal", "actionToUse": {"block": {}}},
+                  {"name": "AttributePasswordTraversal", "actionToUse": {"block": {}}},
+                  {"name": "AttributeLongSession", "actionToUse": {"block": {}}},
+                  {"name": "TokenRejected", "actionToUse": {"block": {}}},
+                  {"name": "SignalMissingCredential", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricIpFailedLoginResponseHigh", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricSessionFailedLoginResponseHigh", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "COUNT"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"count": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"count": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"count": {}}}
+                ]
+              }
+            ],
+            "postProcessRuleGroups": [
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-ppe-api-cf-waf-custom-rulegroup/24f4af6f-ab7b-4c42-bdd7-da23bd0bcd2d",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-ppe-web-cf-waf-fms-policy  (environment=ppe AND workload-type=web)
+  FMSPolicyHB:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-ppe-web-cf-waf-fms-policy"
+      PolicyDescription: "AWS Firewall Manager policy enforcing WAF protections for IMS PPE web CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "097357356161"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "environment"
+          Value: "ppe"
+        - Key: "workload-type"
+          Value: "web"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: false
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"challenge": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.25",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.21",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.3",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_2.6",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.1",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "COUNT"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"count": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"count": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-ppe-web-cf-waf-custom-rulegroup/4210720f-75c2-45b8-982a-8a40861ddcec",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-ppe-web-cf-waf-fms-policy-Tescotravelmoney  (environment=ppe AND workload-type=web-www.tescotravelmoney.com)
+  FMSPolicyYE:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-ppe-web-cf-waf-fms-policy-Tescotravelmoney"
+      PolicyDescription: "ims-ppe-web-cf-waf-fms-policy-Tescotravelmoney"
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "097357356161"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "environment"
+          Value: "ppe"
+        - Key: "workload-type"
+          Value: "web-www.tescotravelmoney.com"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "environment"
+          Value: "ppe"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"challenge": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-ppe-web-cf-waf-custom-rulegroup-Travelmoney/6b7841e0-3848-4b0e-bc6f-1630759a8462",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-ppe-web-cf-waf-fms-policy-Tescoinsurance  (workload-type=web-www.tescoinsurance.com AND environment=ppe)
+  FMSPolicyYt:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-ppe-web-cf-waf-fms-policy-Tescoinsurance"
+      PolicyDescription: "ims-ppe-web-cf-waf-fms-policy-Tescoinsurance"
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "097357356161"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "workload-type"
+          Value: "web-www.tescoinsurance.com"
+        - Key: "environment"
+          Value: "ppe"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "environment"
+          Value: "ppe"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "COMMON"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-ppe-web-cf-waf-custom-rulegroup-Tescoinsurance/327016cb-50f0-41a5-b109-6b4a9cf87774",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # =====================================================================================
+  # WAF (WAFV2) - PRD (account 584477831165)
+  # =====================================================================================
+
+  # ims-prd-api-cf-waf-fms-policy  (workload-type=api AND environment=prd)
+  FMSPolicyN9:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-prd-api-cf-waf-fms-policy"
+      PolicyDescription: "AWS Firewall Manager policy enforcing WAF protections for IMS production API CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "584477831165"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "workload-type"
+          Value: "api"
+        - Key: "environment"
+          Value: "prd"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: false
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "environment"
+          Value: "prd"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "cloudformation:stack-id"
+          Value: "arn:aws:cloudformation:us-east-1:584477831165:stack/proofid-net-prd-webacl-cffun-stack/1953f1a0-4d20-11f1-ab52-121ebc4d5b15"
+        - Key: "compliance"
+          Value: "internal"
+        - Key: "cloudformation:stack-name"
+          Value: "proofid-net-prd-webacl-cffun-stack"
+        - Key: "project"
+          Value: "ims-identity"
+        - Key: "cloudformation:logical-id"
+          Value: "ApiWAFWebACL"
+        - Key: "costcenter"
+          Value: "55637"
+        - Key: "Name"
+          Value: "cf-waf-prod-api"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.25",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.21",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"count": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"count": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"count": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"count": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-api-xss-body-exception-rulegroup/e8ac5150-f848-4db6-ac6b-7a3f8e280681",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.3",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_2.6",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesATPRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesATPRuleSet": {
+                        "loginPath": "/oauth2/token",
+                        "requestInspection": {
+                          "payloadType": "JSON",
+                          "usernameField": {"identifier": "/username"},
+                          "passwordField": {"identifier": "/password"}
+                        },
+                        "responseInspection": {
+                          "statusCode": {"successCodes": [200], "failureCodes": [401, 403]}
+                        }
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "UnsupportedCognitoIDP", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricIpHigh", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricSession", "actionToUse": {"block": {}}},
+                  {"name": "AttributeCompromisedCredentials", "actionToUse": {"block": {}}},
+                  {"name": "AttributeUsernameTraversal", "actionToUse": {"block": {}}},
+                  {"name": "AttributePasswordTraversal", "actionToUse": {"block": {}}},
+                  {"name": "AttributeLongSession", "actionToUse": {"block": {}}},
+                  {"name": "TokenRejected", "actionToUse": {"block": {}}},
+                  {"name": "SignalMissingCredential", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricIpFailedLoginResponseHigh", "actionToUse": {"block": {}}},
+                  {"name": "VolumetricSessionFailedLoginResponseHigh", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "COUNT"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"count": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"count": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"count": {}}}
+                ]
+              }
+            ],
+            "postProcessRuleGroups": [
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-api-cf-waf-custom-rulegroup/eff937c6-d8c6-435f-b7bb-01ea03681241",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "defaultAction": {"type": "BLOCK"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-prd-web-cf-waf-fms-policy  (environment=prd AND workload-type=web)
+  FMSPolicyHT:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-prd-web-cf-waf-fms-policy"
+      PolicyDescription: "AWS Firewall Manager policy enforcing WAF protections for IMS production web CloudFront distributions."
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "584477831165"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "environment"
+          Value: "prd"
+        - Key: "workload-type"
+          Value: "web"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: false
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "environment"
+          Value: "prd"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "cloudformation:stack-id"
+          Value: "arn:aws:cloudformation:us-east-1:584477831165:stack/proofid-net-prd-webacl-cffun-stack/1953f1a0-4d20-11f1-ab52-121ebc4d5b15"
+        - Key: "compliance"
+          Value: "internal"
+        - Key: "cloudformation:stack-name"
+          Value: "proofid-net-prd-webacl-cffun-stack"
+        - Key: "project"
+          Value: "ims-identity"
+        - Key: "cloudformation:logical-id"
+          Value: "WebAppWAFWebACL"
+        - Key: "costcenter"
+          Value: "55637"
+        - Key: "Name"
+          Value: "cf-waf-prod-webapp"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.0",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"challenge": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.25",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.21",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_1.3",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": "Version_2.6",
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "COUNT"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"count": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"count": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"count": {}}}
+                ]
+              }
+            ],
+            "postProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": null,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "defaultAction": {"type": "ALLOW"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-prd-web-cf-waf-fms-policy-Tescotravelmoney  (environment=prd AND workload-type=web-www.tescotravelmoney.com)
+  FMSPolicyUG:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-prd-web-cf-waf-fms-policy-Tescotravelmoney"
+      PolicyDescription: "ims-prd-web-cf-waf-fms-policy-Tescotravelmoney"
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "584477831165"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "environment"
+          Value: "prd"
+        - Key: "workload-type"
+          Value: "web-www.tescotravelmoney.com"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "environment"
+          Value: "prd"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-web-AnonymousIP-exception-rulegroup/932b14b8-5ced-4f64-9388-aff2fa0d4c46",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"count": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-web-cf-waf-custom-rulegroup-Travelmoney/ea796914-9fb9-4d0a-bdee-f4be89433cee",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "ALLOW"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "associationConfig": {"requestBody": {"CLOUDFRONT": {"defaultSizeInspectionLimit": "KB_32"}}},
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
+
+  # ims-prd-web-cf-waf-fms-policy-Tescoinsurance  (workload-type=web-www.tescoinsurance.com AND environment=prd)
+  FMSPolicyAR:
+    Type: "AWS::FMS::Policy"
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Properties:
+      PolicyName: "ims-prd-web-cf-waf-fms-policy-Tescoinsurance"
+      PolicyDescription: "ims-prd-web-cf-waf-fms-policy-Tescoinsurance"
+      ResourceType: "AWS::CloudFront::Distribution"
+      ResourceTypeList: []
+      ResourceSetIds: []
+      IncludeMap:
+        ACCOUNT:
+          - "584477831165"
+        ORGUNIT: []
+      ExcludeMap: {}
+      ResourceTags:
+        - Key: "workload-type"
+          Value: "web-www.tescoinsurance.com"
+        - Key: "environment"
+          Value: "prd"
+      ResourceTagLogicalOperator: "AND"
+      ExcludeResourceTags: false
+      RemediationEnabled: true
+      ResourcesCleanUp: true
+      Tags:
+        - Key: "owner"
+          Value: "Zensar-platforms"
+        - Key: "application"
+          Value: "Network_Services"
+        - Key: "environment"
+          Value: "prd"
+      SecurityServicePolicyData:
+        Type: "WAFV2"
+        ManagedServiceData: '{
+            "type": "WAFV2",
+            "preProcessRuleGroups": [
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAmazonIpReputationList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AWSManagedIPReputationList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedReconnaissanceList", "actionToUse": {"block": {}}},
+                  {"name": "AWSManagedIPDDoSList", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAnonymousIpList"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "AnonymousIPList", "actionToUse": {"block": {}}},
+                  {"name": "HostingProviderIPList", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-web-AnonymousIP-exception-rulegroup/932b14b8-5ced-4f64-9388-aff2fa0d4c46",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesBotControlRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {"awsmanagedRulesBotControlRuleSet": {"inspectionLevel": "TARGETED"}}
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "CategoryAdvertising", "actionToUse": {"block": {}}},
+                  {"name": "CategoryArchiver", "actionToUse": {"block": {}}},
+                  {"name": "CategoryContentFetcher", "actionToUse": {"block": {}}},
+                  {"name": "CategoryEmailClient", "actionToUse": {"block": {}}},
+                  {"name": "CategoryHttpLibrary", "actionToUse": {"block": {}}},
+                  {"name": "CategoryLinkChecker", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMiscellaneous", "actionToUse": {"block": {}}},
+                  {"name": "CategoryScrapingFramework", "actionToUse": {"block": {}}},
+                  {"name": "CategorySearchEngine", "actionToUse": {"block": {}}},
+                  {"name": "CategorySecurity", "actionToUse": {"block": {}}},
+                  {"name": "CategorySeo", "actionToUse": {"block": {}}},
+                  {"name": "CategorySocialMedia", "actionToUse": {"block": {}}},
+                  {"name": "CategoryAI", "actionToUse": {"block": {}}},
+                  {"name": "SignalAutomatedBrowser", "actionToUse": {"block": {}}},
+                  {"name": "SignalKnownBotDataCenter", "actionToUse": {"block": {}}},
+                  {"name": "SignalNonBrowserUserAgent", "actionToUse": {"block": {}}},
+                  {"name": "CategoryMonitoring", "actionToUse": {"count": {}}},
+                  {"name": "TGT_VolumetricIpTokenAbsent", "actionToUse": {"count": {}}},
+                  {"name": "TGT_VolumetricSession", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalAutomatedBrowser", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_SignalBrowserInconsistency", "actionToUse": {"captcha": {}}},
+                  {"name": "TGT_TokenReuseIp", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityMedium", "actionToUse": {"count": {}}},
+                  {"name": "TGT_ML_CoordinatedActivityHigh", "actionToUse": {"count": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-web-cf-waf-CategoryMonitoring-exception-rulegroup-Tescoinsurance/ba66b9d0-44d1-4a04-aa82-6d5f8d23d852",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAntiDDoSRuleSet",
+                  "managedRuleGroupConfigs": [
+                    {
+                      "awsmanagedRulesAntiDDoSRuleSet": {
+                        "sensitivityToBlock": "LOW",
+                        "clientSideActionConfig": {"challenge": {"usageOfAction": "DISABLED"}}
+                      }
+                    }
+                  ]
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "ChallengeAllDuringEvent", "actionToUse": {"challenge": {}}},
+                  {"name": "ChallengeDDoSRequests", "actionToUse": {"challenge": {}}},
+                  {"name": "DDoSRequests", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesKnownBadInputsRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "JavaDeserializationRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "JavaDeserializationRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "Host_localhost_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "PROPFIND_METHOD", "actionToUse": {"block": {}}},
+                  {"name": "ExploitablePaths_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_BODY", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "Log4JRCE_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "ReactJSRCE_BODY", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesCommonRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "NoUserAgent_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "UserAgent_BadBots_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_Cookie_HEADER", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SizeRestrictions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_BODY", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "EC2MetaDataSSRF_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "GenericLFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "RestrictedExtensions_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_BODY", "actionToUse": {"block": {}}},
+                  {"name": "GenericRFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_BODY", "actionToUse": {"block": {}}},
+                  {"name": "CrossSiteScripting_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesSQLiRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "SQLiExtendedPatterns_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_QUERYARGUMENTS", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_BODY", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_COOKIE", "actionToUse": {"block": {}}},
+                  {"name": "SQLi_URIPATH", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesLinuxRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [
+                  {"name": "LFI_URIPATH", "actionToUse": {"block": {}}},
+                  {"name": "LFI_QUERYSTRING", "actionToUse": {"block": {}}},
+                  {"name": "LFI_HEADER", "actionToUse": {"block": {}}}
+                ]
+              },
+              {
+                "ruleGroupArn": null,
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": {
+                  "versionEnabled": true,
+                  "version": null,
+                  "vendorName": "AWS",
+                  "managedRuleGroupName": "AWSManagedRulesAdminProtectionRuleSet"
+                },
+                "ruleGroupType": "ManagedRuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true,
+                "ruleActionOverrides": [{"name": "AdminProtection_URIPATH", "actionToUse": {"block": {}}}]
+              },
+              {
+                "ruleGroupArn": "arn:aws:wafv2:us-east-1:119810927880:global/rulegroup/ims-prd-web-cf-waf-custom-rulegroup-Tescoinsurance/78d1418b-80ad-4d02-b8ad-dd249033aa0c",
+                "overrideAction": {"type": "NONE"},
+                "managedRuleGroupIdentifier": null,
+                "ruleGroupType": "RuleGroup",
+                "excludeRules": [],
+                "sampledRequestsEnabled": true
+              }
+            ],
+            "postProcessRuleGroups": [],
+            "defaultAction": {"type": "ALLOW"},
+            "customRequestHandling": null,
+            "customResponse": null,
+            "overrideCustomerWebACLAssociation": true,
+            "loggingConfiguration": null,
+            "sampledRequestsEnabledForDefaultActions": true,
+            "optimizeUnassociatedWebACL": true,
+            "webACLSource": "DEFAULT"
+          }'
